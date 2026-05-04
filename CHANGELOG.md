@@ -3,6 +3,109 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V2.0] — 2026-05-04
+
+Complete architectural rewrite. The peer-to-peer model from V1 (each device
+runs the same FastAPI app, the "control" device adds others by URL+password)
+is replaced by a **hub + agent** model: one central hub owns a database of
+users and devices, and each device runs a tiny agent that opens a persistent
+WebSocket *outbound* to the hub.
+
+### Added
+- **Multi-user accounts** with browser sessions. Bootstrap flow creates the
+  first user as admin; subsequent users sign up with single-use **invite
+  codes** issued by an admin from `/admin/invites`. Passwords hashed with
+  PBKDF2-SHA256 (200k iterations); session tokens stored hashed.
+- **Device pairing** via 6-digit codes. From the dashboard, "Add Device"
+  generates a code with a 10-minute lifetime; the agent submits the code to
+  `/api/pair` and receives a stable `device_id` (UUID, hub-issued) plus a
+  long-lived token. Token stored hashed server-side; agent keeps plaintext
+  in `~/.vortex_agent/config.json` (mode 600).
+- **Persistent device identity**. The `device_id` is intrinsic to the
+  pairing, not derived from URL or hostname. Re-pairing wipes and replaces;
+  rotating the device's IP / Cloudflare tunnel does not affect it.
+- **WebSocket-based control plane**. Agents connect *out* to the hub at
+  `/ws/agent`, eliminating per-device public URLs. Hub sends multiplexed
+  request/response messages over a single connection per device:
+  - `stat` — does this path exist? file or directory? size?
+  - `list_dir` — sorted directory listing.
+  - `read_file` — streams base64 chunks back; hub re-streams them as the
+    HTTP response body to the browser.
+  Heartbeat via WS ping/pong (25s interval). Auto-reconnect with exponential
+  backoff capped at 60s; auth-rejection is fatal (token revoked).
+- **`hub/` package** — split out of the old monolithic `app.py`:
+  - `hub/db.py` — SQLite schema (users, invites, devices, pairing_codes,
+    sessions) + queries.
+  - `hub/auth.py` — session cookies, login/logout, per-IP rate limiting on
+    failed logins (5/60s -> 5-minute block).
+  - `hub/ws_router.py` — agent connection registry; `AgentConnection` class
+    multiplexes concurrent unary + streaming requests over one WebSocket.
+  - `hub/templates.py` — futuristic theme (lifted from V1.2 CSS) plus new
+    pages: login, register, first-run, pair-start, pair-code, device manage,
+    invites admin, files browser.
+  - `hub/app.py` — FastAPI routes wiring it all together.
+- **`agent/` package**:
+  - `agent/pairing.py` — first-run pairing flow. Reads `PAIRING_CODE`,
+    `HUB_URL`, `DEVICE_NAME` env vars; falls back to interactive prompts on a
+    TTY.
+  - `agent/agent.py` — outbound WebSocket client; dispatches `stat`,
+    `list_dir`, `read_file`. Path safety: every path resolved relative to
+    `STORAGE_ROOT` and rejected if it would escape.
+- **`serve.ps1`** — Windows hub launcher. Builds the venv, downloads
+  `cloudflared.exe` to `./bin` if missing, starts uvicorn + a Cloudflare
+  quick tunnel, surfaces the public URL.
+- **Mode flag for `serve.sh`**: `MODE=hub bash serve.sh` runs the hub on a
+  Termux phone; default `MODE=agent` runs the agent.
+
+### Changed
+- **`app.py` is now `app_v1.py`** at the repo root, kept for one release as a
+  fallback. The new entrypoint is `hub.app:app` (run via uvicorn).
+- **Browser dashboard at `/`** lists only your own devices, polled for
+  online/offline status every 5s via `/api/online` (returns the intersection
+  of your devices with currently-connected WebSockets).
+- **File browser** at `/devices/{id}/files/` no longer reverse-proxies HTTP
+  to a remote — it sends WS commands to the agent and renders the response
+  as a themed listing. Same UX, different transport.
+- **Setup script** (`setup.sh`) now installs `websockets + httpx` instead of
+  `fastapi + uvicorn` for agent-only deployments. Hub deps are installed
+  on demand by `serve.sh` when `MODE=hub`.
+- **Termux:Boot hook** now starts the agent (`~/.termux/boot/start-vortex-agent`)
+  rather than the V1 server.
+
+### Removed
+- `~/server/.env` (single hardcoded HTTP Basic credential pair) — replaced
+  by per-user accounts in the SQLite database.
+- `~/server/devices.json` (peer device registry with stored remote
+  credentials) — replaced by hub-side `devices` table populated via pairing.
+- `/files/` legacy redirect routes from V1.0/V1.1 — V2 paths only.
+
+### Migration from V1.x → V2.0
+1. **Pick a hub**: laptop (Windows: `serve.ps1`) or a phone (`MODE=hub bash
+   serve.sh`).
+2. Start the hub. The first browser visit to `/` redirects to `/register`,
+   which is the bootstrap form (no invite needed for the first user — they
+   become admin).
+3. On each device you want to manage: drop `setup.sh`, `serve.sh`,
+   `agent/`, and `hub/` into Termux and run `bash setup.sh`.
+4. On the hub, click "Add Device", copy the pairing code, run on the phone:
+   `PAIRING_CODE=<code> HUB_URL=<your-hub-url> bash ~/server/serve.sh`.
+5. The phone appears on your dashboard. Subsequent runs of `serve.sh` need
+   no env vars — the agent reads its stored config and reconnects.
+
+The V1 `~/server/devices.json` is **not** auto-imported. Re-pair each device
+through the new flow.
+
+### Security notes
+- No more plaintext remote passwords on disk. Each agent stores only its own
+  long-lived token, generated server-side from `secrets.token_urlsafe(32)`
+  and stored hashed in the hub DB.
+- Sessions are 30-day cookies; tokens stored as SHA-256 hashes (safe because
+  tokens are 32 bytes random, not user-chosen).
+- Pairing codes single-use, 10-minute expiry, scoped to the user that
+  generated them.
+- Agent auth failure (e.g., device unpaired hub-side) closes the connection
+  with code 4001 and the agent exits non-zero rather than retrying forever.
+
 ## [V1.2] — 2026-05-04
 
 ### Added
