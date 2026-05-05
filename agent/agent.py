@@ -31,7 +31,7 @@ import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from . import __VORTEX_AGENT_VERSION__
-from .pairing import ensure_paired
+from .pairing import config_path, ensure_paired, load_config, save_config
 
 
 CHUNK_SIZE = 64 * 1024  # 64 KiB raw -> ~88 KiB base64 per JSON message
@@ -264,17 +264,47 @@ async def run_forever(cfg: dict) -> int:
         await asyncio.sleep(backoff)
 
 
+def _apply_env_overrides(cfg: dict) -> dict:
+    """Let env vars override fields of an already-paired config.
+
+    Today only HUB_URL is supported -- after a hub restart the quick-tunnel
+    URL changes, but the device_id + token are still valid against the
+    hub's database. Updating just the URL avoids forcing a re-pair.
+    """
+    env_url = (os.environ.get("HUB_URL") or "").rstrip("/")
+    if env_url and env_url != (cfg.get("hub_url") or ""):
+        old = cfg.get("hub_url") or "<none>"
+        print(f"==> HUB_URL override: {old} -> {env_url}")
+        cfg["hub_url"] = env_url
+        save_config(cfg)
+    return cfg
+
+
 def main() -> int:
     print(f"== Vortex Agent v{__VORTEX_AGENT_VERSION__}")
     print(f"   Storage root: {STORAGE_ROOT}")
+
+    # VORTEX_RESET=1 wipes the saved config (re-pair from scratch). Useful
+    # when the hub's database has been wiped or you want to re-enroll.
+    if os.environ.get("VORTEX_RESET"):
+        cp = config_path()
+        if cp.exists():
+            cp.unlink()
+            print(f"== VORTEX_RESET=1 -- cleared {cp}")
+
     try:
         cfg = ensure_paired()
+        cfg = _apply_env_overrides(cfg)
     except (KeyboardInterrupt, EOFError):
         print("\n== Pairing cancelled.", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"!! pairing failed: {e}", file=sys.stderr)
         return 1
+
+    print(f"   Hub URL:      {cfg.get('hub_url')}")
+    print(f"   Device ID:    {cfg.get('device_id')}")
+
     try:
         return asyncio.run(run_forever(cfg))
     except KeyboardInterrupt:
