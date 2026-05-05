@@ -28,6 +28,12 @@ def config_path() -> Path:
                 or os.path.expanduser("~/.vortex_agent/config.json"))
 
 
+def draft_path() -> Path:
+    """Where we store half-entered pairing inputs so a network failure
+    doesn't make the user retype hub URL / device name."""
+    return config_path().parent / "draft.json"
+
+
 def load_config() -> Optional[dict]:
     p = config_path()
     if not p.exists():
@@ -41,16 +47,45 @@ def load_config() -> Optional[dict]:
     return data
 
 
-def save_config(cfg: dict) -> None:
-    p = config_path()
+def load_draft() -> dict:
+    p = draft_path()
+    if not p.exists():
+        return {}
+    try:
+        d = json.loads(p.read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _atomic_write(p: Path, payload: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
-    # Best-effort tight perms (no-op on Windows). The token in here is the
-    # only thing protecting the device's link to the hub.
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.write_text(payload)
     os.replace(tmp, p)
     try:
         os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+
+def save_config(cfg: dict) -> None:
+    # The token in here is the only thing protecting the device's link to
+    # the hub; tight perms (no-op on Windows).
+    _atomic_write(config_path(), json.dumps(cfg, indent=2))
+
+
+def save_draft(updates: dict) -> None:
+    """Merge updates into the draft and persist. Safe to call repeatedly."""
+    draft = load_draft()
+    draft.update({k: v for k, v in updates.items() if v})
+    _atomic_write(draft_path(), json.dumps(draft, indent=2))
+
+
+def clear_draft() -> None:
+    p = draft_path()
+    try:
+        p.unlink()
     except OSError:
         pass
 
@@ -69,23 +104,40 @@ def _prompt(label: str, *, secret: bool = False) -> str:
 def pair_now(*, hub_url: Optional[str] = None,
              code: Optional[str] = None,
              device_name: Optional[str] = None) -> dict:
-    """Run the pairing handshake. Returns the saved config dict."""
-    hub_url = (hub_url or os.environ.get("HUB_URL") or "").rstrip("/")
+    """Run the pairing handshake. Returns the saved config dict.
+
+    Inputs are taken from (in priority order): explicit kwargs, env vars
+    (HUB_URL / PAIRING_CODE / DEVICE_NAME), the cached draft from a
+    previous attempt, then an interactive prompt. Each value is persisted
+    to the draft as soon as it's known, so a network failure mid-flow
+    never makes you retype.
+    """
+    draft = load_draft()
+    hub_url = (hub_url or os.environ.get("HUB_URL")
+               or draft.get("hub_url") or "").rstrip("/")
     code = code or os.environ.get("PAIRING_CODE") or ""
-    device_name = device_name or os.environ.get("DEVICE_NAME") or ""
+    # Don't pull code from the draft -- codes are single-use 10-min items;
+    # remembering them is more confusing than helpful.
+    device_name = (device_name or os.environ.get("DEVICE_NAME")
+                   or draft.get("device_name") or "")
 
     needed_prompt = False
     if not hub_url:
         hub_url = _prompt("Hub URL (e.g. https://abc.trycloudflare.com)").rstrip("/")
         needed_prompt = True
+    save_draft({"hub_url": hub_url})
     if not code:
         code = _prompt("Pairing code (6 digits)")
         needed_prompt = True
-    # Only ask for the optional device name if we already had to prompt for
-    # something else (i.e. user is at a TTY anyway). If everything came from
-    # env vars, don't surprise the user with an extra interactive prompt.
     if not device_name and needed_prompt and sys.stdin.isatty():
-        device_name = _prompt("Device name (optional, press enter to skip)")
+        # Only ask for the optional device name if we're already prompting
+        # the user for something else.
+        prior = draft.get("device_name", "")
+        suffix = f" [{prior}]" if prior else ""
+        entered = _prompt(f"Device name (optional, press enter{' to keep' if prior else ' to skip'}){suffix}")
+        device_name = entered or prior
+    if device_name:
+        save_draft({"device_name": device_name})
 
     if not hub_url.startswith(("http://", "https://")):
         raise ValueError("HUB_URL must be http:// or https://")
@@ -97,8 +149,25 @@ def pair_now(*, hub_url: Optional[str] = None,
         payload["device_name"] = device_name
 
     print(f"==> Submitting pairing code to {hub_url}/api/pair")
-    with httpx.Client(timeout=20.0) as client:
-        r = client.post(f"{hub_url}/api/pair", json=payload)
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            r = client.post(f"{hub_url}/api/pair", json=payload)
+    except httpx.ConnectError as e:
+        # The most common failure mode by far -- bad URL, dead hub, or DNS
+        # / network problem on the device. Print specific guidance.
+        raise RuntimeError(
+            f"Could not reach the hub at {hub_url} ({e}).\n"
+            f"  - Is the hub still running on your laptop / phone?\n"
+            f"  - Does the URL match exactly what the hub printed?\n"
+            f"  - Quick tunnels rotate URLs every restart -- if you\n"
+            f"    restarted the hub, the old URL is dead.\n"
+            f"  - Test from this device: curl -v {hub_url}/health\n"
+            f"  - Your hub URL is remembered. Just rerun and enter a\n"
+            f"    fresh pairing code once the hub is reachable."
+        ) from None
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Network error talking to {hub_url}: {e}") from None
+
     if r.status_code != 200:
         try:
             detail = r.json().get("detail", r.text)
@@ -114,6 +183,7 @@ def pair_now(*, hub_url: Optional[str] = None,
         "name": data.get("name", device_name or "Unnamed"),
     }
     save_config(cfg)
+    clear_draft()
     print(f"==> Paired as '{cfg['name']}' (id: {cfg['device_id']})")
     print(f"==> Config saved to {config_path()}")
     return cfg
