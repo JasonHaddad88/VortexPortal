@@ -1,4 +1,4 @@
-# Vortex Hub — Windows launcher.
+# Vortex Hub - Windows launcher.
 #
 # - Builds a Python venv at ./.venv if missing
 # - Installs fastapi, uvicorn, websockets, httpx, pydantic v1
@@ -15,13 +15,55 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
+# Run a native command quietly. PowerShell 5.1 wraps stderr from native
+# commands into ErrorRecords, which under $ErrorActionPreference = "Stop"
+# becomes a script-aborting NativeCommandError -- even when the command's
+# exit code is the only thing we care about (e.g. probing whether a Python
+# import succeeds). This helper drops to "Continue" for the duration of the
+# call, suppresses stderr, and returns just the exit code.
+function Invoke-NativeQuiet {
+    # Note: parameter is $Argv, not $Args -- the latter is a PowerShell
+    # automatic variable, and shadowing it breaks splatting (the call below
+    # would launch with no arguments, kicking Python into REPL mode under
+    # a Hidden window and crashing pyrepl).
+    param([string]$Exe, [string[]]$Argv)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Exe @Argv 2>$null | Out-Null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+# Like Invoke-NativeQuiet but lets stdout/stderr through (visible to the
+# user) -- useful for pip install, which prints warnings to stderr that
+# we don't want to halt on.
+function Invoke-NativeStreaming {
+    param([string]$Exe, [string[]]$Argv)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Exe @Argv
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 $AppPort = if ($env:APP_PORT) { $env:APP_PORT } else { "8000" }
 $VenvDir = Join-Path $ScriptDir ".venv"
 $BinDir  = Join-Path $ScriptDir "bin"
 $LogDir  = Join-Path $ScriptDir "logs"
 $CloudflaredExe = Join-Path $BinDir "cloudflared.exe"
-$UvicornLog = Join-Path $LogDir "uvicorn.log"
-$CloudflaredLog = Join-Path $LogDir "cloudflared.log"
+# Start-Process refuses to point both stdout and stderr at the same file, so
+# we keep them separate. Diagnostics that need a unified view should look at
+# both .out.log and .err.log.
+$UvicornOut = Join-Path $LogDir "uvicorn.out.log"
+$UvicornErr = Join-Path $LogDir "uvicorn.err.log"
+$CloudflaredOut = Join-Path $LogDir "cloudflared.out.log"
+$CloudflaredErr = Join-Path $LogDir "cloudflared.err.log"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -51,21 +93,28 @@ Write-Host "==> Python: $python ($(& $python --version 2>&1))"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path $VenvPython)) {
     Write-Host "==> Creating venv at $VenvDir"
-    & $python -m venv $VenvDir
-    if ($LASTEXITCODE -ne 0) { Write-Host "venv create failed" -ForegroundColor Red; exit 1 }
+    if ((Invoke-NativeStreaming $python @("-m", "venv", $VenvDir)) -ne 0) {
+        Write-Host "venv create failed" -ForegroundColor Red
+        exit 1
+    }
 }
 
-# Check deps
-$needInstall = $false
-& $VenvPython -c "import fastapi, uvicorn, websockets, httpx, pydantic, multipart" 2>$null
-if ($LASTEXITCODE -ne 0) { $needInstall = $true }
-
-if ($needInstall) {
+# Check deps -- expected to fail on first run; that's the signal to install.
+$importCheck = Invoke-NativeQuiet $VenvPython @(
+    "-c", "import fastapi, uvicorn, websockets, httpx, pydantic, multipart"
+)
+if ($importCheck -ne 0) {
     Write-Host "==> Installing Python dependencies"
-    & $VenvPython -m pip install --quiet --upgrade pip setuptools wheel
-    & $VenvPython -m pip install --quiet "fastapi<0.100" "pydantic<2" "uvicorn[standard]" websockets httpx python-multipart
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "pip install failed" -ForegroundColor Red
+    $rc1 = Invoke-NativeStreaming $VenvPython @(
+        "-m", "pip", "install", "--quiet", "--upgrade", "pip", "setuptools", "wheel"
+    )
+    $rc2 = Invoke-NativeStreaming $VenvPython @(
+        "-m", "pip", "install", "--quiet",
+        "fastapi<0.100", "pydantic<2", "uvicorn[standard]",
+        "websockets", "httpx", "python-multipart"
+    )
+    if ($rc1 -ne 0 -or $rc2 -ne 0) {
+        Write-Host "pip install failed (rc=$rc1, $rc2)" -ForegroundColor Red
         exit 1
     }
 }
@@ -94,7 +143,7 @@ $uvicornArgs = @(
     "--proxy-headers", "--forwarded-allow-ips=*"
 )
 $uvProc = Start-Process -FilePath $VenvPython -ArgumentList $uvicornArgs `
-    -RedirectStandardOutput $UvicornLog -RedirectStandardError $UvicornLog `
+    -RedirectStandardOutput $UvicornOut -RedirectStandardError $UvicornErr `
     -PassThru -WindowStyle Hidden
 
 # Wait for /health
@@ -107,7 +156,7 @@ for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 500
 }
 if (-not $ready) {
-    Write-Host "ERROR: uvicorn did not become ready in 15s. See $UvicornLog" -ForegroundColor Red
+    Write-Host "ERROR: uvicorn did not become ready in 15s. See $UvicornErr" -ForegroundColor Red
     Stop-Process -Id $uvProc.Id -Force -ErrorAction SilentlyContinue
     exit 1
 }
@@ -116,20 +165,28 @@ if (-not $ready) {
 # Start cloudflared quick tunnel
 # ---------------------------------------------------------------------------
 Write-Host "==> Starting Cloudflare quick tunnel"
-if (Test-Path $CloudflaredLog) { Remove-Item $CloudflaredLog -Force }
+foreach ($f in @($CloudflaredOut, $CloudflaredErr)) {
+    if (Test-Path $f) { Remove-Item $f -Force }
+}
 $cfArgs = @("tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:$AppPort")
 $cfProc = Start-Process -FilePath $CloudflaredExe -ArgumentList $cfArgs `
-    -RedirectStandardOutput $CloudflaredLog -RedirectStandardError $CloudflaredLog `
+    -RedirectStandardOutput $CloudflaredOut -RedirectStandardError $CloudflaredErr `
     -PassThru -WindowStyle Hidden
 
-# Surface the public URL
+# Surface the public URL. cloudflared writes its banner (with the URL) to
+# stderr, but we check both streams to be safe across versions.
 $publicUrl = $null
 for ($i = 0; $i -lt 60; $i++) {
-    if (Test-Path $CloudflaredLog) {
-        $log = Get-Content $CloudflaredLog -Raw
-        $m = [regex]::Match($log, "https://[a-z0-9-]+\.trycloudflare\.com")
-        if ($m.Success) { $publicUrl = $m.Value; break }
+    foreach ($f in @($CloudflaredErr, $CloudflaredOut)) {
+        if (Test-Path $f) {
+            $log = Get-Content $f -Raw -ErrorAction SilentlyContinue
+            if ($log) {
+                $m = [regex]::Match($log, "https://[a-z0-9-]+\.trycloudflare\.com")
+                if ($m.Success) { $publicUrl = $m.Value; break }
+            }
+        }
     }
+    if ($publicUrl) { break }
     Start-Sleep -Seconds 1
 }
 
@@ -146,7 +203,7 @@ Write-Host "============================================================" -Foreg
 if ($publicUrl) {
     Write-Host "  Public URL : $publicUrl" -ForegroundColor Green
 } else {
-    Write-Host "  Public URL : <pending — see $CloudflaredLog>" -ForegroundColor Yellow
+    Write-Host "  Public URL : <pending - see $CloudflaredErr>" -ForegroundColor Yellow
 }
 Write-Host "  Local URL  : http://127.0.0.1:$AppPort"
 if ($lanIp) {
@@ -163,11 +220,11 @@ Write-Host ""
 try {
     while ($true) {
         if ($uvProc.HasExited) {
-            Write-Host "uvicorn exited unexpectedly. See $UvicornLog" -ForegroundColor Red
+            Write-Host "uvicorn exited unexpectedly. See $UvicornErr" -ForegroundColor Red
             break
         }
         if ($cfProc.HasExited) {
-            Write-Host "cloudflared exited unexpectedly. See $CloudflaredLog" -ForegroundColor Red
+            Write-Host "cloudflared exited unexpectedly. See $CloudflaredErr" -ForegroundColor Red
             break
         }
         Start-Sleep -Seconds 2
