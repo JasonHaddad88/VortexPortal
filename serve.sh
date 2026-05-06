@@ -1,4 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# VORTEX_SERVE_VERSION=4
 # Vortex Termux launcher.
 #
 #   MODE=agent (default)  Runs the agent, connecting outbound to a hub.
@@ -19,6 +20,13 @@ APP_PORT="${APP_PORT:-8000}"
 SSH_PORT="${SSH_PORT:-8022}"
 
 mkdir -p "$LOG_DIR"
+
+# Print which serve.sh is running, so it's obvious when ~/server/ holds an
+# older copy than the source folder. To compare: grep VORTEX_SERVE_VERSION
+# on both files; if they differ, re-run setup.sh or run from the source dir.
+SERVE_VERSION=$(grep -m1 '^# VORTEX_SERVE_VERSION=' "${BASH_SOURCE[0]}" 2>/dev/null \
+    | sed 's/.*=//' || echo '?')
+echo "==> serve.sh v$SERVE_VERSION ($(realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}"))"
 
 cleanup() {
     echo "==> Shutting down"

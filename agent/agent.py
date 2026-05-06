@@ -282,6 +282,7 @@ def _apply_env_overrides(cfg: dict) -> dict:
 
 def main() -> int:
     print(f"== Vortex Agent v{__VORTEX_AGENT_VERSION__}")
+    print(f"   Source:       {__file__}")
     print(f"   Storage root: {STORAGE_ROOT}")
 
     # VORTEX_RESET=1 wipes the saved config (re-pair from scratch). Useful
