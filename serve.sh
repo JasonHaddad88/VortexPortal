@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VORTEX_SERVE_VERSION=5
+# VORTEX_SERVE_VERSION=6
 # Vortex Termux launcher.
 #
 #   MODE=agent (default)  Runs the agent, connecting outbound to a hub.
@@ -93,6 +93,12 @@ else
         echo "==> Installing agent dependencies"
         "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
         "$VPY" -m pip install --quiet websockets httpx
+    fi
+    # Optional: Pillow for V3.0 image thumbnails. Best-effort; if the
+    # install fails the agent still works -- thumbnails just return a clear
+    # error to the hub, which falls back to filename-only listings.
+    if ! "$VPY" -c 'import PIL' 2>/dev/null; then
+        "$VPY" -m pip install --quiet Pillow 2>/dev/null || true
     fi
 fi
 

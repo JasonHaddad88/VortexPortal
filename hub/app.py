@@ -28,7 +28,7 @@ from fastapi import (
     WebSocket, WebSocketDisconnect, status,
 )
 from fastapi.responses import (
-    HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse,
+    HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse,
 )
 
 from . import __VORTEX_VERSION__, auth, db, templates, ws_router
@@ -202,6 +202,30 @@ def api_online(user: dict = Depends(auth.require_user)):
     return {"online": online}
 
 
+@app.get("/api/devices/stats")
+async def api_devices_stats(user: dict = Depends(auth.require_user)):
+    """Returns {device_id: {...stats...}} for every online device the user owns.
+
+    Per-device timeout is short (5 s) so one slow agent doesn't stall the
+    whole dashboard refresh; failures show up as null entries.
+    """
+    user_device_ids = {d["id"] for d in db.list_devices(user["id"])}
+    online_ids = user_device_ids & ws_router.registry.online_ids()
+
+    async def _one(device_id: str):
+        conn = ws_router.registry.get(device_id)
+        if conn is None:
+            return device_id, None
+        try:
+            stats = await conn.request("system_info", timeout=5.0)
+            return device_id, stats
+        except (ws_router.AgentError, asyncio.TimeoutError, Exception):
+            return device_id, None
+
+    pairs = await asyncio.gather(*(_one(did) for did in online_ids))
+    return {"stats": dict(pairs)}
+
+
 # ---------------------------------------------------------------------------
 # Pairing
 # ---------------------------------------------------------------------------
@@ -296,6 +320,34 @@ async def device_delete(device_id: str,
 # ---------------------------------------------------------------------------
 # File browser (proxied via WS to the agent)
 # ---------------------------------------------------------------------------
+@app.get("/devices/{device_id}/thumb/{rel:path}")
+async def device_thumb(device_id: str, rel: str,
+                       size: int = 256,
+                       user: dict = Depends(auth.require_user)):
+    """Proxy a thumbnail request to the agent. Cached aggressively browser-side
+    so a directory full of images doesn't re-fetch on every scroll."""
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+    try:
+        result = await conn.request("thumbnail",
+                                    {"path": rel, "size": size},
+                                    timeout=15)
+    except ws_router.AgentError as e:
+        # Pillow missing or unsupported file -- 404 so the <img> just shows
+        # broken, rather than 500 noise in the network panel.
+        raise HTTPException(status_code=404, detail=str(e))
+    data = base64.b64decode(result.get("data_b64", ""))
+    return Response(
+        content=data,
+        media_type=result.get("content_type", "image/jpeg"),
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
+
+
 @app.get("/devices/{device_id}/files")
 def device_files_no_slash(device_id: str):
     return RedirectResponse(url=f"/devices/{device_id}/files/")

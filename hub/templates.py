@@ -373,6 +373,52 @@ ul.dirlist .size { color: var(--muted); font-size: 0.72rem; white-space: nowrap;
 .invites-list .row .status { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; }
 .invites-list .row .status.used { color: var(--success); }
 
+/* ---------- Per-device stats on dashboard cards ---------- */
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem 0.85rem;
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.72rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.stats .stat {
+  display: flex; align-items: center; gap: 0.4rem;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stats .stat .label {
+  color: var(--muted);
+  font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em;
+  margin-right: 0.2rem;
+}
+.stats .bar {
+  height: 4px; flex: 1; min-width: 30px;
+  background: var(--surface-2);
+  border-radius: 2px; overflow: hidden;
+  border: 1px solid var(--border);
+}
+.stats .bar > i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+}
+.stats .bar.warn > i { background: #f59e0b; }
+.stats .bar.crit > i { background: var(--danger); }
+
+/* ---------- Inline thumbnails in file listings ---------- */
+ul.dirlist li .thumb {
+  width: 40px; height: 40px;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  object-fit: cover;
+  margin-right: 0.5rem;
+}
+ul.dirlist li .thumb.placeholder {
+  display: inline-block;
+}
+
 footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -385,7 +431,7 @@ footer {
 
 
 def page(title: str, body: str, *, user: Optional[dict] = None,
-         active: str = "", chrome: bool = True, version: str = "2.0") -> str:
+         active: str = "", chrome: bool = True, version: str = "3.0") -> str:
     """Wrap body in the standard page chrome (topbar + footer)."""
     if chrome:
         nav_items = [
@@ -507,7 +553,8 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
     <span class="badge {badge_cls}" data-status>{badge_lbl}</span>
   </div>
   <p class="meta">id: {did}</p>
-  <p class="meta">last seen: {escape(last_seen)}</p>
+  <p class="meta" data-last-seen>last seen: {escape(last_seen)}</p>
+  <div class="stats" data-stats hidden></div>
   <div class="actions">
     <a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>
     <a class="btn" href="/devices/{did}">Manage</a>
@@ -534,22 +581,88 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
 </div>
 {grid_html}
 <script>
-async function pollStatuses() {{
+function fmtBytes(n) {{
+  if (n == null) return '?';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) {{ n /= 1024; i++; }}
+  return n.toFixed(n < 10 && i > 0 ? 1 : 0) + ' ' + u[i];
+}}
+function fmtUptime(s) {{
+  if (s == null) return '?';
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600);  s -= h * 3600;
+  const m = Math.floor(s / 60);
+  if (d) return d + 'd ' + h + 'h';
+  if (h) return h + 'h ' + m + 'm';
+  return m + 'm';
+}}
+function bar(usedFrac, label, valueText) {{
+  const pct = Math.max(0, Math.min(1, usedFrac));
+  const cls = pct > 0.9 ? 'crit' : pct > 0.75 ? 'warn' : '';
+  return `<div class="stat"><span class="label">${{label}}</span>` +
+         `<div class="bar ${{cls}}"><i style="width:${{(pct*100).toFixed(0)}}%"></i></div>` +
+         `<span>${{valueText}}</span></div>`;
+}}
+function renderStats(card, s) {{
+  const el = card.querySelector('[data-stats]');
+  if (!el) return;
+  if (!s) {{ el.hidden = true; el.innerHTML = ''; return; }}
+  const parts = [];
+  if (s.battery && s.battery.percentage != null) {{
+    const p = s.battery.percentage;
+    const charging = (s.battery.status || '').toUpperCase().includes('CHARG');
+    const arrow = charging ? '⚡' : '';
+    parts.push(bar(1 - p / 100, 'Battery', `${{p}}% ${{arrow}}`));
+  }}
+  if (s.storage && s.storage.total) {{
+    const used = s.storage.total - s.storage.free;
+    parts.push(bar(used / s.storage.total, 'Disk',
+                   `${{fmtBytes(s.storage.free)}} free`));
+  }}
+  if (s.memory && s.memory.total) {{
+    const free = s.memory.available || 0;
+    const used = s.memory.total - free;
+    parts.push(bar(used / s.memory.total, 'RAM',
+                   `${{fmtBytes(free)}} free`));
+  }}
+  if (s.uptime_s != null) {{
+    parts.push(`<div class="stat"><span class="label">Up</span><span>${{fmtUptime(s.uptime_s)}}</span></div>`);
+  }}
+  el.innerHTML = parts.join('');
+  el.hidden = parts.length === 0;
+}}
+
+async function pollOnline() {{
   try {{
     const r = await fetch('/api/online', {{cache: 'no-store'}});
     if (!r.ok) return;
-    const data = await r.json();
-    const online = new Set(data.online || []);
+    const online = new Set((await r.json()).online || []);
     document.querySelectorAll('[data-device-id]').forEach(card => {{
       const id = card.dataset.deviceId;
       const badge = card.querySelector('[data-status]');
       if (!badge) return;
       if (online.has(id)) {{ badge.className = 'badge online'; badge.textContent = 'Online'; }}
-      else {{ badge.className = 'badge offline'; badge.textContent = 'Offline'; }}
+      else {{
+        badge.className = 'badge offline'; badge.textContent = 'Offline';
+        renderStats(card, null);
+      }}
     }});
   }} catch (e) {{}}
 }}
-setInterval(pollStatuses, 5000);
+async function pollStats() {{
+  try {{
+    const r = await fetch('/api/devices/stats', {{cache: 'no-store'}});
+    if (!r.ok) return;
+    const stats = (await r.json()).stats || {{}};
+    document.querySelectorAll('[data-device-id]').forEach(card => {{
+      renderStats(card, stats[card.dataset.deviceId]);
+    }});
+  }} catch (e) {{}}
+}}
+pollOnline(); pollStats();
+setInterval(pollOnline, 5000);
+setInterval(pollStats, 15000);
 </script>
 """
     return page("Dashboard", body, user=user, active="/")
@@ -640,19 +753,29 @@ def device_manage_page(user: dict, device: dict, online: bool) -> str:
 
 
 def files_page(user: dict, device: dict, rel: str, entries: list) -> str:
+    from urllib.parse import quote
     rows = []
     if rel:
         rows.append('<li><a href="../">../</a><span class="size"></span></li>')
+    rel_prefix = (rel.rstrip("/") + "/") if rel else ""
     for e in entries:
         is_dir = bool(e.get("is_dir"))
         name = e["name"] + ("/" if is_dir else "")
-        from urllib.parse import quote
         href = quote(e["name"]) + ("/" if is_dir else "")
         size = ""
         if not is_dir and e.get("size") is not None:
             size = f"{e['size']:,} bytes"
+        thumb = ""
+        if not is_dir and e.get("is_image"):
+            # loading="lazy" so a directory of 500 photos doesn't fire 500
+            # requests on first render; browser only fetches when scrolled
+            # into view. The thumb endpoint sets immutable cache headers.
+            thumb_url = (f"/devices/{quote(device['id'])}/thumb/"
+                         f"{quote(rel_prefix + e['name'])}?size=80")
+            thumb = (f'<img class="thumb" loading="lazy" decoding="async" '
+                     f'src="{thumb_url}" alt="">')
         rows.append(
-            f'<li><a href="{href}">{escape(name)}</a>'
+            f'<li>{thumb}<a href="{href}">{escape(name)}</a>'
             f'<span class="size">{size}</span></li>'
         )
 

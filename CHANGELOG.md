@@ -3,6 +3,48 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V3.0] — 2026-05-06
+
+First V3 cycle. See `ROADMAP.md` for the full V3 plan; this release ships
+the first two ticked items.
+
+### Added
+- **Per-device system stats on dashboard cards.** New agent op `system_info`
+  returns battery (`termux-battery-status` first, `/sys/class/power_supply/`
+  fallback), storage (free / total of `STORAGE_ROOT`), memory (`/proc/meminfo`),
+  uptime (`/proc/uptime`), and load average (`/proc/loadavg`). Hub aggregates
+  via `/api/devices/stats` (one round-trip per dashboard refresh, 5 s
+  per-device timeout so a slow agent doesn't stall the whole batch). Dashboard
+  cards now render battery / disk / RAM bars + uptime, refreshed every 15 s.
+- **Inline image thumbnails in the file browser.** New agent op `thumbnail`
+  generates JPEG thumbnails via Pillow, cached on disk at
+  `~/.vortex_agent/thumb_cache/<sha1>.jpg` keyed by (path, mtime, size).
+  Honours EXIF orientation so portrait photos render upright. Hub exposes
+  `GET /devices/{id}/thumb/{rel:path}?size=N` with
+  `Cache-Control: public, max-age=86400, immutable` so the browser caches
+  aggressively. File listings render an inline `<img loading="lazy">` for
+  every entry marked `is_image: true` by the agent — directories of 500
+  photos only fetch what scrolls into view.
+- **`ROADMAP.md`** — living doc for what's planned, with checkboxes that
+  flip to `[x]` as items ship. Each entry has a one-line "why," a
+  complexity tag, and a notes section that gets filled in after
+  implementation.
+
+### Changed
+- **`list_dir` op** now marks image entries with `"is_image": true` based on
+  MIME type, so the hub doesn't have to re-guess. Backward compatible —
+  V2.x hubs ignore the new key.
+- **`setup.sh`** installs `python-pillow` (Termux pkg, prebuilt aarch64
+  wheel) and best-effort `pip install Pillow` into the venv. Failure is
+  non-fatal: agent without Pillow returns a clear error to the hub, hub
+  falls back to filename-only listings.
+- **`serve.sh`** also tries `pip install Pillow` on agent-mode startup so
+  users who skipped `setup.sh` still get thumbnails.
+
+### Performance
+- Smoke-tested locally: stats endpoint round-trips in ~130 ms; thumbnail
+  endpoint cold ~166 ms / warm ~29 ms (~5× speedup from on-disk cache).
+
 ## [V2.1] — 2026-05-06
 
 ### Added

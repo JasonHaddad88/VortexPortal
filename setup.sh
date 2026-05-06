@@ -52,7 +52,10 @@ for p in python python-pip openssh curl; do
 done
 
 echo "==> Installing optional extras (best-effort)"
-for opt in git nano termux-api procps cloudflared; do
+# termux-api      : `termux-battery-status` etc. for op_system_info
+# python-pillow   : V3.0 image thumbnails (op_thumbnail). Native pkg avoids
+#                   the libjpeg compile dance that `pip install Pillow` hits.
+for opt in git nano termux-api procps cloudflared python-pillow; do
     if dpkg -s "$opt" >/dev/null 2>&1; then
         echo "    already installed: $opt"
     elif pkg install -y "$opt" >/dev/null 2>&1; then
@@ -134,6 +137,22 @@ fi
 echo "==> Ensuring agent dependencies (websockets, httpx)"
 "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
 "$VPY" -m pip install --quiet websockets httpx
+
+# V3.0: Pillow is an OPTIONAL dependency for image thumbnails. Termux ships
+# prebuilt wheels for it on aarch64; if the install fails (no wheel, missing
+# libjpeg-turbo), we just skip and the agent will return a clear message
+# when the hub asks for a thumbnail. Don't fail setup.sh over it.
+if ! "$VPY" -c 'import PIL' 2>/dev/null; then
+    echo "==> Installing Pillow for image thumbnails (optional)"
+    if "$VPY" -m pip install --quiet Pillow 2>&1 | tail -5; then
+        if "$VPY" -c 'import PIL; print("    Pillow", PIL.__version__)' 2>/dev/null; then
+            :
+        fi
+    else
+        echo "    skipped: Pillow install failed; thumbnails will be unavailable."
+        echo "    Try: pkg install libjpeg-turbo zlib && rerun setup.sh"
+    fi
+fi
 
 # ----------------------------------------------------------------------------
 # Copy agent + hub code into $APP_DIR (hub is optional but useful for the

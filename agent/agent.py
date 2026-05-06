@@ -109,8 +109,205 @@ def op_list_dir(args: dict) -> dict:
                 entry["size"] = child.stat().st_size
             except OSError:
                 entry["size"] = None
+            # Tell the hub which entries are images so it can render thumbnails
+            # without an extra mimetype guess on its side.
+            ctype, _ = mimetypes.guess_type(child.name)
+            if ctype and ctype.startswith("image/"):
+                entry["is_image"] = True
         entries.append(entry)
     return {"entries": entries}
+
+
+# --------------------------------------------------------------------------
+# System info -- best-effort across Termux / Linux / Windows. Anything we
+# can't determine becomes None instead of failing the whole op.
+# --------------------------------------------------------------------------
+def _read_meminfo() -> dict:
+    """Returns {total, available, free} bytes from /proc/meminfo (Linux/Termux)."""
+    out = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                rest = rest.strip()
+                if rest.endswith(" kB"):
+                    try:
+                        kb = int(rest[:-3])
+                        out[key.strip()] = kb * 1024
+                    except ValueError:
+                        pass
+    except OSError:
+        return {}
+    return {
+        "total": out.get("MemTotal"),
+        "available": out.get("MemAvailable") or out.get("MemFree"),
+    }
+
+
+def _read_uptime_seconds() -> Optional[float]:
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _read_loadavg() -> Optional[list]:
+    try:
+        with open("/proc/loadavg") as f:
+            parts = f.read().split()
+        return [float(parts[0]), float(parts[1]), float(parts[2])]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _read_battery() -> Optional[dict]:
+    """Try Termux:API first, then /sys/class/power_supply/, then give up."""
+    import subprocess
+    # Termux:API path -- gives a clean JSON dict.
+    try:
+        result = subprocess.run(
+            ["termux-battery-status"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            return {
+                "percentage": data.get("percentage"),
+                "status": data.get("status"),  # "CHARGING" / "DISCHARGING" / "FULL"
+                "plugged": data.get("plugged"),
+                "temperature": data.get("temperature"),
+            }
+    except (FileNotFoundError, subprocess.TimeoutExpired,
+            json.JSONDecodeError, OSError):
+        pass
+
+    # Generic Linux: /sys/class/power_supply/BAT*/
+    try:
+        for entry in os.listdir("/sys/class/power_supply"):
+            base = f"/sys/class/power_supply/{entry}"
+            try:
+                with open(f"{base}/type") as f:
+                    if f.read().strip() != "Battery":
+                        continue
+                pct = None
+                status = None
+                try:
+                    with open(f"{base}/capacity") as f:
+                        pct = int(f.read().strip())
+                except (OSError, ValueError):
+                    pass
+                try:
+                    with open(f"{base}/status") as f:
+                        status = f.read().strip().upper()
+                except OSError:
+                    pass
+                if pct is not None or status is not None:
+                    return {"percentage": pct, "status": status}
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return None
+
+
+def op_system_info(args: dict) -> dict:
+    import platform
+    import shutil
+    import socket
+
+    out: dict = {
+        "agent_version": __VORTEX_AGENT_VERSION__,
+        "hostname": socket.gethostname(),
+        "platform": f"{platform.system()} {platform.release()}",
+    }
+
+    # Storage of the agent's exposed root, since that's what users care about.
+    try:
+        usage = shutil.disk_usage(STORAGE_ROOT)
+        out["storage"] = {
+            "root": str(STORAGE_ROOT),
+            "total": usage.total,
+            "free": usage.free,
+        }
+    except OSError:
+        out["storage"] = None
+
+    out["memory"] = _read_meminfo() or None
+    out["uptime_s"] = _read_uptime_seconds()
+    out["loadavg"] = _read_loadavg()
+    out["battery"] = _read_battery()
+    return out
+
+
+# --------------------------------------------------------------------------
+# Thumbnails -- Pillow if available, on-disk cache keyed by (path, mtime, size).
+# Returns base64-encoded JPEG since thumbnails are small (<50 KB) and a single
+# unary response is simpler than the binary-stream protocol for such payloads.
+# --------------------------------------------------------------------------
+THUMB_CACHE = Path(os.path.expanduser("~/.vortex_agent/thumb_cache"))
+THUMB_DEFAULT_SIZE = 256
+THUMB_MAX_SIZE = 1024
+
+
+def op_thumbnail(args: dict) -> dict:
+    import base64
+    import hashlib
+    import io
+
+    rel = args.get("path", "")
+    try:
+        size = int(args.get("size", THUMB_DEFAULT_SIZE))
+    except (TypeError, ValueError):
+        size = THUMB_DEFAULT_SIZE
+    size = max(32, min(size, THUMB_MAX_SIZE))
+
+    p = _safe_resolve(rel)
+    if not p.is_file():
+        raise FileNotFoundError("Not a file")
+
+    try:
+        from PIL import Image
+    except ImportError:
+        raise RuntimeError(
+            "Pillow not installed on agent; install with "
+            "`pkg install python-pillow` (Termux) or "
+            "`pip install Pillow`."
+        )
+
+    st = p.stat()
+    cache_key = hashlib.sha1(
+        f"{p}|{st.st_mtime_ns}|{st.st_size}|{size}".encode()
+    ).hexdigest()
+    cache_path = THUMB_CACHE / f"{cache_key}.jpg"
+
+    if cache_path.exists():
+        data = cache_path.read_bytes()
+    else:
+        with Image.open(p) as img:
+            # Honour EXIF orientation so portrait photos don't show rotated.
+            try:
+                from PIL import ImageOps
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+            img.thumbnail((size, size))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=82, optimize=True)
+            data = buf.getvalue()
+        try:
+            THUMB_CACHE.mkdir(parents=True, exist_ok=True)
+            cache_path.write_bytes(data)
+        except OSError:
+            pass  # cache write failure is non-fatal
+
+    return {
+        "data_b64": base64.b64encode(data).decode(),
+        "content_type": "image/jpeg",
+        "size": len(data),
+    }
 
 
 class Session:
@@ -166,6 +363,8 @@ async def op_read_file_stream(session: "Session", rid: str, args: dict) -> None:
 UNARY_OPS = {
     "stat": op_stat,
     "list_dir": op_list_dir,
+    "system_info": op_system_info,
+    "thumbnail": op_thumbnail,
 }
 
 STREAM_OPS = {
