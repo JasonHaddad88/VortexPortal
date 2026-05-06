@@ -85,6 +85,35 @@ fi
 # ----------------------------------------------------------------------------
 mkdir -p "$APP_DIR"
 
+# ----------------------------------------------------------------------------
+# Sanity-check: Termux's Python is consistent with its system libs.
+#
+# Symptom we're guarding against: `pkg upgrade python` ships a newer Python
+# that needs a newer libexpat, but libexpat didn't get upgraded in lockstep
+# (partial system update). pyexpat then dlopen-fails on a missing symbol
+# like XML_SetAllocTrackerActivationThreshold, which breaks xml.parsers.expat
+# -> xmlrpc.client -> pip itself.
+# ----------------------------------------------------------------------------
+if ! python -c 'import xml.parsers.expat, ssl, ctypes' 2>/dev/null; then
+    echo
+    echo "============================================================"
+    echo "  ERROR: Termux's Python is broken (stdlib import failed)."
+    echo "============================================================"
+    echo "  This usually means a partial pkg upgrade left Python and"
+    echo "  its system C libraries (libexpat, openssl, etc.) at"
+    echo "  mismatched versions."
+    echo
+    echo "  Fix:"
+    echo "    yes | pkg update"
+    echo "    yes | pkg upgrade -y"
+    echo "    rm -rf $APP_DIR        # nuke the venv built against the old libs"
+    echo "    bash setup.sh          # then retry"
+    echo
+    echo "  Diagnostic detail:"
+    python -c 'import xml.parsers.expat' 2>&1 | tail -3 | sed 's/^/    /'
+    exit 1
+fi
+
 # Termux's `python -m venv` doesn't always create the `pip` shim in
 # .venv/bin/, so we always invoke pip as `python -m pip` and bootstrap it
 # via `ensurepip` to guarantee it's installed inside the venv.
