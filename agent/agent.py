@@ -311,16 +311,27 @@ def op_thumbnail(args: dict) -> dict:
 
 
 class Session:
-    """Wraps the websocket with a send-lock.
+    """Wraps the websocket with a send-lock + inbound-stream routing.
 
-    websockets isn't safe under concurrent send() from multiple tasks --
-    and with multiplexed streams we need atomic (header, binary) pairs --
-    so every send goes through the lock.
+    Sending: websockets isn't safe under concurrent send() from multiple
+    tasks, and multiplexed streams need atomic (header, binary) pairs, so
+    every send goes through the lock.
+
+    Receiving: the hub may stream chunks *into* the agent (uploads). We
+    track which rid the next binary frame belongs to (set when we see a
+    stream_chunk_header text frame) and route bytes into the matching
+    op's queue. Same trick the hub uses; mirrored.
     """
 
     def __init__(self, ws):
         self.ws = ws
         self.send_lock = asyncio.Lock()
+        # Inbound streams: rid -> asyncio.Queue. Each item is one of:
+        #   {"type": "chunk", "data": bytes}
+        #   {"type": "end"}
+        #   {"type": "abort", "reason": "..."}
+        self._recv_queues: dict = {}
+        self._pending_binary_for_rid: Optional[str] = None
 
     async def send_text(self, msg: dict) -> None:
         async with self.send_lock:
@@ -333,6 +344,92 @@ class Session:
         async with self.send_lock:
             await self.ws.send(json.dumps({"type": "stream_chunk_header", "id": rid}))
             await self.ws.send(data)
+
+    def open_recv(self, rid: str) -> asyncio.Queue:
+        """Allocate a queue an op can drain to receive an inbound stream."""
+        q: asyncio.Queue = asyncio.Queue()
+        self._recv_queues[rid] = q
+        return q
+
+    def close_recv(self, rid: str) -> None:
+        self._recv_queues.pop(rid, None)
+
+    async def route_text_frame(self, msg: dict) -> bool:
+        """Dispatch a text message to a receive queue if it's part of an
+        inbound stream. Returns True if handled."""
+        rid = msg.get("id")
+        mtype = msg.get("type")
+        if mtype == "stream_chunk_header" and rid:
+            self._pending_binary_for_rid = rid
+            return True
+        if mtype == "stream_end" and rid in self._recv_queues:
+            await self._recv_queues[rid].put({"type": "end"})
+            return True
+        return False
+
+    async def route_binary_frame(self, data: bytes) -> bool:
+        """Hand a binary frame to whichever op armed itself with the most
+        recent stream_chunk_header. Returns True if handled."""
+        rid = self._pending_binary_for_rid
+        self._pending_binary_for_rid = None
+        if rid is None:
+            return False
+        q = self._recv_queues.get(rid)
+        if q is None:
+            return False  # stream wasn't opened (or already cancelled)
+        await q.put({"type": "chunk", "data": data})
+        return True
+
+
+async def op_write_file(session: "Session", rid: str, args: dict) -> dict:
+    """Receive a file from the hub (V3.0).
+
+    Hub flow: sends the request, then a sequence of (stream_chunk_header,
+    binary frame) pairs, then a stream_end. We drain those into the target
+    file and return the bytes-written count.
+    """
+    rel = args.get("path", "")
+    expected_size = args.get("size")
+    p = _safe_resolve(rel)
+    if p.exists() and p.is_dir():
+        raise IsADirectoryError(f"{rel} is a directory; refuse to overwrite")
+    # Make sure the destination directory exists -- we want "upload to a new
+    # subfolder" to Just Work.
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    queue = session.open_recv(rid)
+    written = 0
+    # Write to a tempfile then atomically rename, so a half-uploaded file
+    # never appears at the final path.
+    tmp = p.with_suffix(p.suffix + ".part")
+    try:
+        with tmp.open("wb") as f:
+            while True:
+                evt = await asyncio.wait_for(queue.get(), timeout=120.0)
+                if evt["type"] == "end":
+                    break
+                if evt["type"] == "chunk":
+                    chunk = evt["data"]
+                    f.write(chunk)
+                    written += len(chunk)
+                elif evt["type"] == "abort":
+                    raise OSError("upload aborted: " + evt.get("reason", ""))
+        os.replace(tmp, p)
+    except Exception:
+        # Best-effort cleanup of the tempfile on any failure.
+        try: tmp.unlink()
+        except OSError: pass
+        raise
+    finally:
+        session.close_recv(rid)
+
+    if expected_size is not None and written != expected_size:
+        # Don't fail (the file is already on disk and might be valid) but
+        # surface the discrepancy.
+        return {"path": rel, "written": written,
+                "expected": expected_size,
+                "warning": "size mismatch"}
+    return {"path": rel, "written": written}
 
 
 async def op_read_file_stream(session: "Session", rid: str, args: dict) -> None:
@@ -367,8 +464,16 @@ UNARY_OPS = {
     "thumbnail": op_thumbnail,
 }
 
+# Ops that stream chunks from agent to hub (sender-side).
 STREAM_OPS = {
     "read_file": op_read_file_stream,
+}
+
+# Ops that receive a stream from the hub and return a unary result. They
+# need both the session (to drain the receive queue) and an awaitable
+# return value.
+ASYNC_RECV_OPS = {
+    "write_file": op_write_file,
 }
 
 
@@ -400,6 +505,21 @@ async def _handle_request(session: "Session", msg: dict) -> None:
                 "type": "response", "id": rid, "ok": False,
                 "error": f"{type(e).__name__}: {e}",
             })
+        return
+
+    if op in ASYNC_RECV_OPS:
+        try:
+            result = await ASYNC_RECV_OPS[op](session, rid, args)
+        except (PermissionError, FileNotFoundError, IsADirectoryError,
+                OSError, ValueError, asyncio.TimeoutError) as e:
+            await session.send_text({
+                "type": "response", "id": rid, "ok": False,
+                "error": f"{type(e).__name__}: {e}",
+            })
+            return
+        await session.send_text({
+            "type": "response", "id": rid, "ok": True, "result": result,
+        })
         return
 
     await session.send_text({
@@ -461,12 +581,18 @@ async def _connect_once(cfg: dict) -> Optional[bool]:
             session = Session(ws)
 
             async for raw in ws:
-                # The hub never sends binary frames, so we expect text only.
                 if isinstance(raw, (bytes, bytearray)):
+                    # V3.0 uploads: hub sends raw chunks targeted at the rid
+                    # named in the most recent stream_chunk_header.
+                    await session.route_binary_frame(raw)
                     continue
                 try:
                     msg = json.loads(raw)
                 except (TypeError, ValueError):
+                    continue
+                # Stream control frames (chunk header / end) for inbound
+                # uploads route to whichever op opened a recv queue.
+                if await session.route_text_frame(msg):
                     continue
                 if msg.get("type") == "request":
                     # Each request runs concurrently — file streams shouldn't

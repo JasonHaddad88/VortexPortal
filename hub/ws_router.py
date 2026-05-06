@@ -21,6 +21,13 @@ Wire protocol (JSON messages, both directions, plus binary chunks):
     Hub -> Agent:
       {"type": "auth_ok"} | {"type": "auth_fail", "error": "..."}
       {"type": "request", "id": "<rid>", "op": "...", "args": {...}}
+
+      V3.0 upload: hub may stream chunks *to* the agent (write_file op).
+      Same wire format as the agent's chunk uploads, just reversed direction:
+        {"type": "stream_chunk_header", "id": "<rid>"}
+        <binary frame>
+        ...
+        {"type": "stream_end", "id": "<rid>"}
 """
 
 import asyncio
@@ -64,6 +71,38 @@ class AgentConnection:
         finally:
             self._pending_unary.pop(rid, None)
 
+        if not msg.get("ok"):
+            raise AgentError(msg.get("error") or "agent error")
+        return msg.get("result") or {}
+
+    async def upload(self, op: str, args: dict,
+                     chunks: AsyncIterator[bytes],
+                     timeout: float = 600.0) -> dict:
+        """Send an upload-style request: an initial JSON request frame, a
+        sequence of (header, binary) chunk pairs streamed *to* the agent,
+        then a stream_end. Awaits a single response. Used for write_file.
+
+        The send-lock keeps each (header, binary) pair atomic so the agent's
+        receive routing isn't confused across multiplexed sends.
+        """
+        rid = uuid.uuid4().hex
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._pending_unary[rid] = fut
+        try:
+            await self._send({"type": "request", "id": rid, "op": op,
+                              "args": args or {}})
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                async with self._send_lock:
+                    await self.ws.send_json({"type": "stream_chunk_header",
+                                             "id": rid})
+                    await self.ws.send_bytes(chunk)
+            await self._send({"type": "stream_end", "id": rid})
+            msg = await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._pending_unary.pop(rid, None)
         if not msg.get("ok"):
             raise AgentError(msg.get("error") or "agent error")
         return msg.get("result") or {}

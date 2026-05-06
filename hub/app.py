@@ -368,6 +368,48 @@ async def device_files_path(device_id: str, rel: str,
     return await _browse_or_download(device_id, rel, user, is_dir_hint)
 
 
+# --------------------------------------------------------------------------
+# V3.0: file upload. PUT to the same path as GET (REST-y, idempotent).
+# Body is the raw file bytes; we stream them straight through to the
+# agent over the WebSocket -- no buffering on the hub side.
+# --------------------------------------------------------------------------
+@app.put("/devices/{device_id}/files/{rel:path}")
+async def device_upload(device_id: str, rel: str, request: Request,
+                        user: dict = Depends(auth.require_user)):
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+
+    if not rel or rel.endswith("/"):
+        raise HTTPException(status_code=400,
+                            detail="PUT target must be a file path")
+
+    size_hdr = request.headers.get("content-length")
+    try:
+        size = int(size_hdr) if size_hdr else None
+    except ValueError:
+        size = None
+
+    async def chunks():
+        async for chunk in request.stream():
+            if chunk:
+                yield chunk
+
+    try:
+        result = await conn.upload(
+            "write_file", {"path": rel, "size": size}, chunks(),
+        )
+    except ws_router.AgentError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Agent did not finish in time")
+
+    return JSONResponse({"ok": True, "result": result})
+
+
 async def _browse_or_download(device_id: str, rel: str, user: dict,
                               is_dir_hint: bool = True):
     d = db.get_device_for_user(device_id, user["id"])

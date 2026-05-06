@@ -42,9 +42,17 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
   marked `is_image: true`. Falls back to filename-only when Pillow missing.
   Smoke: 253 KB JPEG → 720 B thumb at size=128, warm cache ~5× faster.
 
-- [ ] **File upload (browser → device)** 🟡
+- [x] **File upload (browser → device)** 🟡 — _shipped V3.0_
   Why: biggest functional gap; today the app is read-only on the device side.
-  Notes: new agent op `write_file`, drag-drop in browser.
+  Notes: new agent op `write_file` (async, drains an inbound stream into a
+  `.part` tempfile then atomic rename — half-uploaded files never appear at
+  the final path). Hub exposes `PUT /devices/{id}/files/{rel}` that streams
+  the request body straight through over WS without buffering. Browser UI:
+  drop-zone + file-picker on the file browser, per-file progress bars via
+  XHR `upload.onprogress`. Smoke: 8 MiB random file at ~15 MB/s on
+  localhost; SHA-256 byte-perfect; sad-path PUT to a directory returns 502
+  with `IsADirectoryError` instead of corrupting anything. Parent
+  directories are auto-created so "upload to a new subfolder" Just Works.
 
 - [ ] **Resumable downloads (HTTP Range support)** 🟢
   Why: a dropped 500 MB transfer doesn't restart from 0.

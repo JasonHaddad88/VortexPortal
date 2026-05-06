@@ -419,6 +419,57 @@ ul.dirlist li .thumb.placeholder {
   display: inline-block;
 }
 
+/* ---------- Upload drop zone (V3.0) ---------- */
+.upload-zone {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  margin: 0.5rem 0 1rem;
+  display: flex; align-items: center; gap: 1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  transition: background .15s, border-color .15s;
+}
+.upload-zone.drag {
+  background: rgba(168, 85, 247, 0.08);
+  border-color: var(--purple);
+  color: var(--text);
+}
+.upload-zone .hint { flex: 1; }
+.upload-zone input[type=file] { display: none; }
+.upload-progress {
+  display: none;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.25rem 0 1rem;
+}
+.upload-progress.active { display: flex; }
+.upload-progress .row {
+  display: flex; align-items: center; gap: 0.6rem;
+  font-size: 0.75rem;
+}
+.upload-progress .name {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-progress .bar {
+  width: 140px; height: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 2px; overflow: hidden;
+}
+.upload-progress .bar > i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+  width: 0;
+  transition: width .12s;
+}
+.upload-progress .pct { width: 3rem; text-align: right; color: var(--muted); }
+.upload-progress .row.done .bar > i { background: var(--success); }
+.upload-progress .row.error .bar > i { background: var(--danger); }
+.upload-progress .row.error .pct { color: var(--danger); }
+
 footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -780,6 +831,9 @@ def files_page(user: dict, device: dict, rel: str, entries: list) -> str:
         )
 
     title_path = "/" + rel
+    # JS escapes for safety inside the data-* attributes / template literals.
+    js_did = device['id']
+    js_dir_prefix = rel_prefix
     body = f"""<div class="breadcrumbs">
   <span class="device-pill">{escape(device['name'])}</span>
   <span class="sep">·</span>
@@ -787,8 +841,117 @@ def files_page(user: dict, device: dict, rel: str, entries: list) -> str:
   <span class="sep">·</span>
   <span>{escape(title_path)}</span>
 </div>
-<ul class="dirlist">{''.join(rows)}</ul>"""
+
+<div class="upload-zone" id="upload-zone">
+  <span class="hint">Drop files here to upload to <code>{escape(title_path)}</code>, or
+    <a href="#" id="upload-pick" style="color:var(--cyan)">choose files</a>.
+  </span>
+  <input type="file" id="upload-input" multiple>
+</div>
+<div class="upload-progress" id="upload-progress"></div>
+
+<ul class="dirlist">{''.join(rows)}</ul>
+
+<script>
+(function() {{
+  const did = {json_dumps(js_did)};
+  const dir = {json_dumps(js_dir_prefix)};
+  const zone = document.getElementById('upload-zone');
+  const input = document.getElementById('upload-input');
+  const pick = document.getElementById('upload-pick');
+  const progress = document.getElementById('upload-progress');
+
+  pick.addEventListener('click', e => {{ e.preventDefault(); input.click(); }});
+  input.addEventListener('change', () => {{
+    if (input.files && input.files.length) uploadFiles(input.files);
+    input.value = '';
+  }});
+
+  ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => {{
+    e.preventDefault(); e.stopPropagation(); zone.classList.add('drag');
+  }}));
+  ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => {{
+    e.preventDefault(); e.stopPropagation(); zone.classList.remove('drag');
+  }}));
+  zone.addEventListener('drop', e => {{
+    if (e.dataTransfer && e.dataTransfer.files.length)
+      uploadFiles(e.dataTransfer.files);
+  }});
+
+  function makeRow(name) {{
+    const r = document.createElement('div');
+    r.className = 'row';
+    r.innerHTML = `<span class="name">${{escapeHtml(name)}}</span>` +
+                  `<div class="bar"><i></i></div>` +
+                  `<span class="pct">0%</span>`;
+    return r;
+  }}
+  function escapeHtml(s) {{
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }}
+
+  async function uploadFiles(files) {{
+    progress.classList.add('active');
+    let allOk = true;
+    for (const f of files) {{
+      const row = makeRow(f.name);
+      progress.appendChild(row);
+      const bar = row.querySelector('.bar > i');
+      const pct = row.querySelector('.pct');
+
+      try {{
+        await new Promise((resolve, reject) => {{
+          const xhr = new XMLHttpRequest();
+          const url = `/devices/${{encodeURIComponent(did)}}/files/` +
+                      encodeURIComponent(dir + f.name);
+          xhr.open('PUT', url);
+          xhr.upload.onprogress = e => {{
+            if (!e.lengthComputable) return;
+            const p = Math.round(e.loaded / e.total * 100);
+            bar.style.width = p + '%';
+            pct.textContent = p + '%';
+          }};
+          xhr.onload = () => {{
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error('HTTP ' + xhr.status + ': ' + xhr.responseText));
+          }};
+          xhr.onerror = () => reject(new Error('network error'));
+          xhr.send(f);
+        }});
+        row.classList.add('done');
+        bar.style.width = '100%';
+        pct.textContent = 'done';
+      }} catch (e) {{
+        row.classList.add('error');
+        pct.textContent = 'error';
+        row.title = e.message;
+        allOk = false;
+      }}
+    }}
+    if (allOk) {{
+      // Reload after a short pause so the user sees the green ticks first.
+      setTimeout(() => location.reload(), 500);
+    }}
+  }}
+}})();
+</script>"""
     return page(f"Files {title_path}", body, user=user, active="/")
+
+
+def _json_dumps_for_html(value) -> str:
+    """JSON for inline JS literals; escapes < and / so a stray "</script>" in
+    a path can't break out of the script tag."""
+    import json as _json
+    return (_json.dumps(value)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026"))
+
+
+# alias for f-string-friendly use above
+json_dumps = _json_dumps_for_html
 
 
 def files_error_page(user: dict, device: dict, message: str) -> str:

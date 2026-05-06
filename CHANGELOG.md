@@ -6,9 +6,19 @@ All notable changes to this project. Format follows
 ## [V3.0] — 2026-05-06
 
 First V3 cycle. See `ROADMAP.md` for the full V3 plan; this release ships
-the first two ticked items.
+the first three ticked items.
 
 ### Added
+- **File upload (browser → device).** Closes the biggest functional gap:
+  V2.x was read-only. New agent op `write_file` is async and drains an
+  inbound stream from the hub into a `<dest>.part` tempfile, then atomically
+  renames into place — half-uploaded files never appear at the final path.
+  New hub endpoint `PUT /devices/{id}/files/{rel}` accepts the raw request
+  body and streams it straight through over the WebSocket without
+  buffering. Browser UI: a drop-zone + file picker on every directory
+  page, with per-file progress bars driven by XHR `upload.onprogress`.
+  Parent directories are auto-created so "upload into a new subfolder"
+  works without a separate mkdir.
 - **Per-device system stats on dashboard cards.** New agent op `system_info`
   returns battery (`termux-battery-status` first, `/sys/class/power_supply/`
   fallback), storage (free / total of `STORAGE_ROOT`), memory (`/proc/meminfo`),
