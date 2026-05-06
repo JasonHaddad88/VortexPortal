@@ -3,6 +3,41 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V2.1] — 2026-05-06
+
+### Added
+- **One-click delete on the dashboard.** Each device card now has a Delete
+  button next to Browse / Manage. Confirmation dialog warns it can't be
+  undone. Same backend route (`POST /devices/{id}/delete`); just no
+  longer two clicks deep behind the Manage page.
+- **Tunable WebSocket keepalive on the agent.** New env vars override the
+  defaults so flaky cellular / Doze-prone phones can loosen further:
+  - `VORTEX_PING_INTERVAL` (default `30` s, was `25`)
+  - `VORTEX_PING_TIMEOUT`  (default `60` s, was `20`)
+- **Backwards-compatible binary streaming.** Hub accepts both V2.0 base64
+  chunks and V2.1 binary chunks on the same endpoint, so a mixed-version
+  fleet keeps working during a rolling upgrade.
+
+### Changed
+- **File chunks are now binary WebSocket frames, not base64-in-JSON.** ~33 %
+  less wire overhead and zero base64 encode/decode cost per chunk.
+  Multiplexing safety is preserved by sending each (text header, binary
+  payload) pair atomically under the agent's send-lock.
+  - New protocol per chunk:
+    - `{"type":"stream_chunk_header","id":"<rid>"}` (text frame)
+    - `<binary frame: raw chunk bytes>`
+  - Old V2.0 `{"type":"stream_chunk","data":"<base64>"}` still accepted.
+- **Chunk size 64 KiB → 256 KiB.** ~4× fewer round-trips on large file
+  downloads, still well under the 2 MiB frame ceiling.
+- **Hub `/ws/agent` receive loop** uses `ws.receive()` and dispatches on
+  text vs bytes, instead of `ws.receive_json()` which only sees text.
+
+### Performance
+- Localhost smoke test: 5 MiB file downloads byte-perfect at ≈5 MiB/s
+  (≈1 s wall-clock), vs ≈3.5 MiB/s on V2.0's base64 path. Real wins on
+  cellular / Cloudflare are larger because base64 inflated bytes-on-wire
+  by 33 % and JSON parsing per chunk is no longer in the hot loop.
+
 ## [V2.0] — 2026-05-04
 
 Complete architectural rewrite. The peer-to-peer model from V1 (each device

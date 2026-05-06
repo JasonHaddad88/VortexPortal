@@ -7,7 +7,7 @@ token, and serves requests from the hub.
 Currently supported ops:
     stat        {path} -> {exists, is_dir, size?, content_type?}
     list_dir    {path} -> {entries: [{name, is_dir, size?}, ...]}
-    read_file   {path} -> stream of base64-encoded chunks
+    read_file   {path} -> binary-frame stream (header + raw chunks)
 
 Path safety: every path is resolved relative to STORAGE_ROOT (default
 ~/storage/shared on Termux, ~ elsewhere) and rejected if it would escape it.
@@ -19,13 +19,12 @@ Run with:  python -m agent.agent
 """
 
 import asyncio
-import base64
 import json
 import mimetypes
 import os
 import sys
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import Optional
 
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -34,10 +33,16 @@ from . import __VORTEX_AGENT_VERSION__
 from .pairing import config_path, ensure_paired, load_config, save_config
 
 
-CHUNK_SIZE = 64 * 1024  # 64 KiB raw -> ~88 KiB base64 per JSON message
+# 256 KiB chunks: ~4x fewer round-trips than V2.0's 64 KiB and well under
+# the 2 MiB websocket frame ceiling. Chunks are sent as raw binary frames
+# (no base64) under a send-lock so the (header, binary) pair stays atomic.
+CHUNK_SIZE = 256 * 1024
 SEND_TIMEOUT = 30.0
-PING_INTERVAL = 25.0
-PING_TIMEOUT = 20.0
+
+# Defaults are loose enough for cellular + Cloudflare's 100 s idle ceiling.
+# Termux + flaky network users can tune higher via env without code changes.
+PING_INTERVAL = float(os.environ.get("VORTEX_PING_INTERVAL", "30"))
+PING_TIMEOUT = float(os.environ.get("VORTEX_PING_TIMEOUT", "60"))
 
 
 def _storage_root() -> Path:
@@ -108,15 +113,44 @@ def op_list_dir(args: dict) -> dict:
     return {"entries": entries}
 
 
-async def op_read_file_stream(rid: str, args: dict) -> AsyncIterator[dict]:
+class Session:
+    """Wraps the websocket with a send-lock.
+
+    websockets isn't safe under concurrent send() from multiple tasks --
+    and with multiplexed streams we need atomic (header, binary) pairs --
+    so every send goes through the lock.
+    """
+
+    def __init__(self, ws):
+        self.ws = ws
+        self.send_lock = asyncio.Lock()
+
+    async def send_text(self, msg: dict) -> None:
+        async with self.send_lock:
+            await self.ws.send(json.dumps(msg))
+
+    async def send_chunk(self, rid: str, data: bytes) -> None:
+        # Header + binary go out atomically; no other task can interleave a
+        # binary frame between them, so the hub knows this binary frame is
+        # the chunk for `rid`.
+        async with self.send_lock:
+            await self.ws.send(json.dumps({"type": "stream_chunk_header", "id": rid}))
+            await self.ws.send(data)
+
+
+async def op_read_file_stream(session: "Session", rid: str, args: dict) -> None:
     rel = args.get("path", "")
     p = _safe_resolve(rel)
     if not p.is_file():
         raise FileNotFoundError("Not a file")
     size = p.stat().st_size
     ctype, _ = mimetypes.guess_type(p.name)
-    yield {"type": "stream_start", "id": rid,
-           "size": size, "content_type": ctype or "application/octet-stream"}
+
+    await session.send_text({
+        "type": "stream_start", "id": rid,
+        "size": size, "content_type": ctype or "application/octet-stream",
+    })
+
     # Yield control between chunks so a multi-GB read doesn't starve pings.
     loop = asyncio.get_event_loop()
     with p.open("rb") as f:
@@ -124,9 +158,9 @@ async def op_read_file_stream(rid: str, args: dict) -> AsyncIterator[dict]:
             chunk = await loop.run_in_executor(None, f.read, CHUNK_SIZE)
             if not chunk:
                 break
-            yield {"type": "stream_chunk", "id": rid,
-                   "data": base64.b64encode(chunk).decode()}
-    yield {"type": "stream_end", "id": rid}
+            await session.send_chunk(rid, chunk)
+
+    await session.send_text({"type": "stream_end", "id": rid})
 
 
 UNARY_OPS = {
@@ -139,7 +173,7 @@ STREAM_OPS = {
 }
 
 
-async def _handle_request(ws, msg: dict) -> None:
+async def _handle_request(session: "Session", msg: dict) -> None:
     """Run one op and send back response(s). Errors become {ok:false}."""
     rid = msg.get("id")
     op = msg.get("op")
@@ -149,31 +183,30 @@ async def _handle_request(ws, msg: dict) -> None:
         try:
             result = UNARY_OPS[op](args)
         except (PermissionError, FileNotFoundError, OSError, ValueError) as e:
-            await ws.send(json.dumps({
+            await session.send_text({
                 "type": "response", "id": rid, "ok": False,
                 "error": f"{type(e).__name__}: {e}",
-            }))
+            })
             return
-        await ws.send(json.dumps({
+        await session.send_text({
             "type": "response", "id": rid, "ok": True, "result": result,
-        }))
+        })
         return
 
     if op in STREAM_OPS:
         try:
-            async for frame in STREAM_OPS[op](rid, args):
-                await ws.send(json.dumps(frame))
+            await STREAM_OPS[op](session, rid, args)
         except (PermissionError, FileNotFoundError, OSError, ValueError) as e:
-            await ws.send(json.dumps({
+            await session.send_text({
                 "type": "response", "id": rid, "ok": False,
                 "error": f"{type(e).__name__}: {e}",
-            }))
+            })
         return
 
-    await ws.send(json.dumps({
+    await session.send_text({
         "type": "response", "id": rid, "ok": False,
         "error": f"unknown op: {op}",
-    }))
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -226,16 +259,21 @@ async def _connect_once(cfg: dict) -> Optional[bool]:
                 return None
 
             print(f"==> Connected as '{ack_msg.get('name', cfg.get('name'))}'")
+            session = Session(ws)
 
             async for raw in ws:
+                # The hub never sends binary frames, so we expect text only.
+                if isinstance(raw, (bytes, bytearray)):
+                    continue
                 try:
                     msg = json.loads(raw)
                 except (TypeError, ValueError):
                     continue
                 if msg.get("type") == "request":
                     # Each request runs concurrently — file streams shouldn't
-                    # block other ops.
-                    asyncio.create_task(_handle_request(ws, msg))
+                    # block other ops. Session.send_lock keeps multiplexed
+                    # writes from tangling.
+                    asyncio.create_task(_handle_request(session, msg))
             return True
     except ConnectionClosed as e:
         print(f"!! disconnected (code {e.code}): {e.reason or 'no reason'}")

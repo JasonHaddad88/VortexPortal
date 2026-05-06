@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VORTEX_SERVE_VERSION=4
+# VORTEX_SERVE_VERSION=5
 # Vortex Termux launcher.
 #
 #   MODE=agent (default)  Runs the agent, connecting outbound to a hub.

@@ -16,6 +16,7 @@ Env vars:
 
 import asyncio
 import base64
+import json
 import os
 import time
 import uuid
@@ -369,13 +370,18 @@ async def _stream_file_from_agent(conn, rel: str, info: dict):
         headers["Content-Length"] = str(int(info["size"]))
 
     # Pull the stream into an async generator that yields decoded bytes.
+    # V2.1+ agents use binary frames (msg["_binary"]); V2.0 agents use
+    # base64-in-JSON (msg["data"]). Handle both.
     async def gen():
         try:
             async for msg in conn.stream("read_file", {"path": rel}):
                 if msg.get("type") == "stream_chunk":
-                    data = msg.get("data")
-                    if data:
-                        yield base64.b64decode(data)
+                    if "_binary" in msg:
+                        yield msg["_binary"]
+                    else:
+                        data = msg.get("data")
+                        if data:
+                            yield base64.b64decode(data)
                 elif msg.get("type") == "stream_end":
                     return
         except ws_router.AgentError:
@@ -451,11 +457,24 @@ async def ws_agent(ws: WebSocket):
 
     try:
         while True:
-            msg = await ws.receive_json()
-            if not isinstance(msg, dict):
-                continue
+            # Use the lower-level receive() so we can dispatch on frame type
+            # (text vs binary) -- V2.1 agents send chunk payloads as binary.
+            evt = await ws.receive()
+            etype = evt.get("type")
+            if etype == "websocket.disconnect":
+                break
             db.touch_device(device_id)
-            await conn.handle_incoming(msg)
+            text = evt.get("text")
+            data = evt.get("bytes")
+            if text is not None:
+                try:
+                    msg = json.loads(text)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(msg, dict):
+                    await conn.handle_incoming(msg)
+            elif data is not None:
+                await conn.handle_incoming_binary(data)
     except WebSocketDisconnect:
         pass
     except Exception:

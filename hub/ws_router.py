@@ -1,22 +1,26 @@
 """Agent connection registry + multiplexed request/response over WebSocket.
 
-Wire protocol (JSON messages, both directions):
+Wire protocol (JSON messages, both directions, plus binary chunks):
 
     Agent -> Hub:
       {"type": "auth", "device_id": "...", "token": "..."}
       {"type": "response", "id": "<rid>", "ok": true, "result": {...}}
       {"type": "response", "id": "<rid>", "ok": false, "error": "..."}
       {"type": "stream_start", "id": "<rid>", "size": <int>, "content_type": "..."}
-      {"type": "stream_chunk", "id": "<rid>", "data": "<base64>"}
       {"type": "stream_end",   "id": "<rid>"}
+
+      V2.1+: chunks are sent as a text header followed by a binary frame,
+             paired atomically under the agent's send-lock so multiplexed
+             streams stay disambiguated:
+        {"type": "stream_chunk_header", "id": "<rid>"}
+        <binary frame: raw chunk bytes>
+
+      V2.0 (legacy, still accepted): base64-encoded inside JSON:
+        {"type": "stream_chunk", "id": "<rid>", "data": "<base64>"}
 
     Hub -> Agent:
       {"type": "auth_ok"} | {"type": "auth_fail", "error": "..."}
       {"type": "request", "id": "<rid>", "op": "...", "args": {...}}
-
-Why base64 in JSON for chunks rather than binary frames: simplicity and
-multiplexing safety. ~33% overhead is fine for a control-panel UI; SCP/rsync
-remains the right tool for huge transfers.
 """
 
 import asyncio
@@ -36,6 +40,11 @@ class AgentConnection:
         self._pending_stream: dict = {}
         self._send_lock = asyncio.Lock()
         self._closed = False
+        # V2.1 binary-chunk protocol: when we see {"type":"stream_chunk_header",
+        # "id": rid}, the very next binary frame on this connection belongs to
+        # `rid`. We rely on the agent's send-lock keeping (header, binary)
+        # atomic so this never gets confused across multiplexed streams.
+        self._pending_binary_for_rid: Optional[str] = None
 
     async def _send(self, msg: dict) -> None:
         async with self._send_lock:
@@ -90,13 +99,17 @@ class AgentConnection:
             self._pending_stream.pop(rid, None)
 
     async def handle_incoming(self, msg: dict) -> None:
-        """Dispatch a message received from the agent to its waiter."""
+        """Dispatch a TEXT message received from the agent to its waiter."""
         rid = msg.get("id")
         mtype = msg.get("type")
         if mtype == "response":
             fut = self._pending_unary.get(rid)
             if fut and not fut.done():
                 fut.set_result(msg)
+            return
+        if mtype == "stream_chunk_header":
+            # Arm the connection: the next binary frame is this rid's chunk.
+            self._pending_binary_for_rid = rid
             return
         if mtype in ("stream_start", "stream_chunk", "stream_end"):
             q = self._pending_stream.get(rid)
@@ -108,6 +121,21 @@ class AgentConnection:
             q = self._pending_stream.get(rid)
             if q is not None:
                 await q.put(msg)
+
+    async def handle_incoming_binary(self, data: bytes) -> None:
+        """A raw chunk frame arrived; it belongs to whichever rid the most
+        recent stream_chunk_header named. The agent's send-lock guarantees
+        that pairing is unambiguous."""
+        rid = self._pending_binary_for_rid
+        self._pending_binary_for_rid = None
+        if rid is None:
+            return  # unsolicited binary frame; ignore
+        q = self._pending_stream.get(rid)
+        if q is None:
+            return  # request was cancelled / timed out
+        # Stuff the bytes into the same envelope shape the legacy base64
+        # path uses, with a "_binary" key the consumer can prefer.
+        await q.put({"type": "stream_chunk", "id": rid, "_binary": data})
 
     async def close_pending(self, error: str = "agent disconnected") -> None:
         """Fail every in-flight request when the connection drops."""

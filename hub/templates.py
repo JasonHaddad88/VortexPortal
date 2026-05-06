@@ -511,6 +511,11 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
   <div class="actions">
     <a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>
     <a class="btn" href="/devices/{did}">Manage</a>
+    <form method="post" action="/devices/{did}/delete" style="display:inline;margin:0;margin-left:auto">
+      <button class="btn btn-danger btn-small" type="submit"
+              onclick="return confirm('Unpair {name}? This cannot be undone — you will need to re-pair to control it again.')"
+              title="Unpair this device">Delete</button>
+    </form>
   </div>
 </div>""")
 

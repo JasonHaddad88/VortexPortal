@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V2.0** — multi-user control plane for your devices. One **hub** (on your
+**V2.1** — multi-user control plane for your devices. One **hub** (on your
 laptop or a phone) owns user accounts and a paired device registry. Each
 device runs a tiny **agent** that opens a persistent WebSocket out to the
 hub. From the futuristic browser dashboard you sign in once and control
@@ -207,6 +207,9 @@ app_v1.py           # V1.2 monolith, kept for fallback
 | `DEVICE_NAME`           | *(optional)*                  | Display name override on agent pairing |
 | `STORAGE_ROOT`          | `~/storage/shared` if exists  | Agent's file browser root              |
 | `VORTEX_AGENT_CONFIG`   | `~/.vortex_agent/config.json` | Agent config path                      |
+| `VORTEX_PING_INTERVAL`  | `30` (seconds)                | Agent WS ping interval                 |
+| `VORTEX_PING_TIMEOUT`   | `60` (seconds)                | Agent WS ping timeout                  |
+| `VORTEX_RESET=1`        | *(unset)*                     | Wipe agent config on startup           |
 
 ## Troubleshooting
 
@@ -252,7 +255,9 @@ power policies (Xiaomi/Huawei/OnePlus) can still freeze background apps.
 - **No HTTPS termination on the hub itself**. Cloudflare terminates TLS
   externally, then forwards over its encrypted tunnel. Same threat model as
   V1; safe over the public internet, plain HTTP on LAN.
-- **WS chunk encoding is base64-in-JSON** for simplicity. ~33% overhead vs
-  binary frames. Fine for control-panel use; for huge transfers prefer SCP.
+- **WS chunks are binary frames as of V2.1** (256 KiB each). The hub still
+  accepts V2.0's base64-in-JSON form for rolling upgrades. For multi-GB
+  transfers SCP/rsync is still faster — Cloudflare's idle / max-frame
+  limits make WebSockets the wrong tool past a certain scale.
 - **Other apps' private data is invisible** on Android. Termux is just
   another Android app — sees its own sandbox + `/sdcard`, nothing else.
