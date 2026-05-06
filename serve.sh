@@ -54,29 +54,38 @@ fi
 
 # ----------------------------------------------------------------------------
 # Python venv. Pure-Python pins to avoid Rust builds on ARM.
+#
+# We always invoke pip as `python -m pip` rather than the `pip` shim --
+# Termux's `python -m venv` doesn't always create the shim in .venv/bin/,
+# and `ensurepip` guarantees the underlying module is there.
 # ----------------------------------------------------------------------------
-if [ ! -x "$VENV/bin/python" ]; then
+VPY="$VENV/bin/python"
+
+if [ ! -x "$VPY" ]; then
     echo "==> Building venv at $VENV"
     mkdir -p "$APP_DIR"
     python -m venv "$VENV"
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-    pip install --quiet --upgrade pip setuptools wheel
-    if [ "$MODE" = "hub" ]; then
-        pip install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart
-    else
-        pip install --quiet websockets httpx
-    fi
-    deactivate
 fi
 
-# Top up missing deps if the venv predates new requirements.
+if ! "$VPY" -m pip --version >/dev/null 2>&1; then
+    echo "==> Bootstrapping pip into the venv (ensurepip)"
+    "$VPY" -m ensurepip --upgrade --default-pip
+fi
+
+# Install / top up dependencies. pip install on something already installed
+# is a no-op, so this is cheap on warm runs.
 if [ "$MODE" = "hub" ]; then
-    "$VENV/bin/python" -c 'import fastapi, uvicorn, websockets, httpx, pydantic, multipart' 2>/dev/null \
-        || "$VENV/bin/pip" install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart
+    if ! "$VPY" -c 'import fastapi, uvicorn, websockets, httpx, pydantic, multipart' 2>/dev/null; then
+        echo "==> Installing hub dependencies"
+        "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
+        "$VPY" -m pip install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart
+    fi
 else
-    "$VENV/bin/python" -c 'import websockets, httpx' 2>/dev/null \
-        || "$VENV/bin/pip" install --quiet websockets httpx
+    if ! "$VPY" -c 'import websockets, httpx' 2>/dev/null; then
+        echo "==> Installing agent dependencies"
+        "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
+        "$VPY" -m pip install --quiet websockets httpx
+    fi
 fi
 
 # ----------------------------------------------------------------------------
@@ -108,7 +117,9 @@ if [ "$MODE" = "hub" ]; then
     fi
 
     echo "==> Starting Vortex Hub on 127.0.0.1:$APP_PORT"
-    nohup "$VENV/bin/uvicorn" hub.app:app \
+    # Use `python -m uvicorn` instead of the `uvicorn` shim -- same reason
+    # we use `python -m pip` above (Termux doesn't always create the shim).
+    nohup "$VPY" -m uvicorn hub.app:app \
         --host 127.0.0.1 --port "$APP_PORT" \
         --proxy-headers --forwarded-allow-ips='*' \
         > "$LOG_DIR/uvicorn.log" 2>&1 &
@@ -149,5 +160,5 @@ if [ "$MODE" = "hub" ]; then
 else
     # Agent mode — connect outbound to the hub.
     echo "==> Starting Vortex Agent"
-    exec "$VENV/bin/python" -m agent.agent
+    exec "$VPY" -m agent.agent
 fi

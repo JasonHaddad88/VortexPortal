@@ -85,25 +85,26 @@ fi
 # ----------------------------------------------------------------------------
 mkdir -p "$APP_DIR"
 
-if [ -x "$APP_DIR/.venv/bin/python" ]; then
-    echo "==> Python venv already exists (skipping)"
+# Termux's `python -m venv` doesn't always create the `pip` shim in
+# .venv/bin/, so we always invoke pip as `python -m pip` and bootstrap it
+# via `ensurepip` to guarantee it's installed inside the venv.
+VPY="$APP_DIR/.venv/bin/python"
+
+if [ -x "$VPY" ]; then
+    echo "==> Python venv already exists (skipping create)"
 else
     echo "==> Building Python venv at $APP_DIR/.venv"
-    (
-        cd "$APP_DIR"
-        python -m venv .venv
-        # shellcheck disable=SC1091
-        source .venv/bin/activate
-        pip install --quiet --upgrade pip setuptools wheel
-        # Agent only needs websockets + httpx. Hub mode (optional) needs more
-        # — serve.sh will top those up on demand.
-        pip install --quiet websockets httpx
-    )
+    python -m venv "$APP_DIR/.venv"
 fi
 
-# Top up if predates websockets/httpx.
-"$APP_DIR/.venv/bin/python" -c 'import websockets, httpx' 2>/dev/null \
-    || "$APP_DIR/.venv/bin/pip" install --quiet websockets httpx
+if ! "$VPY" -m pip --version >/dev/null 2>&1; then
+    echo "==> Bootstrapping pip into the venv (ensurepip)"
+    "$VPY" -m ensurepip --upgrade --default-pip
+fi
+
+echo "==> Ensuring agent dependencies (websockets, httpx)"
+"$VPY" -m pip install --quiet --upgrade pip setuptools wheel
+"$VPY" -m pip install --quiet websockets httpx
 
 # ----------------------------------------------------------------------------
 # Copy agent + hub code into $APP_DIR (hub is optional but useful for the
