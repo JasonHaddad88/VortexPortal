@@ -9,6 +9,35 @@ from html import escape
 from typing import Optional
 
 
+def _qr_svg(text: str, *, box: int = 8, border: int = 2) -> str:
+    """Render `text` as an SVG QR code suitable for inlining in HTML.
+
+    Inline SVG = no extra HTTP round-trip, scales crisply at any zoom,
+    and we don't need Pillow on the hub for image generation. Returns the
+    full <svg ...>...</svg> markup; falls back to a plain message if the
+    qrcode library isn't installed (so the page still loads).
+    """
+    try:
+        import qrcode
+        import qrcode.image.svg
+    except ImportError:
+        return ('<p style="color:var(--muted);font-size:.8rem">'
+                '(QR unavailable: install <code>qrcode</code> in the hub venv)</p>')
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=box,
+        border=border,
+    )
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
+    import io
+    buf = io.BytesIO()
+    img.save(buf)
+    return buf.getvalue().decode("utf-8")
+
+
 CSS = r"""
 :root {
   --bg: #06060a;
@@ -470,6 +499,53 @@ ul.dirlist li .thumb.placeholder {
 .upload-progress .row.error .bar > i { background: var(--danger); }
 .upload-progress .row.error .pct { color: var(--danger); }
 
+/* ---------- QR pairing (V3.0) ---------- */
+.qr-row {
+  display: flex; gap: 1.25rem; align-items: stretch;
+  margin: 1rem 0 0;
+  flex-wrap: wrap;
+}
+.qr-card {
+  background: #fff;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 0 24px var(--purple-glow);
+  display: flex; align-items: center; justify-content: center;
+}
+.qr-card svg { width: 220px; height: 220px; display: block; }
+.qr-side {
+  flex: 1; min-width: 240px;
+  display: flex; flex-direction: column; justify-content: center; gap: 0.5rem;
+}
+.qr-side h4 {
+  margin: 0;
+  font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600;
+}
+.qr-side ol {
+  margin: 0; padding-left: 1.1rem;
+  color: var(--text); font-size: 0.85rem;
+  line-height: 1.5;
+}
+.qr-side ol li { margin: 0.25rem 0; }
+.copy-btn {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  background: transparent;
+  border: 1px solid rgba(103,232,249,0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, border-color .15s;
+}
+.copy-btn:hover { background: rgba(103,232,249,0.1); border-color: var(--cyan); }
+.copy-btn.ok { color: var(--success); border-color: rgba(52,211,153,.4); }
+
 footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -746,19 +822,37 @@ def pair_code_page(user: dict, code: str, hub_url: str,
         name_arg = f" DEVICE_NAME={_shell_quote(device_name)}"
     cmd = (f"PAIRING_CODE={code} HUB_URL={_shell_quote(hub_url)}{name_arg} "
            f"bash ~/server/serve.sh")
+    qr_svg = _qr_svg(cmd, box=8, border=2)
+    cmd_for_js = _json_dumps_for_html(cmd)
     body = f"""
 <div class="section-head"><h2>// Pairing Code</h2></div>
-<div style="max-width:640px">
+<div style="max-width:760px">
   <div class="code-display">{escape(code)}</div>
   <p style="color:var(--muted);font-size:.85rem;text-align:center">
     Code expires in 10 minutes. Single use.
   </p>
 
+  <div class="qr-row">
+    <div class="qr-card">{qr_svg}</div>
+    <div class="qr-side">
+      <h4>// Scan with phone</h4>
+      <ol>
+        <li>Open your phone's camera (or any QR-scanner app).</li>
+        <li>Point it at this QR — your scanner will offer to copy the text.</li>
+        <li>Tap to copy, switch to Termux, paste, hit enter.</li>
+      </ol>
+      <p style="margin:0;color:var(--muted);font-size:.7rem">
+        The QR encodes the literal one-liner shell command — no app required.
+      </p>
+    </div>
+  </div>
+
   <h3 style="margin-top:2rem;font-size:.85rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)">
-    On the device, run:
+    Or paste this manually:
+    <button class="copy-btn" id="copy-cmd">Copy command</button>
   </h3>
   <div class="card" style="padding:1rem">
-    <code style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;color:var(--cyan);word-break:break-all;user-select:all;display:block">{escape(cmd)}</code>
+    <code id="pair-cmd" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;color:var(--cyan);word-break:break-all;user-select:all;display:block">{escape(cmd)}</code>
   </div>
 
   <p style="margin-top:1.5rem;color:var(--muted);font-size:.78rem">
@@ -767,7 +861,33 @@ def pair_code_page(user: dict, code: str, hub_url: str,
   <p style="font-size:.85rem">
     Once paired, the device appears on your <a href="/">dashboard</a>.
   </p>
-</div>"""
+</div>
+<script>
+(function() {{
+  const cmd = {cmd_for_js};
+  const btn = document.getElementById('copy-cmd');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {{
+    try {{
+      await navigator.clipboard.writeText(cmd);
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.classList.add('ok');
+      setTimeout(() => {{
+        btn.textContent = orig;
+        btn.classList.remove('ok');
+      }}, 1400);
+    }} catch (e) {{
+      // Fallback: select the code element so the user can Ctrl-C
+      const el = document.getElementById('pair-cmd');
+      const sel = window.getSelection();
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      sel.removeAllRanges(); sel.addRange(r);
+    }}
+  }});
+}})();
+</script>"""
     return page("Pairing", body, user=user, active="/pair")
 
 

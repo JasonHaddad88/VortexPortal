@@ -101,7 +101,7 @@ if (-not (Test-Path $VenvPython)) {
 
 # Check deps -- expected to fail on first run; that's the signal to install.
 $importCheck = Invoke-NativeQuiet $VenvPython @(
-    "-c", "import fastapi, uvicorn, websockets, httpx, pydantic, multipart"
+    "-c", "import fastapi, uvicorn, websockets, httpx, pydantic, multipart, qrcode"
 )
 if ($importCheck -ne 0) {
     Write-Host "==> Installing Python dependencies"
@@ -111,7 +111,7 @@ if ($importCheck -ne 0) {
     $rc2 = Invoke-NativeStreaming $VenvPython @(
         "-m", "pip", "install", "--quiet",
         "fastapi<0.100", "pydantic<2", "uvicorn[standard]",
-        "websockets", "httpx", "python-multipart"
+        "websockets", "httpx", "python-multipart", "qrcode"
     )
     if ($rc1 -ne 0 -or $rc2 -ne 0) {
         Write-Host "pip install failed (rc=$rc1, $rc2)" -ForegroundColor Red

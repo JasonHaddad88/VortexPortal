@@ -6,9 +6,23 @@ All notable changes to this project. Format follows
 ## [V3.0] — 2026-05-06
 
 First V3 cycle. See `ROADMAP.md` for the full V3 plan; this release ships
-the first three ticked items.
+several items grouped in sub-bullets below.
 
 ### Added
+- **QR-code pairing.** The `/pair` page now shows a high-contrast inline
+  SVG QR code alongside the existing 6-digit code. The QR encodes the
+  literal one-liner shell command (`PAIRING_CODE=… HUB_URL=… bash
+  ~/server/serve.sh`) so any modern phone camera that recognises QRs can
+  copy it straight to clipboard — no app required, no Termux camera
+  permission needed. Plus a "Copy command" button (uses
+  `navigator.clipboard.writeText` with a manual-select fallback for older
+  browsers). Result: typing the URL + 6-digit code by hand is now optional.
+  - SVG is generated on the hub via the pure-Python `qrcode` library
+    (added as a hub-mode dep). Pillow is not required — `SvgPathImage`
+    factory keeps it pure-Python.
+  - QR matrix is deterministic and the smoke test verifies the displayed
+    command round-trips back through a fresh encoder to byte-identical SVG
+    path data.
 - **File upload (browser → device).** Closes the biggest functional gap:
   V2.x was read-only. New agent op `write_file` is async and drains an
   inbound stream from the hub into a `<dest>.part` tempfile, then atomically

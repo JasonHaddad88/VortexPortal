@@ -83,10 +83,10 @@ fi
 # Install / top up dependencies. pip install on something already installed
 # is a no-op, so this is cheap on warm runs.
 if [ "$MODE" = "hub" ]; then
-    if ! "$VPY" -c 'import fastapi, uvicorn, websockets, httpx, pydantic, multipart' 2>/dev/null; then
+    if ! "$VPY" -c 'import fastapi, uvicorn, websockets, httpx, pydantic, multipart, qrcode' 2>/dev/null; then
         echo "==> Installing hub dependencies"
         "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
-        "$VPY" -m pip install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart
+        "$VPY" -m pip install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart qrcode
     fi
 else
     if ! "$VPY" -c 'import websockets, httpx' 2>/dev/null; then
