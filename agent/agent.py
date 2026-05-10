@@ -310,6 +310,115 @@ def op_thumbnail(args: dict) -> dict:
     }
 
 
+# --------------------------------------------------------------------------
+# Camera (V4.0) -- Termux:API only. Requires `pkg install termux-api` and
+# the Termux:API Android app from F-Droid (separate APK that grants the
+# camera permission). On non-Termux systems this returns a clear error.
+# --------------------------------------------------------------------------
+def _have_termux_camera() -> bool:
+    import shutil
+    return (shutil.which("termux-camera-info") is not None
+            and shutil.which("termux-camera-photo") is not None)
+
+
+def op_camera_info(args: dict) -> dict:
+    """Return the list of cameras the device exposes (front, back, etc.)."""
+    if not _have_termux_camera():
+        raise RuntimeError(
+            "termux-camera-* not available. Install with `pkg install "
+            "termux-api` and install the Termux:API app from F-Droid."
+        )
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["termux-camera-info"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"termux-camera-info failed: {e}")
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"termux-camera-info exit {result.returncode}: "
+            f"{(result.stderr or result.stdout).strip()[:200]}"
+        )
+    try:
+        cams = json.loads(result.stdout)
+    except (TypeError, ValueError) as e:
+        raise RuntimeError(f"termux-camera-info malformed JSON: {e}")
+    # Normalise each camera entry so the UI can show a nice label.
+    out = []
+    for c in cams if isinstance(cams, list) else []:
+        out.append({
+            "id": str(c.get("id", "")),
+            "facing": c.get("facing"),  # "front" / "back" / "external"
+            "resolutions": c.get("output_sizes") or c.get("photo_sizes") or [],
+        })
+    return {"cameras": out}
+
+
+async def op_camera_capture(session: "Session", rid: str, args: dict) -> None:
+    """Take one photo, stream the JPEG back as binary frames.
+
+    Args:
+        camera_id: optional, defaults to "0" (usually the back camera).
+
+    Caveats: termux-camera-photo blocks for 1-3 s per shot, returns
+    nonzero if the screen is locked or the Termux:API app lacks camera
+    permission. We surface its stderr verbatim so the UI can show why.
+    """
+    if not _have_termux_camera():
+        raise RuntimeError(
+            "termux-camera-* not available. Install with `pkg install "
+            "termux-api` and install the Termux:API app from F-Droid."
+        )
+    import subprocess
+    import tempfile
+    cam_id = str(args.get("camera_id", "0"))
+
+    # Capture to a tempfile -- termux-camera-photo writes to a file, not stdout.
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg", prefix="vortex-cam-")
+    os.close(tmp_fd)
+    loop = asyncio.get_event_loop()
+    try:
+        # Run blocking subprocess off the event loop so pings keep flowing.
+        def _take_photo():
+            return subprocess.run(
+                ["termux-camera-photo", "-c", cam_id, tmp_path],
+                capture_output=True, text=True, timeout=20,
+            )
+        result = await loop.run_in_executor(None, _take_photo)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()[:200]
+            raise RuntimeError(
+                f"termux-camera-photo exit {result.returncode}: {err}"
+            )
+        try:
+            size = os.path.getsize(tmp_path)
+        except OSError:
+            size = 0
+        if size == 0:
+            raise RuntimeError(
+                "Camera produced an empty file. Most common causes: "
+                "screen is locked, Termux:API app lacks camera permission, "
+                "or another app is holding the camera."
+            )
+
+        await session.send_text({
+            "type": "stream_start", "id": rid,
+            "size": size, "content_type": "image/jpeg",
+        })
+        with open(tmp_path, "rb") as f:
+            while True:
+                chunk = await loop.run_in_executor(None, f.read, CHUNK_SIZE)
+                if not chunk:
+                    break
+                await session.send_chunk(rid, chunk)
+        await session.send_text({"type": "stream_end", "id": rid})
+    finally:
+        try: os.unlink(tmp_path)
+        except OSError: pass
+
+
 class Session:
     """Wraps the websocket with a send-lock + inbound-stream routing.
 
@@ -462,11 +571,13 @@ UNARY_OPS = {
     "list_dir": op_list_dir,
     "system_info": op_system_info,
     "thumbnail": op_thumbnail,
+    "camera_info": op_camera_info,
 }
 
 # Ops that stream chunks from agent to hub (sender-side).
 STREAM_OPS = {
     "read_file": op_read_file_stream,
+    "camera_capture": op_camera_capture,
 }
 
 # Ops that receive a stream from the hub and return a unary result. They
@@ -483,10 +594,19 @@ async def _handle_request(session: "Session", msg: dict) -> None:
     op = msg.get("op")
     args = msg.get("args") or {}
 
+    # One catch tuple shared by all three dispatchers. RuntimeError matters
+    # because ops use it to signal "preconditions not met" -- e.g., Pillow
+    # missing for thumbnail, termux-api missing for camera. Without it those
+    # errors leak past the dispatcher, kill the request task silently, and
+    # the hub waits to time out. KeyboardInterrupt / SystemExit / asyncio
+    # cancellation are deliberately NOT caught -- they're how we shut down.
+    OP_ERRORS = (PermissionError, FileNotFoundError, IsADirectoryError,
+                 OSError, ValueError, RuntimeError, asyncio.TimeoutError)
+
     if op in UNARY_OPS:
         try:
             result = UNARY_OPS[op](args)
-        except (PermissionError, FileNotFoundError, OSError, ValueError) as e:
+        except OP_ERRORS as e:
             await session.send_text({
                 "type": "response", "id": rid, "ok": False,
                 "error": f"{type(e).__name__}: {e}",
@@ -500,7 +620,7 @@ async def _handle_request(session: "Session", msg: dict) -> None:
     if op in STREAM_OPS:
         try:
             await STREAM_OPS[op](session, rid, args)
-        except (PermissionError, FileNotFoundError, OSError, ValueError) as e:
+        except OP_ERRORS as e:
             await session.send_text({
                 "type": "response", "id": rid, "ok": False,
                 "error": f"{type(e).__name__}: {e}",
@@ -510,8 +630,7 @@ async def _handle_request(session: "Session", msg: dict) -> None:
     if op in ASYNC_RECV_OPS:
         try:
             result = await ASYNC_RECV_OPS[op](session, rid, args)
-        except (PermissionError, FileNotFoundError, IsADirectoryError,
-                OSError, ValueError, asyncio.TimeoutError) as e:
+        except OP_ERRORS as e:
             await session.send_text({
                 "type": "response", "id": rid, "ok": False,
                 "error": f"{type(e).__name__}: {e}",

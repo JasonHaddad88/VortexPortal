@@ -3,6 +3,54 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V4.0] — 2026-05-10
+
+Opens the V4 cycle — moving from "remote files + system info" into
+controlling **device sensors**. First sensor: the camera.
+
+### Added
+- **Camera capture** via Termux:API. New agent ops:
+  - `camera_info` (unary) — runs `termux-camera-info`, returns a
+    normalised list of `{id, facing, resolutions}`.
+  - `camera_capture` (streaming) — runs `termux-camera-photo -c <id>`,
+    streams the JPEG back as binary chunks via the V2.1 frame protocol
+    (no base64). The blocking `subprocess.run` is dispatched through
+    `loop.run_in_executor` so WebSocket pings keep flowing during the
+    1-3 s capture.
+- **Hub routes**: `GET /api/devices/{id}/cameras`,
+  `GET /devices/{id}/camera/capture?camera_id=N`, and the HTML viewer at
+  `GET /devices/{id}/camera`. The viewer has a camera selector, a
+  Capture button, an "Auto-refresh" toggle (polls every 6 s — poor man's
+  live view, since `termux-camera-photo` is one-shot, not real video),
+  and a "Save image" download.
+- **Dashboard Camera button** on every device card; **Camera + Screen**
+  buttons on the device manage page.
+- **`/devices/{id}/screen` honest placeholder.** Real screen capture,
+  mirroring, and remote touch input require root or a Kotlin companion
+  APK using `MediaProjection` + `AccessibilityService` — Android won't
+  expose the screen-frame buffer or touch-injection APIs to a non-system
+  app like Termux. The page explains this clearly with a link back to
+  Files / Camera, and the limitation is tracked on `ROADMAP.md`.
+
+### Fixed
+- **Stream-op error responses now propagate instead of timing out.**
+  When a stream op (e.g. `camera_capture`, `read_file`) raised before
+  sending any stream frames, the agent's `response ok:false` text frame
+  was routed only to `_pending_unary` futures and the stream consumer
+  waited 25 s for a `stream_start` that never came — surfacing as
+  HTTP 504 instead of a useful error. Hub's `handle_incoming` now
+  forwards orphan `response` frames to the matching stream queue too,
+  so `conn.stream()` raises `AgentError` immediately. The error message
+  reaches the browser in single-digit milliseconds.
+- **`RuntimeError` is now caught by the agent's op dispatcher.** Several
+  ops (`op_thumbnail`, `op_camera_info`, `op_camera_capture`) raise
+  `RuntimeError` when their preconditions aren't met — Pillow missing,
+  Termux:API missing, etc. The dispatcher's exception tuple didn't
+  include `RuntimeError`, so those errors leaked past the dispatcher,
+  killed the request task silently, and made the hub time out instead
+  of seeing the helpful message. The catch is now a single shared tuple
+  (`OP_ERRORS`) used by all three dispatchers.
+
 ## [V3.0] — 2026-05-06
 
 First V3 cycle. See `ROADMAP.md` for the full V3 plan; this release ships

@@ -8,7 +8,27 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
 
 ---
 
-## V3.0 — current cycle
+## V4.0 — current cycle (device sensors)
+
+- [x] **Camera capture (single shot + auto-refresh)** 🟢 — _shipped V4.0_
+  Why: see what the phone sees from the dashboard.
+  Notes: agent ops `camera_info` (lists cameras) + `camera_capture` (streams
+  one JPEG via binary frames). Hub adds `/devices/{id}/camera` viewer with a
+  camera selector, manual capture button, optional 6 s auto-refresh, and a
+  "Save image" download. Requires Termux:API package + the Termux:API APK
+  from F-Droid with the camera permission granted, and the phone screen
+  must be unlocked (Android limitation, not ours).
+
+- [ ] **Screen capture / mirror / remote touch** 🔴 — needs companion APK
+  Why: the obvious follow-up to camera control.
+  Notes: Termux on its own can't access the screen frame buffer or simulate
+  touch input — Android gates `screencap` and accessibility services
+  behind permissions a non-system app can't request. Real implementation
+  requires a Kotlin companion APK using `MediaProjection` (with the
+  user-consent dialog Android shows for screen recording) and
+  `AccessibilityService` for input. Defer until there's clear demand.
+
+## V3.0 — previous cycle
 
 ### Tier 1: infrastructure
 

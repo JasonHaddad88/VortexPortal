@@ -546,6 +546,87 @@ ul.dirlist li .thumb.placeholder {
 .copy-btn:hover { background: rgba(103,232,249,0.1); border-color: var(--cyan); }
 .copy-btn.ok { color: var(--success); border-color: rgba(52,211,153,.4); }
 
+/* ---------- Camera viewer (V4.0) ---------- */
+.cam-toolbar {
+  display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
+  margin-bottom: 1rem;
+}
+.cam-toolbar .cam-status {
+  margin-left: auto;
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted);
+}
+.cam-stage {
+  background: #000;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  min-height: 220px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.cam-stage img {
+  display: block;
+  width: 100%; height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+}
+.cam-stage .placeholder {
+  color: var(--muted);
+  font-size: 0.85rem; padding: 3rem 1rem; text-align: center;
+}
+.cam-stage .err {
+  color: var(--danger);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 1.5rem; text-align: center;
+}
+.cam-stage .spinner {
+  position: absolute; top: 1rem; right: 1rem;
+  width: 16px; height: 16px;
+  border: 2px solid rgba(168,85,247,0.2);
+  border-top-color: var(--purple);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: none;
+}
+.cam-stage .spinner.on { display: block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+select.cam-pick {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  min-width: 9rem;
+}
+
+/* honest "feature requires APK" box */
+.unsupported {
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.unsupported h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #f59e0b;
+}
+.unsupported code {
+  color: var(--cyan);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+
 footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -558,7 +639,7 @@ footer {
 
 
 def page(title: str, body: str, *, user: Optional[dict] = None,
-         active: str = "", chrome: bool = True, version: str = "3.0") -> str:
+         active: str = "", chrome: bool = True, version: str = "4.0") -> str:
     """Wrap body in the standard page chrome (topbar + footer)."""
     if chrome:
         nav_items = [
@@ -684,6 +765,7 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
   <div class="stats" data-stats hidden></div>
   <div class="actions">
     <a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>
+    <a class="btn" href="/devices/{did}/camera">Camera</a>
     <a class="btn" href="/devices/{did}">Manage</a>
     <form method="post" action="/devices/{did}/delete" style="display:inline;margin:0;margin-left:auto">
       <button class="btn btn-danger btn-small" type="submit"
@@ -912,6 +994,8 @@ def device_manage_page(user: dict, device: dict, online: bool) -> str:
 
   <div class="actions" style="margin-top:1.5rem">
     <a class="btn btn-primary" href="/devices/{escape(device['id'])}/files/">Browse Files</a>
+    <a class="btn" href="/devices/{escape(device['id'])}/camera">Camera</a>
+    <a class="btn" href="/devices/{escape(device['id'])}/screen">Screen</a>
     <form method="post" action="/devices/{escape(device['id'])}/delete" style="display:inline;margin:0">
       <button class="btn btn-danger" type="submit"
               onclick="return confirm('Unpair {escape(device['name'])}? You will need to re-pair to control it again.')">
@@ -921,6 +1005,221 @@ def device_manage_page(user: dict, device: dict, online: bool) -> str:
   </div>
 </div>"""
     return page(device["name"], body, user=user, active="/")
+
+
+def device_camera_page(user: dict, device: dict) -> str:
+    """Live camera viewer. Loads the camera roster on mount, lets the user
+    flip between front/back, and supports manual capture + an auto-refresh
+    'live' mode (poor man's stream — termux-camera-photo isn't real video)."""
+    did = device["id"]
+    did_js = _json_dumps_for_html(did)
+    name = device["name"]
+    name_js = _json_dumps_for_html(name)
+    body = f"""
+<div class="section-head" style="align-items:center">
+  <h2>// {escape(name)} · Camera</h2>
+  <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
+</div>
+
+<div class="cam-toolbar">
+  <select class="cam-pick" id="cam-pick" disabled>
+    <option>loading…</option>
+  </select>
+  <button class="btn" id="cam-shoot">Capture</button>
+  <label class="btn" style="cursor:pointer">
+    <input type="checkbox" id="cam-live" style="vertical-align:middle;margin-right:.4rem">
+    Auto-refresh
+  </label>
+  <button class="btn btn-small" id="cam-save" disabled>Save image</button>
+  <span class="cam-status" id="cam-status">idle</span>
+</div>
+
+<div class="cam-stage" id="cam-stage">
+  <div class="placeholder" id="cam-placeholder">
+    No image yet — pick a camera and hit <b>Capture</b>.
+  </div>
+  <div class="spinner" id="cam-spinner"></div>
+</div>
+
+<p style="margin-top:1rem;color:var(--muted);font-size:.75rem">
+  Requires <code style="color:var(--cyan)">pkg install termux-api</code> and
+  the Termux:API app from F-Droid (with camera permission granted).
+  The phone's screen must be <strong>unlocked</strong> for capture to succeed.
+  Auto-refresh polls every 6 s — termux-camera-photo isn't real video,
+  it's one-shot snapshots.
+</p>
+
+<script>
+(function() {{
+  const did = {did_js};
+  const pick = document.getElementById('cam-pick');
+  const shoot = document.getElementById('cam-shoot');
+  const live = document.getElementById('cam-live');
+  const save = document.getElementById('cam-save');
+  const status = document.getElementById('cam-status');
+  const stage = document.getElementById('cam-stage');
+  const placeholder = document.getElementById('cam-placeholder');
+  const spinner = document.getElementById('cam-spinner');
+
+  let liveTimer = null;
+  let inFlight = false;
+  let lastBlobUrl = null;
+
+  function setStatus(s) {{ status.textContent = s; }}
+
+  async function loadCameras() {{
+    setStatus('loading cameras…');
+    try {{
+      const r = await fetch(`/api/devices/${{encodeURIComponent(did)}}/cameras`,
+                            {{cache: 'no-store'}});
+      const data = await r.json();
+      pick.innerHTML = '';
+      if (data.error || !data.cameras || !data.cameras.length) {{
+        const opt = document.createElement('option');
+        opt.textContent = '(none)';
+        pick.appendChild(opt);
+        showError(data.error || 'No cameras reported by agent');
+        return;
+      }}
+      for (const cam of data.cameras) {{
+        const opt = document.createElement('option');
+        opt.value = cam.id;
+        const facing = cam.facing ? ` (${{cam.facing}})` : '';
+        opt.textContent = `Camera ${{cam.id}}${{facing}}`;
+        pick.appendChild(opt);
+      }}
+      pick.disabled = false;
+      setStatus('ready');
+    }} catch (e) {{
+      showError('Could not list cameras: ' + e.message);
+    }}
+  }}
+
+  function showError(msg) {{
+    placeholder.style.display = 'none';
+    let err = stage.querySelector('.err');
+    if (!err) {{
+      err = document.createElement('div');
+      err.className = 'err';
+      stage.appendChild(err);
+    }}
+    err.textContent = msg;
+    setStatus('error');
+  }}
+
+  function showImage(blob) {{
+    placeholder.style.display = 'none';
+    const err = stage.querySelector('.err');
+    if (err) err.remove();
+    let img = stage.querySelector('img');
+    if (!img) {{
+      img = document.createElement('img');
+      stage.appendChild(img);
+    }}
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlobUrl = URL.createObjectURL(blob);
+    img.src = lastBlobUrl;
+    save.disabled = false;
+  }}
+
+  async function capture() {{
+    if (inFlight) return;
+    inFlight = true;
+    spinner.classList.add('on');
+    setStatus('capturing…');
+    const t0 = performance.now();
+    try {{
+      const camId = pick.value || '0';
+      const r = await fetch(
+        `/devices/${{encodeURIComponent(did)}}/camera/capture` +
+        `?camera_id=${{encodeURIComponent(camId)}}` +
+        `&t=${{Date.now()}}`,  // bust any intermediary cache
+        {{cache: 'no-store'}}
+      );
+      if (!r.ok) {{
+        const text = await r.text();
+        throw new Error(`HTTP ${{r.status}}: ${{text.slice(0, 200)}}`);
+      }}
+      const blob = await r.blob();
+      showImage(blob);
+      const ms = Math.round(performance.now() - t0);
+      setStatus(`captured in ${{ms}} ms · ${{(blob.size/1024).toFixed(1)}} KB`);
+    }} catch (e) {{
+      showError(e.message);
+      // Stop auto-refresh on error so we don't spam.
+      live.checked = false;
+      stopLive();
+    }} finally {{
+      inFlight = false;
+      spinner.classList.remove('on');
+    }}
+  }}
+
+  function startLive() {{
+    if (liveTimer) return;
+    liveTimer = setInterval(capture, 6000);
+  }}
+  function stopLive() {{
+    if (liveTimer) {{ clearInterval(liveTimer); liveTimer = null; }}
+  }}
+
+  shoot.addEventListener('click', capture);
+  live.addEventListener('change', () => {{
+    if (live.checked) {{ capture(); startLive(); }}
+    else {{ stopLive(); }}
+  }});
+  const safeName = ({name_js}).replace(/\\W+/g, '_').slice(0, 60) || 'device';
+  save.addEventListener('click', () => {{
+    if (!lastBlobUrl) return;
+    const a = document.createElement('a');
+    a.href = lastBlobUrl;
+    a.download = `${{safeName}}-${{Date.now()}}.jpg`;
+    document.body.appendChild(a); a.click(); a.remove();
+  }});
+
+  loadCameras();
+}})();
+</script>"""
+    return page(f"{name} · Camera", body, user=user, active="/")
+
+
+def device_screen_page(user: dict, device: dict) -> str:
+    """Honest placeholder: real screen capture / mirroring / control needs
+    root or a companion APK because Android doesn't expose screen-frame
+    access to a non-system app like Termux."""
+    did = device["id"]
+    body = f"""
+<div class="section-head" style="align-items:center">
+  <h2>// {escape(device['name'])} · Screen</h2>
+  <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
+</div>
+
+<div class="unsupported">
+  <h3>// Not yet available</h3>
+  <p>
+    Real screen capture, mirroring and remote-touch control on Android
+    require either <strong>root access</strong> (so we can call
+    <code>screencap</code> and <code>input</code> directly) or a
+    <strong>companion APK</strong> that uses Android's
+    <code>MediaProjection</code> + <code>AccessibilityService</code> APIs.
+  </p>
+  <p>
+    Termux on its own can't do this — the OS gates screen-frame access
+    behind permissions a non-system app can't request, and accessibility
+    services have to be enabled by the user from system settings.
+  </p>
+  <p>
+    Tracked on the roadmap as
+    <em>"Screen capture / mirror / remote control via companion APK."</em>
+    It's a real chunk of new work (~500-1000 LOC of Kotlin) so it's
+    deferred until there's clear demand.
+  </p>
+  <p style="margin-bottom:0">
+    <a class="btn" href="/devices/{escape(did)}/files/">Browse files</a>
+    <a class="btn btn-primary" href="/devices/{escape(did)}/camera">Open camera</a>
+  </p>
+</div>"""
+    return page(f"{device['name']} · Screen", body, user=user, active="/")
 
 
 def files_page(user: dict, device: dict, rel: str, entries: list) -> str:

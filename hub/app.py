@@ -485,6 +485,100 @@ async def _stream_file_from_agent(conn, rel: str, info: dict):
 
 
 # ---------------------------------------------------------------------------
+# V4.0: Device camera (Termux:API)
+# ---------------------------------------------------------------------------
+@app.get("/devices/{device_id}/camera", response_class=HTMLResponse)
+async def device_camera_page(device_id: str,
+                             user: dict = Depends(auth.require_user)):
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return HTMLResponse(templates.device_camera_page(user, d))
+
+
+@app.get("/devices/{device_id}/screen", response_class=HTMLResponse)
+async def device_screen_page(device_id: str,
+                             user: dict = Depends(auth.require_user)):
+    """Honest placeholder; real screen capture needs a companion APK."""
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return HTMLResponse(templates.device_screen_page(user, d))
+
+
+@app.get("/api/devices/{device_id}/cameras")
+async def api_device_cameras(device_id: str,
+                             user: dict = Depends(auth.require_user)):
+    """Return the device's camera roster, or {error} if the agent can't
+    enumerate (not Termux, missing termux-api, etc.)."""
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+    try:
+        result = await conn.request("camera_info", timeout=10)
+    except ws_router.AgentError as e:
+        return JSONResponse({"error": str(e), "cameras": []}, status_code=200)
+    return JSONResponse(result)
+
+
+@app.get("/devices/{device_id}/camera/capture")
+async def device_camera_capture(device_id: str,
+                                camera_id: str = "0",
+                                user: dict = Depends(auth.require_user)):
+    """Stream a single JPEG capture from the device's camera straight to
+    the browser. Triggers `termux-camera-photo` on the agent."""
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+
+    # Open the stream eagerly so we can fail with a clean HTTP error before
+    # we've sent any response bytes if the agent rejects the op.
+    stream = conn.stream("camera_capture",
+                         {"camera_id": str(camera_id)},
+                         start_timeout=25)
+    try:
+        first = await stream.__anext__()
+    except ws_router.AgentError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except (StopAsyncIteration, asyncio.TimeoutError):
+        raise HTTPException(status_code=504, detail="Camera capture timed out")
+
+    if first.get("type") != "stream_start":
+        raise HTTPException(status_code=502, detail="Unexpected agent response")
+
+    headers = {
+        "Cache-Control": "no-store",  # never cache; each capture is a fresh photo
+    }
+    if first.get("size") is not None:
+        headers["Content-Length"] = str(int(first["size"]))
+
+    async def gen():
+        try:
+            async for msg in stream:
+                if msg.get("type") == "stream_chunk":
+                    if "_binary" in msg:
+                        yield msg["_binary"]
+                    elif msg.get("data"):
+                        yield base64.b64decode(msg["data"])
+                elif msg.get("type") == "stream_end":
+                    return
+        except ws_router.AgentError:
+            return
+
+    return StreamingResponse(
+        gen(),
+        media_type=first.get("content_type", "image/jpeg"),
+        headers=headers,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Admin: invites
 # ---------------------------------------------------------------------------
 @app.get("/admin/invites", response_class=HTMLResponse)

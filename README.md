@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V3.0** — multi-user control plane for your devices. One **hub** (on your
+**V4.0** — multi-user control plane for your devices. One **hub** (on your
 laptop or a phone) owns user accounts and a paired device registry. Each
 device runs a tiny **agent** that opens a persistent WebSocket out to the
 hub. From the futuristic browser dashboard you sign in once and control

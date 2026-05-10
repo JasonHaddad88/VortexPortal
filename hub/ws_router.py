@@ -142,9 +142,20 @@ class AgentConnection:
         rid = msg.get("id")
         mtype = msg.get("type")
         if mtype == "response":
+            # Unary call waiting on this rid? Resolve it.
             fut = self._pending_unary.get(rid)
             if fut and not fut.done():
                 fut.set_result(msg)
+                return
+            # No unary waiter -- this is the agent telling us a STREAM op
+            # failed before it could send any stream frames (e.g.,
+            # camera_capture raising RuntimeError because termux-api is
+            # missing). Forward to the stream queue so stream() raises
+            # AgentError instead of waiting for a stream_start that will
+            # never come.
+            q = self._pending_stream.get(rid)
+            if q is not None:
+                await q.put(msg)
             return
         if mtype == "stream_chunk_header":
             # Arm the connection: the next binary frame is this rid's chunk.
