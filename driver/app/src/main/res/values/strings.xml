@@ -17,7 +17,7 @@
     <string name="channel_name">Vortex Driver</string>
     <string name="channel_desc">Background bridge to the Termux Vortex agent.</string>
 
-    <!-- Legacy M0 strings -- kept so a downgrade doesn't break, no longer used. -->
+    <!-- Legacy M0 strings, kept for backwards compat; no longer used. -->
     <string name="notif_waiting">Waiting for Termux agent on 127.0.0.1:%1$d…</string>
     <string name="notif_connected">Connected to Termux agent.</string>
 
