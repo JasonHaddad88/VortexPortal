@@ -1,0 +1,80 @@
+name: Build Vortex Driver APK
+
+# Build whenever Android-side code changes, or on a manual run, or on a
+# tag push (which we'll later use to attach signed APKs to a Release).
+# Triggers: any push to main, any driver-v* tag, any PR, or manual.
+# We don't gate on paths -- Gradle's build cache makes "no driver change"
+# builds nearly free, and a paths filter would silently skip tag pushes
+# that don't touch driver/ (e.g., tagging an old commit for release).
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'driver-v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: driver
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Generate the Gradle wrapper here so we don't need to commit the
+      # binary `gradle-wrapper.jar` into the repo. The wrapper-validation
+      # step would otherwise complain about a missing/forged jar.
+      - name: Bootstrap Gradle wrapper
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
+
+      - name: Generate wrapper
+        run: gradle wrapper --gradle-version 8.10 --distribution-type bin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-34
+            build-tools;34.0.0
+            platform-tools
+
+      - name: Build debug APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      # Surface where the APK landed so debugging is easier if it moves.
+      - name: Locate APK
+        id: locate
+        run: |
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -n1)
+          echo "Built: $APK ($(stat -c%s "$APK") bytes)"
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vortex-driver-debug
+          path: driver/${{ steps.locate.outputs.apk_path }}
+          retention-days: 30
+
+      # On a tag push, also attach the APK to a GitHub Release so users
+      # don't have to dig through Actions artifacts.
+      - name: Attach to Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/driver-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: driver/${{ steps.locate.outputs.apk_path }}
+          generate_release_notes: true

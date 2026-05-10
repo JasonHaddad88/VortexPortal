@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Foreground sits inside the inner 72x72 of the 108x108 adaptive-icon
+  canvas (the outer ring gets cropped on round masks). A purple-to-cyan
+  hex-shape echoes the hub's logo + brand gradient.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M54,30 L78,42 L78,66 L54,78 L30,66 L30,42 Z"
+        android:strokeWidth="0">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:startX="30" android:startY="30"
+                android:endX="78"   android:endY="78"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#A855F7" />
+                <item android:offset="1.0" android:color="#67E8F9" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner cut so it reads as a stylised "V" hex outline -->
+    <path
+        android:fillColor="#06060A"
+        android:pathData="M54,42 L66,48 L66,60 L54,66 L42,60 L42,48 Z" />
+</vector>

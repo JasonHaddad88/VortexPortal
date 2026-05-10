@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VortexDriver" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Match the hub's purple/cyan palette so the APK feels like the same product. -->
+        <item name="colorPrimary">#A855F7</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#67E8F9</item>
+        <item name="colorOnSecondary">#06060A</item>
+
+        <item name="android:statusBarColor">#06060A</item>
+        <item name="android:navigationBarColor">#06060A</item>
+        <item name="android:windowBackground">#06060A</item>
+    </style>
+</resources>

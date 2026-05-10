@@ -8,7 +8,47 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
 
 ---
 
-## V4.0 — current cycle (device sensors)
+## V5.0 — current cycle (device hardware via companion APK)
+
+The Vortex Driver APK lives at `driver/` — a Kotlin Android app that
+exposes phone-side hardware Termux can't reach (real-time camera, screen
+capture, touch input). It runs as a foreground service alongside the
+Termux Python agent and talks to it over a loopback socket. Built by
+GitHub Actions on every push; users download the APK from the workflow
+artifacts (no Android Studio required).
+
+- [x] **M0 — APK scaffold + foreground service + agent-presence ping** 🟡 — _shipped V5.0-M0_
+  Project skeleton: Gradle 8.10 + AGP 8.7 + Kotlin 2.0, minSdk 26 / targetSdk 34.
+  MainActivity with start/stop, foreground `DriverService` with persistent
+  notification, polls `127.0.0.1:5099` every few seconds and toggles the
+  notification text between "Waiting for Termux agent…" and (eventually)
+  "Connected to Termux agent." GitHub Actions workflow builds the debug APK
+  on every push and uploads it as an artifact. No camera/screen yet —
+  that's M1+.
+
+- [ ] **M1 — Real-time camera streaming** 🔴
+  Camera2 → H.264 hardware encoder → loopback socket → Python agent
+  forwards over WebSocket → laptop browser renders via MediaSource
+  Extensions. Targets 24-30 fps with sub-second latency. Adds
+  `FOREGROUND_SERVICE_CAMERA` permission.
+
+- [ ] **M2 — Screen capture / mirror** 🔴
+  `MediaProjection` consent dialog → H.264 encode of the screen frame
+  buffer → same socket pipeline as camera. Adds
+  `FOREGROUND_SERVICE_MEDIA_PROJECTION`. The view-only counterpart of M3.
+
+- [ ] **M3 — Touch input simulation** 🔴
+  `AccessibilityService` for gesture dispatch so the laptop dashboard
+  can drive the phone (tap / long-press / swipe). Requires the user to
+  enable the service in system Accessibility settings (Android won't
+  let us auto-enable it). Closes the loop on remote control.
+
+- [ ] **M4 — Polish + signed releases + autostart** 🟡
+  Boot-completed receiver to autostart; signed release builds attached
+  to GitHub Releases on `driver-v*` tag push; F-Droid metadata so users
+  can install / update without sideloading.
+
+## V4.0 — previous cycle (device sensors via Termux:API)
 
 - [x] **Camera capture (single shot + auto-refresh)** 🟢 — _shipped V4.0_
   Why: see what the phone sees from the dashboard.
@@ -18,15 +58,11 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
   "Save image" download. Requires Termux:API package + the Termux:API APK
   from F-Droid with the camera permission granted, and the phone screen
   must be unlocked (Android limitation, not ours).
+  Limitation: snapshots only, ~1 fps tops with 1-3 s latency per shot.
+  Real-time video moves to the Driver APK (V5.0 M1).
 
-- [ ] **Screen capture / mirror / remote touch** 🔴 — needs companion APK
-  Why: the obvious follow-up to camera control.
-  Notes: Termux on its own can't access the screen frame buffer or simulate
-  touch input — Android gates `screencap` and accessibility services
-  behind permissions a non-system app can't request. Real implementation
-  requires a Kotlin companion APK using `MediaProjection` (with the
-  user-consent dialog Android shows for screen recording) and
-  `AccessibilityService` for input. Defer until there's clear demand.
+- [ ] **Screen capture / mirror / remote touch** 🔴 — moved to V5.0 (Driver APK)
+  Tracked under V5.0 M2 + M3 above.
 
 ## V3.0 — previous cycle
 

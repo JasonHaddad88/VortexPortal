@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Vortex Driver</string>
+    <string name="subtitle_version">v%1$s — sensor bridge for the Termux agent</string>
+
+    <string name="btn_start">Start service</string>
+    <string name="btn_stop">Stop service</string>
+
+    <string name="service_started">Service started — see notification.</string>
+    <string name="service_stopped">Service stopped.</string>
+    <string name="service_idle">Service idle. Tap “Start service” to begin.</string>
+
+    <string name="notif_pre13">Notifications: granted (Android &lt; 13 doesn’t require runtime opt-in).</string>
+    <string name="notif_granted">Notifications: granted.</string>
+    <string name="notif_denied">Notifications: denied — enable in system Settings → Apps → Vortex Driver → Notifications.</string>
+
+    <string name="channel_name">Vortex Driver</string>
+    <string name="channel_desc">Background bridge to the Termux Vortex agent.</string>
+
+    <string name="notif_waiting">Waiting for Termux agent on 127.0.0.1:%1$d…</string>
+    <string name="notif_connected">Connected to Termux agent.</string>
+</resources>
