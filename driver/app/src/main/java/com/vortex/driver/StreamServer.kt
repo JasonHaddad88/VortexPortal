@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.coroutines.coroutineContext
 import java.io.IOException
 import java.net.BindException
 import java.net.InetAddress
@@ -106,11 +107,14 @@ class StreamServer(
     }
 
     private suspend fun watchForDisconnect(client: Socket) {
+        // `isActive` is an extension property on CoroutineScope / CoroutineContext.
+        // We're a bare `suspend fun` (no scope receiver), so we have to reach
+        // it via the implicit coroutineContext from kotlin.coroutines.
         try {
             val ins = client.getInputStream()
             // Block on read; client never sends anything, so any return
             // (-1 on close, or an EOFException) means they hung up.
-            while (isActive && client === currentClient) {
+            while (coroutineContext.isActive && client === currentClient) {
                 val r = ins.read()
                 if (r == -1) break
             }
