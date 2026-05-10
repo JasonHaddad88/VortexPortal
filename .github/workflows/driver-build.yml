@@ -58,8 +58,44 @@ jobs:
           ls "$ANDROID_HOME/platforms" || true
           ls "$ANDROID_HOME/build-tools" || true
 
+      # Tee gradle output so a follow-up step can fish out errors and
+      # surface them in the run summary -- the run summary is public on
+      # public repos, so anyone (including me without GH auth) can see
+      # why a build failed without downloading the full log.
       - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
+        id: build
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace assembleDebug 2>&1 | tee gradle.log
+
+      - name: Surface gradle errors on failure
+        if: failure() && steps.build.conclusion == 'failure'
+        run: |
+          {
+            echo "## Build failure summary"
+            echo
+            echo '### Last 60 lines of `gradlew assembleDebug`'
+            echo '```'
+            tail -n 60 gradle.log || echo '(no gradle.log captured)'
+            echo '```'
+            echo
+            echo '### Lines mentioning errors / FAILED / exception'
+            echo '```'
+            grep -niE '(error[: ]|FAILED|Exception|^\s*> Task .* FAILED|^FAILURE:)' gradle.log \
+              | head -n 40 || echo '(no error lines found)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload gradle log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-log
+          path: |
+            driver/gradle.log
+            driver/app/build/reports/
+          retention-days: 14
+          if-no-files-found: ignore
 
       # Surface where the APK landed so debugging is easier if it moves.
       - name: Locate APK

@@ -38,6 +38,9 @@ android {
 
     buildFeatures {
         viewBinding = true   // generates Kt classes for layouts; safer than findViewById
+        // AGP 8.x doesn't generate BuildConfig unless explicitly enabled --
+        // and we reference BuildConfig.VERSION_NAME from MainActivity.
+        buildConfig = true
     }
 
     // CI (GitHub Actions) signs debug builds with the auto-generated debug keystore;
