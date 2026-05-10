@@ -17,6 +17,12 @@
     <string name="channel_name">Vortex Driver</string>
     <string name="channel_desc">Background bridge to the Termux Vortex agent.</string>
 
+    <!-- Legacy M0 strings -- kept so a downgrade doesn't break, no longer used. -->
     <string name="notif_waiting">Waiting for Termux agent on 127.0.0.1:%1$d…</string>
     <string name="notif_connected">Connected to Termux agent.</string>
+
+    <!-- M1: notification states reflecting client + camera lifecycle. -->
+    <string name="notif_idle">Idle. Waiting for Termux agent on 127.0.0.1:%1$d</string>
+    <string name="notif_streaming">Streaming camera to Termux agent · %1$d frames</string>
+    <string name="notif_error">Camera error: %1$s</string>
 </resources>

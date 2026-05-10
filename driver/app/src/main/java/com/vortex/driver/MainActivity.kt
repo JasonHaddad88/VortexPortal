@@ -24,13 +24,16 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
-    private val notifPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        binding.notifStatus.text = if (granted)
-            getString(R.string.notif_granted)
-        else
-            getString(R.string.notif_denied)
+    /**
+     * Request both POST_NOTIFICATIONS (foreground-service notification UI)
+     * and CAMERA (M1: actual camera use) in one prompt. Doing them
+     * together up front avoids the "service starts but every client
+     * connection errors out with no-perm" failure mode on a fresh install.
+     */
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        refreshNotifStatus()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,15 +54,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            // < Android 13: notifications don't need a runtime permission.
-            return
+        val needed = mutableListOf<String>()
+        // POST_NOTIFICATIONS only on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
         }
-        val granted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        // CAMERA needed since the very first agent connection (M1).
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.CAMERA
+        }
+        if (needed.isNotEmpty()) {
+            permissionLauncher.launch(needed.toTypedArray())
         }
     }
 
