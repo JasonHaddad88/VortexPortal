@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Capability declaration that the AccessibilityService manifest entry
+  references via meta-data android:resource. canPerformGestures="true"
+  is the critical bit; without it dispatchGesture() silently fails.
+
+  We don't actually consume any accessibility events (we just want to
+  inject input), but the service still has to declare what it WOULD
+  listen to so the system can compute its filter. typeAllMask + a fast
+  notificationTimeout is the cheapest configuration.
+
+  android:description is the blurb the system shows in
+  Settings -> Accessibility -> Vortex Driver -> Use service so the user
+  can decide whether to enable us.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canPerformGestures="true"
+    android:notificationTimeout="100"
+    android:description="@string/accessibility_description" />

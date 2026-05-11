@@ -45,6 +45,9 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private var pendingScreenResultCode: Int = 0
     private var pendingScreenResultData: Intent? = null
 
+    // ---- Input (M3) ----
+    private lateinit var inputServer: InputServer
+
     @Volatile private var lastError: String? = null
     @Volatile private var frameCount: Long = 0L
 
@@ -69,6 +72,11 @@ class DriverService : Service(), CameraEngine.FrameSink {
             onClientConnected = ::onScreenClientConnected,
             onClientDisconnected = ::onScreenClientDisconnected,
         ).also { it.start() }
+
+        // M3: input server is independent of camera + screen. Always on
+        // while the service is up, so the agent can control the phone
+        // without needing to also be streaming video.
+        inputServer = InputServer(this, port = INPUT_PORT).also { it.start() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -90,6 +98,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { screen?.stop() } catch (_: Exception) {}
         try { cameraServer.stop() } catch (_: Exception) {}
         try { screenServer.stop() } catch (_: Exception) {}
+        try { inputServer.stop() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -255,8 +264,16 @@ class DriverService : Service(), CameraEngine.FrameSink {
                      else
                         getString(R.string.notif_screen_armed, SCREEN_PORT)
         }
-        if (parts.isEmpty()) {
-            parts += getString(R.string.notif_idle, CAMERA_PORT)
+        // M3: surface accessibility state so the user can see at a glance
+        // whether remote input will work without opening the app.
+        if (VortexAccessibilityService.isEnabled) {
+            parts += getString(R.string.notif_input_ready)
+        } else {
+            parts += getString(R.string.notif_input_disabled)
+        }
+        if (parts.size == 1 && parts[0] == getString(R.string.notif_input_disabled)) {
+            // Only the "input disabled" badge is showing -- prepend the idle hint.
+            parts.add(0, getString(R.string.notif_idle, CAMERA_PORT))
         }
         val text = parts.joinToString(" · ")
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -289,6 +306,8 @@ class DriverService : Service(), CameraEngine.FrameSink {
         const val ACTION_DISARM_SCREEN = "com.vortex.driver.ACTION_DISARM_SCREEN"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
+
+        const val INPUT_PORT  = 5097   // M3
 
         private const val TAG = "DriverService"
     }

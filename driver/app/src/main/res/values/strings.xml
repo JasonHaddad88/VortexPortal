@@ -36,4 +36,18 @@
     <string name="notif_streaming_camera">Streaming camera · %1$d frames</string>
     <string name="notif_streaming_screen">Streaming screen</string>
     <string name="notif_screen_armed">Screen armed; waiting for client on 127.0.0.1:%1$d</string>
+
+    <!-- M3: AccessibilityService for remote input. -->
+    <string name="notif_input_ready">Input ready</string>
+    <string name="notif_input_disabled">Input disabled (enable Accessibility)</string>
+    <string name="btn_open_a11y">Open Accessibility settings</string>
+    <string name="a11y_status_enabled">Accessibility: enabled (remote input works).</string>
+    <string name="a11y_status_disabled">Accessibility: disabled. Tap the button below and enable Vortex Driver in the system list.</string>
+    <string name="accessibility_label">Vortex Driver — remote input</string>
+    <string name="accessibility_description">
+        Lets the Vortex Hub on your laptop / control device tap, swipe, and
+        use Back/Home/Recents on this phone. Enable only if you trust the
+        hub instance you have paired with — this permission is what lets it
+        impersonate touch input on the device.
+    </string>
 </resources>

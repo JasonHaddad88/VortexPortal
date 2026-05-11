@@ -80,6 +80,32 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- M3: Accessibility-service status + deep-link to system settings.
+         The user has to enable us themselves; we can only guide them. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/openA11yBtn"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="@string/btn_open_a11y"
+        app:layout_constraintTop_toBottomOf="@id/disarmScreenBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <TextView
+        android:id="@+id/a11yStatus"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textSize="12sp"
+        android:textColor="#A855F7"
+        android:fontFamily="monospace"
+        android:text="@string/a11y_status_disabled"
+        app:layout_constraintTop_toBottomOf="@id/openA11yBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <TextView
         android:id="@+id/serviceStatus"
         android:layout_width="0dp"
@@ -89,7 +115,7 @@
         android:textColor="#67E8F9"
         android:fontFamily="monospace"
         android:text="@string/service_idle"
-        app:layout_constraintTop_toBottomOf="@id/disarmScreenBtn"
+        app:layout_constraintTop_toBottomOf="@id/a11yStatus"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

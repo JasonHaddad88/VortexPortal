@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -50,9 +51,38 @@ class MainActivity : AppCompatActivity() {
         binding.stopBtn.setOnClickListener { stopDriver() }
         binding.armScreenBtn.setOnClickListener { armScreenSharing() }
         binding.disarmScreenBtn.setOnClickListener { disarmScreenSharing() }
+        binding.openA11yBtn.setOnClickListener { openAccessibilitySettings() }
 
         ensureNotificationPermission()
         refreshNotifStatus()
+        refreshA11yStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The user might have just toggled us in Settings -> Accessibility;
+        // recompute the row when the app comes back to the foreground.
+        refreshA11yStatus()
+    }
+
+    /** Deep-link to Settings -> Accessibility. We can't take the user any
+     *  deeper -- per-service deep-linking is OEM-flaky. */
+    private fun openAccessibilitySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (e: Exception) {
+            // Fall back to general settings
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+    }
+
+    private fun refreshA11yStatus() {
+        binding.a11yStatus.text = getString(
+            if (VortexAccessibilityService.isEnabled)
+                R.string.a11y_status_enabled
+            else
+                R.string.a11y_status_disabled
+        )
     }
 
     /** Launch the system MediaProjection consent dialog (M2). */
