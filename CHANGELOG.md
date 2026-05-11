@@ -3,6 +3,54 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.0-M1] — 2026-05-10
+
+Real-time camera video, end-to-end. Phone → driver APK → Termux agent
+→ hub → laptop browser, with the browser rendering in a vanilla `<img>`
+tag. Closes the "termux-camera-photo only does snapshots" limitation
+from V4.0.
+
+### Added
+- **`agent/camera_bridge.py`** — TCP client for the Vortex Driver APK's
+  loopback MJPEG socket on `127.0.0.1:5099`. `open_stream()` connects
+  synchronously and returns an iterator of JPEG frames (length-prefixed
+  on the wire: `[u32 BE][JPEG bytes]`). Connection failure raises
+  `DriverNotAvailable` with a verbatim "install the APK + start the
+  service" message that flows all the way back to the browser.
+- **`agent.op_camera_stream`** — new streaming op. Connects to the
+  bridge, sends `stream_start`, then forwards each JPEG as a binary WS
+  chunk via the V2.1 frame protocol. Critical ordering: socket open
+  happens *before* `stream_start` so a missing driver surfaces as a
+  clean 502 instead of a 200 with an empty body.
+- **Hub `GET /devices/{id}/camera/live`** — wraps each agent-side WS
+  chunk in a `multipart/x-mixed-replace; boundary=vortexframe` HTTP
+  response. Standard MJPEG-over-HTTP that any browser can render in an
+  `<img>` tag with zero JS.
+- **Camera page UI** — "▶ Live stream" button next to the existing
+  Capture / Auto-refresh controls. Toggles between snapshot mode and
+  live MJPEG. Also disables Save Image during streaming (the `<img>`
+  isn't a single frame). Helper text now distinguishes Termux:API
+  snapshots from Driver-APK live video and links to the Actions
+  workflow that builds the APK.
+
+### Notes
+- The two camera modes (snapshot via `termux-camera-photo`, live via
+  Driver APK) are mutually exclusive at the camera-hardware level. The
+  UI auto-stops snapshot polling when streaming starts; the user
+  shouldn't normally hit a conflict, but if both fire concurrently the
+  latter wins and the former errors out.
+- Smoke-tested error path: no Driver APK reachable → 502 with the full
+  install message in 2.4 s (was 25 s timeout before V4.0's
+  stream-error-routing fix). Snapshot capture still works in parallel.
+- Happy path (real video) requires the Driver APK from
+  V5.0-M1 (commit `0a1c827` onwards) running on the phone with the
+  service started + camera permission granted. Verification of the
+  live-stream happy path is on the user's phone, not in this CI.
+
+## [V5.0-M0] — 2026-05-10
+
+Vortex Driver APK scaffold. See `driver/README.md` and `ROADMAP.md`.
+
 ## [V4.0] — 2026-05-10
 
 Opens the V4 cycle — moving from "remote files + system info" into

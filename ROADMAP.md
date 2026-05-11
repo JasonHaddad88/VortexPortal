@@ -26,11 +26,17 @@ artifacts (no Android Studio required).
   on every push and uploads it as an artifact. No camera/screen yet —
   that's M1+.
 
-- [ ] **M1 — Real-time camera streaming** 🔴
-  Camera2 → H.264 hardware encoder → loopback socket → Python agent
-  forwards over WebSocket → laptop browser renders via MediaSource
-  Extensions. Targets 24-30 fps with sub-second latency. Adds
-  `FOREGROUND_SERVICE_CAMERA` permission.
+- [x] **M1 — Real-time camera streaming** 🔴 — _shipped V5.0-M1_
+  Camera2 → JPEG (YUV→NV21→YuvImage) → length-prefixed loopback socket on
+  127.0.0.1:5099 → Python agent's `op_camera_stream` → hub
+  `/devices/{id}/camera/live` wraps frames in `multipart/x-mixed-replace`
+  → browser renders in a vanilla `<img>` tag. The driver only opens the
+  camera while a client is connected, so the on-device camera-in-use
+  indicator pulses only when somebody is actually watching.
+  We chose MJPEG over H.264+MSE for first cut: zero browser-side JS,
+  trivially debuggable, gets to working video without fMP4/MediaSource
+  plumbing. Bandwidth is 5-10× worse than H.264; H.264+MSE moves to a
+  V5.0-M1.5 if needed.
 
 - [ ] **M2 — Screen capture / mirror** 🔴
   `MediaProjection` consent dialog → H.264 encode of the screen frame

@@ -1030,6 +1030,7 @@ def device_camera_page(user: dict, device: dict) -> str:
     <input type="checkbox" id="cam-live" style="vertical-align:middle;margin-right:.4rem">
     Auto-refresh
   </label>
+  <button class="btn btn-primary" id="cam-stream">▶ Live stream</button>
   <button class="btn btn-small" id="cam-save" disabled>Save image</button>
   <span class="cam-status" id="cam-status">idle</span>
 </div>
@@ -1042,11 +1043,13 @@ def device_camera_page(user: dict, device: dict) -> str:
 </div>
 
 <p style="margin-top:1rem;color:var(--muted);font-size:.75rem">
-  Requires <code style="color:var(--cyan)">pkg install termux-api</code> and
-  the Termux:API app from F-Droid (with camera permission granted).
-  The phone's screen must be <strong>unlocked</strong> for capture to succeed.
-  Auto-refresh polls every 6 s — termux-camera-photo isn't real video,
-  it's one-shot snapshots.
+  <strong>Capture / Auto-refresh</strong> use <code style="color:var(--cyan)">termux-camera-photo</code>
+  via the Termux:API app from F-Droid. One-shot snapshots; auto-refresh polls every 6 s.
+  Phone screen must be unlocked.<br>
+  <strong>Live stream</strong> uses the Vortex Driver APK (V5.0) for real-time MJPEG video
+  at the camera's native frame rate. Install the APK from the
+  <a href="https://github.com/JasonHaddad88/VortexPortal/actions/workflows/driver-build.yml" target="_blank">latest GitHub Actions artifact</a>,
+  open it on the phone, tap <em>Start service</em>, grant the camera permission.
 </p>
 
 <script>
@@ -1167,6 +1170,51 @@ def device_camera_page(user: dict, device: dict) -> str:
   live.addEventListener('change', () => {{
     if (live.checked) {{ capture(); startLive(); }}
     else {{ stopLive(); }}
+  }});
+
+  // ----- V5.0 M1: real-time MJPEG live stream from the Driver APK -----
+  const stream = document.getElementById('cam-stream');
+  let streaming = false;
+  function startStream() {{
+    // Stop snapshot polling while streaming -- they share the camera
+    // hardware and the agent can only host one camera-using op at a time.
+    live.checked = false;
+    stopLive();
+    placeholder.style.display = 'none';
+    const err = stage.querySelector('.err');
+    if (err) err.remove();
+    let img = stage.querySelector('img');
+    if (!img) {{
+      img = document.createElement('img');
+      stage.appendChild(img);
+    }}
+    if (lastBlobUrl) {{ URL.revokeObjectURL(lastBlobUrl); lastBlobUrl = null; }}
+    // Bust intermediary caches; a t= query param forces a fresh stream.
+    img.src = `/devices/${{encodeURIComponent(did)}}/camera/live?t=${{Date.now()}}`;
+    img.onerror = () => {{
+      showError('Stream failed. Is the Vortex Driver APK installed and "Start service" tapped?');
+      streaming = false;
+      stream.textContent = '▶ Live stream';
+      stream.classList.add('btn-primary');
+    }};
+    streaming = true;
+    stream.textContent = '■ Stop stream';
+    stream.classList.remove('btn-primary');
+    setStatus('streaming');
+    // Save isn't meaningful during a live stream (the <img> isn't a single frame).
+    save.disabled = true;
+  }}
+  function stopStream() {{
+    streaming = false;
+    stream.textContent = '▶ Live stream';
+    stream.classList.add('btn-primary');
+    const img = stage.querySelector('img');
+    if (img) img.src = '';
+    setStatus('stopped');
+  }}
+  stream.addEventListener('click', () => {{
+    if (streaming) stopStream();
+    else startStream();
   }});
   const safeName = ({name_js}).replace(/\\W+/g, '_').slice(0, 60) || 'device';
   save.addEventListener('click', () => {{

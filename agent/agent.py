@@ -541,6 +541,55 @@ async def op_write_file(session: "Session", rid: str, args: dict) -> dict:
     return {"path": rel, "written": written}
 
 
+async def op_camera_stream(session: "Session", rid: str, args: dict) -> None:
+    """Real-time camera stream from the Vortex Driver APK (V5.0).
+
+    Connects to the driver's loopback MJPEG socket synchronously, then
+    forwards each JPEG frame to the hub as a binary WS chunk. Yields
+    control between frames so other ops + WS pings keep flowing.
+
+    Critical ordering: we open the socket BEFORE sending stream_start.
+    If the driver isn't installed, open_stream raises DriverNotAvailable
+    -- which we re-raise as RuntimeError so the dispatcher converts it to
+    a {"ok": false} response and the hub returns a clean 502 instead of
+    a 200 with an empty MJPEG body.
+    """
+    from .camera_bridge import open_stream, DriverNotAvailable
+
+    loop = asyncio.get_event_loop()
+
+    def _next_frame(it):
+        try: return next(it)
+        except StopIteration: return None
+
+    try:
+        frames = await loop.run_in_executor(None, open_stream)
+    except DriverNotAvailable as e:
+        raise RuntimeError(str(e))
+
+    # Bridge is alive -- announce the stream and start forwarding.
+    await session.send_text({
+        "type": "stream_start", "id": rid,
+        "content_type": "image/jpeg",
+    })
+
+    sent = 0
+    try:
+        while True:
+            chunk = await loop.run_in_executor(None, _next_frame, frames)
+            if chunk is None:
+                break
+            await session.send_chunk(rid, chunk)
+            sent += 1
+    finally:
+        # Best-effort close so the driver releases the camera promptly.
+        try:
+            frames.close()
+        except Exception:
+            pass
+        await session.send_text({"type": "stream_end", "id": rid, "frames": sent})
+
+
 async def op_read_file_stream(session: "Session", rid: str, args: dict) -> None:
     rel = args.get("path", "")
     p = _safe_resolve(rel)
@@ -578,6 +627,7 @@ UNARY_OPS = {
 STREAM_OPS = {
     "read_file": op_read_file_stream,
     "camera_capture": op_camera_capture,
+    "camera_stream": op_camera_stream,        # V5.0 M1: real-time MJPEG via Driver APK
 }
 
 # Ops that receive a stream from the hub and return a unary result. They

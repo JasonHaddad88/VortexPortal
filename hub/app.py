@@ -524,6 +524,80 @@ async def api_device_cameras(device_id: str,
     return JSONResponse(result)
 
 
+# V5.0 M1: real-time MJPEG live view, sourced from the Vortex Driver APK
+# via the Termux agent. Each agent-side WS chunk is one JPEG; we wrap it in
+# a multipart/x-mixed-replace boundary so a vanilla <img> tag renders it as
+# live video (no MSE / fMP4 / WebRTC required).
+_MJPEG_BOUNDARY = "vortexframe"
+
+
+@app.get("/devices/{device_id}/camera/live")
+async def device_camera_live(device_id: str,
+                             user: dict = Depends(auth.require_user)):
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+
+    # Open the stream eagerly so a precondition failure (Driver APK not
+    # installed, no camera permission, etc.) surfaces as a clean 502 with
+    # the exact message before the browser commits to a long-lived response.
+    stream = conn.stream("camera_stream", {}, start_timeout=10)
+    try:
+        first = await stream.__anext__()
+    except ws_router.AgentError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except (StopAsyncIteration, asyncio.TimeoutError):
+        raise HTTPException(
+            status_code=504,
+            detail="Driver APK didn't respond. Open Vortex Driver and tap "
+                   "'Start service' on the device.",
+        )
+    if first.get("type") != "stream_start":
+        raise HTTPException(status_code=502, detail="Unexpected agent response")
+
+    boundary = _MJPEG_BOUNDARY
+    headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+        "Connection": "close",
+    }
+
+    async def gen():
+        try:
+            async for msg in stream:
+                if msg.get("type") == "stream_chunk":
+                    jpeg = msg.get("_binary")
+                    if not jpeg:
+                        # Legacy base64 fallback shouldn't fire here but be defensive.
+                        data = msg.get("data")
+                        if data:
+                            jpeg = base64.b64decode(data)
+                    if not jpeg:
+                        continue
+                    # Each part: boundary + headers + body, all CRLF-terminated.
+                    yield (
+                        f"--{boundary}\r\n"
+                        f"Content-Type: image/jpeg\r\n"
+                        f"Content-Length: {len(jpeg)}\r\n\r\n"
+                    ).encode("ascii") + jpeg + b"\r\n"
+                elif msg.get("type") == "stream_end":
+                    return
+        except ws_router.AgentError:
+            return
+        finally:
+            # Closing terminator so well-behaved clients know we're done.
+            yield f"--{boundary}--\r\n".encode("ascii")
+
+    return StreamingResponse(
+        gen(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers=headers,
+    )
+
+
 @app.get("/devices/{device_id}/camera/capture")
 async def device_camera_capture(device_id: str,
                                 camera_id: str = "0",
