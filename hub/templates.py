@@ -627,6 +627,156 @@ select.cam-pick {
   font-size: 0.85em;
 }
 
+/* ---------- V5.1 dashboard card streamline ---------- */
+/* Status column on the right of the card header: badge stacked above the
+   trashcan, info-circle anchored alongside. */
+.card .status-col {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+.icon-btn {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+  transition: color .15s, border-color .15s, background .15s, box-shadow .15s;
+}
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: rgba(168, 85, 247, 0.08);
+}
+.icon-btn.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(239, 68, 68, 0.08);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+}
+.icon-btn svg { width: 14px; height: 14px; display: block; }
+.icon-btn.info {
+  /* The inline button sits inline with .meta paragraphs */
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+/* Compact 4-button action row */
+.card .actions.compact {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+.card .actions.compact .btn {
+  padding: 0.45rem 0.3rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+/* ---------- V5.1 device-info modal ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(6, 6, 10, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 100;
+  padding: 1.5rem;
+}
+.modal-backdrop.open { display: flex; }
+.modal {
+  width: 100%; max-width: 540px; max-height: 84vh;
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6),
+              0 0 32px rgba(168, 85, 247, 0.18);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.modal .modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.95rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.modal .modal-head h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.modal .modal-head .close {
+  width: 28px; height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+.modal .modal-head .close:hover {
+  color: var(--text);
+  border-color: var(--cyan);
+}
+.modal .modal-body {
+  overflow-y: auto;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.info-section {
+  margin-bottom: 1.1rem;
+}
+.info-section:last-child { margin-bottom: 0; }
+.info-section h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--purple);
+}
+.info-grid {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  row-gap: 0.3rem;
+  column-gap: 0.85rem;
+  font-size: 0.78rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.info-grid .k {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.66rem;
+  align-self: center;
+}
+.info-grid .v {
+  color: var(--text);
+  word-break: break-word;
+}
+.info-grid .v.muted { color: var(--muted); font-style: italic; }
+.info-grid .v.fp {
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+.modal .err-banner {
+  padding: 0.85rem 1rem;
+  margin: 1rem 1.25rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: var(--danger);
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
 footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -639,7 +789,7 @@ footer {
 
 
 def page(title: str, body: str, *, user: Optional[dict] = None,
-         active: str = "", chrome: bool = True, version: str = "4.0") -> str:
+         active: str = "", chrome: bool = True, version: str = "5.1") -> str:
     """Wrap body in the standard page chrome (topbar + footer)."""
     if chrome:
         nav_items = [
@@ -755,23 +905,45 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
         badge_cls = "online" if is_online else "offline"
         badge_lbl = "Online" if is_online else "Offline"
         last_seen = "never" if not d.get("last_seen") else f"Δ {_ago(d['last_seen'])}"
-        cards.append(f"""<div class="card" data-device-id="{did}">
-  <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:.5rem;gap:.5rem">
+        # V5.1 layout: status-col on the right has the online/offline badge
+        # stacked over a trashcan icon-button. Info circle sits in the meta
+        # row and pops a modal on click. Action row is exactly 4 buttons.
+        cards.append(f"""<div class="card" data-device-id="{did}" data-device-name="{name}">
+  <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:.5rem;gap:.6rem">
     <h3 style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">{name}</h3>
-    <span class="badge {badge_cls}" data-status>{badge_lbl}</span>
+    <div class="status-col">
+      <span class="badge {badge_cls}" data-status>{badge_lbl}</span>
+      <form method="post" action="/devices/{did}/delete" style="margin:0">
+        <button class="icon-btn danger" type="submit" title="Delete this device"
+                onclick="return confirm('Unpair {name}? This cannot be undone — you will need to re-pair to control it again.')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6"/><path d="M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+        </button>
+      </form>
+    </div>
   </div>
-  <p class="meta">id: {did}</p>
+  <p class="meta">id: {did}
+    <button class="icon-btn info" type="button" data-info-btn title="Device info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="16" x2="12" y2="12"/>
+        <circle cx="12" cy="8" r="0.5" fill="currentColor"/>
+      </svg>
+    </button>
+  </p>
   <p class="meta" data-last-seen>last seen: {escape(last_seen)}</p>
   <div class="stats" data-stats hidden></div>
-  <div class="actions">
+  <div class="actions compact">
     <a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>
     <a class="btn" href="/devices/{did}/camera">Camera</a>
-    <a class="btn" href="/devices/{did}">Manage</a>
-    <form method="post" action="/devices/{did}/delete" style="display:inline;margin:0;margin-left:auto">
-      <button class="btn btn-danger btn-small" type="submit"
-              onclick="return confirm('Unpair {name}? This cannot be undone — you will need to re-pair to control it again.')"
-              title="Unpair this device">Delete</button>
-    </form>
+    <a class="btn" href="/devices/{did}/screen">Screen</a>
+    <a class="btn" href="/devices/{did}">Edit</a>
   </div>
 </div>""")
 
@@ -789,6 +961,20 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
   <a class="btn btn-primary" href="/pair">+ Add Device</a>
 </div>
 {grid_html}
+
+<!-- V5.1 device-info modal. One per page; populated on demand. -->
+<div class="modal-backdrop" id="device-info-modal" hidden>
+  <div class="modal" role="dialog" aria-labelledby="dim-title">
+    <div class="modal-head">
+      <h3 id="dim-title">// Device Info</h3>
+      <button class="close" type="button" data-dim-close aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="dim-body">
+      <div class="info-section"><span class="muted">Loading…</span></div>
+    </div>
+  </div>
+</div>
+
 <script>
 function fmtBytes(n) {{
   if (n == null) return '?';
@@ -872,6 +1058,165 @@ async function pollStats() {{
 pollOnline(); pollStats();
 setInterval(pollOnline, 5000);
 setInterval(pollStats, 15000);
+
+// ---- V5.1: device-info modal ----
+(function() {{
+  const backdrop = document.getElementById('device-info-modal');
+  const body = document.getElementById('dim-body');
+  const titleEl = document.getElementById('dim-title');
+  if (!backdrop || !body) return;
+
+  function open(deviceId, deviceName) {{
+    titleEl.textContent = '// ' + deviceName;
+    body.innerHTML = '<div class="info-section"><span class="muted">Loading device info…</span></div>';
+    backdrop.hidden = false;
+    backdrop.classList.add('open');
+    document.addEventListener('keydown', onKey);
+    fetchInfo(deviceId);
+  }}
+  function close() {{
+    backdrop.classList.remove('open');
+    backdrop.hidden = true;
+    document.removeEventListener('keydown', onKey);
+  }}
+  function onKey(e) {{ if (e.key === 'Escape') close(); }}
+
+  backdrop.addEventListener('click', (e) => {{
+    if (e.target === backdrop) close();
+  }});
+  backdrop.querySelector('[data-dim-close]').addEventListener('click', close);
+
+  document.querySelectorAll('[data-info-btn]').forEach(btn => {{
+    btn.addEventListener('click', () => {{
+      const card = btn.closest('[data-device-id]');
+      if (!card) return;
+      open(card.dataset.deviceId, card.dataset.deviceName || 'Device');
+    }});
+  }});
+
+  async function fetchInfo(deviceId) {{
+    try {{
+      const r = await fetch(`/api/devices/${{encodeURIComponent(deviceId)}}/info`,
+                            {{cache: 'no-store'}});
+      const data = await r.json();
+      if (!data.ok) {{
+        body.innerHTML = `<div class="err-banner">${{escapeHtml(data.error || 'Unknown error')}}</div>`;
+        return;
+      }}
+      body.innerHTML = renderInfo(data.result);
+    }} catch (e) {{
+      body.innerHTML = `<div class="err-banner">Fetch failed: ${{escapeHtml(e.message)}}</div>`;
+    }}
+  }}
+
+  function escapeHtml(s) {{
+    if (s == null) return '';
+    return String(s).replace(/[&<>\"']/g, c => ({{
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }}[c]));
+  }}
+
+  function row(k, v, opts) {{
+    if (v == null || v === '' || v === undefined) {{
+      return `<div class="k">${{escapeHtml(k)}}</div><div class="v muted">unknown</div>`;
+    }}
+    const cls = (opts && opts.cls) ? ' ' + opts.cls : '';
+    return `<div class="k">${{escapeHtml(k)}}</div><div class="v${{cls}}">${{escapeHtml(v)}}</div>`;
+  }}
+
+  function section(title, rows) {{
+    if (!rows || rows.length === 0) return '';
+    return `<div class="info-section"><h4>${{escapeHtml(title)}}</h4>` +
+           `<div class="info-grid">${{rows.join('')}}</div></div>`;
+  }}
+
+  function fmtBytesLocal(n) {{
+    if (n == null) return null;
+    return fmtBytes(n);
+  }}
+
+  function pct(used, total) {{
+    if (!used || !total) return null;
+    return Math.round(used / total * 100) + '%';
+  }}
+
+  function renderInfo(d) {{
+    const dev = d.device || {{}};
+    const cpu = d.cpu || {{}};
+    const mem = d.memory || {{}};
+    const sto = d.storage || {{}};
+    const bat = d.battery || {{}};
+    const net = d.network || {{}};
+
+    const memTotal = mem.total;
+    const memAvail = mem.available;
+    const memUsed = (memTotal && memAvail) ? memTotal - memAvail : null;
+
+    const stoTotal = sto.total;
+    const stoFree = sto.free;
+    const stoUsed = (stoTotal && stoFree != null) ? stoTotal - stoFree : null;
+
+    const sections = [
+      section('Device', [
+        row('Model', dev.model),
+        row('Manufacturer', dev.manufacturer),
+        row('Brand', dev.brand),
+        row('Android', dev.android_version
+          ? dev.android_version + (dev.android_sdk ? ` (SDK ${{dev.android_sdk}})` : '')
+          : null),
+        row('SoC', dev.soc),
+        row('Kernel', dev.kernel),
+        row('Hostname', d.hostname),
+        row('Platform', d.platform),
+      ]),
+      section('CPU', [
+        row('Model', cpu.model),
+        row('Architecture', cpu.architecture),
+        row('Cores', cpu.cores),
+        row('Max Freq', cpu.max_freq_mhz ? cpu.max_freq_mhz + ' MHz' : null),
+      ]),
+      section('Memory', [
+        row('Total', fmtBytesLocal(memTotal)),
+        row('Available', fmtBytesLocal(memAvail)),
+        row('Used', memUsed != null
+          ? `${{fmtBytesLocal(memUsed)}} (${{pct(memUsed, memTotal)}})`
+          : null),
+      ]),
+      section('Storage', [
+        row('Root', sto.root),
+        row('Total', fmtBytesLocal(stoTotal)),
+        row('Free', fmtBytesLocal(stoFree)),
+        row('Used', stoUsed != null
+          ? `${{fmtBytesLocal(stoUsed)}} (${{pct(stoUsed, stoTotal)}})`
+          : null),
+      ]),
+      section('Battery', [
+        row('Level', bat.percentage != null ? bat.percentage + '%' : null),
+        row('Status', bat.status),
+        row('Plugged', bat.plugged),
+        row('Temperature', bat.temperature != null ? bat.temperature + ' °C' : null),
+      ]),
+      section('Network', [
+        row('IP', net.ip),
+        row('WiFi SSID', net.wifi_ssid),
+        row('WiFi RSSI', net.wifi_rssi != null ? net.wifi_rssi + ' dBm' : null),
+        row('WiFi Link', net.wifi_link_speed != null ? net.wifi_link_speed + ' Mbps' : null),
+        row('WiFi Freq', net.wifi_frequency != null ? net.wifi_frequency + ' MHz' : null),
+      ]),
+      section('System', [
+        row('Agent ver', d.agent_version),
+        row('Uptime', d.uptime_s != null ? fmtUptime(d.uptime_s) : null),
+        row('Load 1/5/15m', d.loadavg ? d.loadavg.map(x => x.toFixed(2)).join(', ') : null),
+      ]),
+    ];
+    if (dev.build_fingerprint) {{
+      sections.push(section('Build', [
+        row('Fingerprint', dev.build_fingerprint, {{cls: 'fp'}}),
+      ]));
+    }}
+    return sections.join('');
+  }}
+}})();
 </script>
 """
     return page("Dashboard", body, user=user, active="/")

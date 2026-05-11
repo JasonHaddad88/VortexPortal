@@ -52,6 +52,32 @@ artifacts (no Android Studio required).
   to keep bandwidth manageable. The screen page in the dashboard
   replaces the V4.0 "needs APK" placeholder.
 
+- [ ] **Samsung Knox / One UI accessibility block — workaround**  🟡
+  Real issue: Samsung devices running One UI (verified) flag the Vortex
+  Driver APK as malicious when the user tries to enable its
+  AccessibilityService, because the APK is sideloaded + unsigned by a
+  recognised developer. After the warning, Knox additionally suspends
+  the app's screen-projection too, so even M2 mirroring breaks. Not
+  reproduced on stock / Pixel / non-One-UI devices.
+  Options, none of them a true "bypass":
+    - **Sign the release APK with a stable developer key** + ship via
+      F-Droid (planned in M4). Knox is friendlier to APKs from sources
+      it has prior trust in. ~80 % of users stop seeing the warning.
+    - **ADB workaround**: `adb shell appops set com.vortex.driver.debug
+      ACCESS_RESTRICTED_SETTINGS allow` lets the user enable the
+      AccessibilityService manually. One-time; documented for users
+      willing to plug the phone in.
+    - **Knox Approved App registry**: Samsung's allowlist for
+      "trusted" sideloaded apps. Application is free but slow
+      (~weeks); requires us to be a real publisher with a website,
+      privacy policy, etc.
+    - **Same-device trick**: install the Driver APK from the F-Droid
+      repo URL inside Termux's storage instead of from a downloaded
+      `.apk` file. Knox sometimes treats this differently. Worth
+      trying before doing the heavy work.
+  Documented here so we don't re-discover this every time a Samsung
+  user tries to onboard.
+
 - [x] **M3 — Touch input simulation** 🔴 — _shipped V5.0-M3_
   `VortexAccessibilityService` does the actual `dispatchGesture()` calls
   and `performGlobalAction()` for nav buttons. New `InputServer` on

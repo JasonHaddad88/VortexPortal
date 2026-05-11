@@ -3,6 +3,58 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.1] — 2026-05-11
+
+Dashboard streamline + a richer device-info modal. Pure Python/UX
+release; no Driver APK changes (still v0.4.0-m3 from V5.0-M3).
+
+### Added
+- **`agent.op_device_info`** — heavier one-shot dump building on
+  `op_system_info`. Scrapes Android-specific fields via `getprop`
+  (model, manufacturer, brand, Android version+SDK, SoC, build
+  fingerprint), parses `/proc/cpuinfo` for CPU model/cores/arch and
+  `/sys/.../cpuinfo_max_freq` for max clock, reads `/proc/version` for
+  kernel, and adds network info (local IP via the connect-to-1.1.1.1
+  trick + WiFi SSID/RSSI/link speed via `termux-wifi-connectioninfo`).
+  Each subsection is best-effort; one failure becomes `null` and the
+  rest of the dict still ships.
+- **Hub `GET /api/devices/{id}/info`** — exposes the new op. 15s
+  timeout (heavier than `/api/devices/stats` because it shells out).
+  Failures bubble back as HTTP 200 `{ok:false,error:...}` so the modal
+  can render the error inline rather than blow up.
+- **Device-info modal on the dashboard.** Click the new ℹ icon next
+  to a card's `id:` row → modal opens, fetches `/api/devices/{id}/info`,
+  renders into sections (Device, CPU, Memory, Storage, Battery,
+  Network, System, Build). Esc closes; click on the backdrop closes.
+- **`ROADMAP.md` Samsung-Knox-block entry** — documents the One UI
+  accessibility-suspension issue with four mitigation paths (signed
+  release + F-Droid; ADB `appops` workaround; Knox Approved App
+  registry submission; install-from-Termux-storage trick).
+
+### Changed
+- **Dashboard card layout streamlined.**
+  - Status column on the right of the header now stacks: online/offline
+    badge above a small **trashcan icon-button** (replaces the old
+    text "Delete" button in the actions row).
+  - Action row reduced to exactly **4 equal-width buttons**:
+    Browse, Camera, Screen, Edit (was 3 buttons + a delete tucked
+    after them). "Manage" renamed to "Edit" — same destination URL.
+  - New ℹ info-circle icon-button next to the device id.
+- **Versions:** hub V4.0 → V5.1, agent V4.0 → V5.1. Driver APK
+  unchanged at v0.4.0-m3 (no driver-side changes in this release).
+
+### Smoke-tested
+- Dashboard renders all the new pieces (trashcan SVG, info-circle,
+  4-button row, modal markup, `renderInfo` JS) -- hub V5.1 footer
+  confirmed.
+- `/api/devices/{id}/info` returns 200 in ~300 ms with all expected
+  top-level keys (agent_version, hostname, platform, storage, device,
+  cpu, network). Android-specific fields (`device.model`, etc.) come
+  back as `null` on the Windows test agent, which is correct degradation
+  -- they'll populate on a real Termux phone.
+- Trashcan delete continues to redirect to / and removes the device
+  from the dashboard.
+
 ## [V5.0-M3] — 2026-05-11
 
 Real **remote control**: click on the mirrored screen in the browser, the

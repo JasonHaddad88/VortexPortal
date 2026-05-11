@@ -202,6 +202,37 @@ def api_online(user: dict = Depends(auth.require_user)):
     return {"online": online}
 
 
+@app.get("/api/devices/{device_id}/info")
+async def api_device_info(device_id: str,
+                          user: dict = Depends(auth.require_user)):
+    """One-shot full device dump for the dashboard's info modal (V5.1).
+
+    Heavier than /api/devices/stats (which polls every 15s) because the
+    agent shells out to `getprop`, `termux-wifi-connectioninfo`, etc.
+    Generous 15s timeout. Failures bubble back as {ok:false,error:...}
+    at HTTP 200 so the JS can render the error inline rather than
+    treating it as an unrecoverable error.
+    """
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        return JSONResponse(
+            {"ok": False, "error": "Device offline"}, status_code=200,
+        )
+    try:
+        result = await conn.request("device_info", timeout=15.0)
+    except ws_router.AgentError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            {"ok": False, "error": "Agent did not respond in 15s"},
+            status_code=200,
+        )
+    return JSONResponse({"ok": True, "result": result})
+
+
 @app.get("/api/devices/stats")
 async def api_devices_stats(user: dict = Depends(auth.require_user)):
     """Returns {device_id: {...stats...}} for every online device the user owns.

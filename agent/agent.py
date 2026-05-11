@@ -241,6 +241,182 @@ def op_system_info(args: dict) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Device info (V5.1) -- richer one-shot dump for the dashboard's info
+# modal. Heavier than system_info because it shells out to `getprop`,
+# `termux-wifi-connectioninfo`, etc., so call it on demand, not in a poll.
+# Every probe is best-effort; a failure in one section becomes None and
+# the rest of the dict still ships.
+# --------------------------------------------------------------------------
+def _getprop_many(keys: list) -> dict:
+    """Run a single `getprop` and pluck the requested keys. One subprocess
+    instead of N for the whole roster keeps this cheap on the phone."""
+    import subprocess
+    out: dict = {}
+    try:
+        result = subprocess.run(
+            ["getprop"], capture_output=True, text=True, timeout=3,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return out
+    if result.returncode != 0:
+        return out
+    # Parse `[key]: [value]` lines
+    for line in result.stdout.splitlines():
+        if "]: [" not in line:
+            continue
+        try:
+            k, v = line.split("]: [", 1)
+            k = k.lstrip("[").strip()
+            v = v.rstrip("]").strip()
+        except ValueError:
+            continue
+        if k in keys:
+            out[k] = v
+    return out
+
+
+def _read_cpu() -> dict:
+    """Parse /proc/cpuinfo for model name, core count, architecture.
+    /proc/cpuinfo on ARM Android typically reports per-core info; we
+    summarise it down to one entry."""
+    import platform
+    out: dict = {
+        "architecture": platform.machine() or None,
+        "cores": os.cpu_count(),
+    }
+    try:
+        with open("/proc/cpuinfo") as f:
+            text = f.read()
+    except OSError:
+        return out
+    # ARM cpuinfo uses "Hardware" / "Processor" / "model name"
+    for needle in ("Hardware", "Processor", "model name"):
+        for line in text.splitlines():
+            if line.startswith(needle):
+                _, _, val = line.partition(":")
+                val = val.strip()
+                if val:
+                    out["model"] = val
+                    break
+        if "model" in out:
+            break
+    # Try to surface a max frequency if the kernel exposes it.
+    try:
+        with open("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq") as f:
+            khz = int(f.read().strip())
+            out["max_freq_mhz"] = khz // 1000
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def _read_network() -> dict:
+    """Best-effort: WiFi info via Termux:API, IP address via socket trick."""
+    import json as _json
+    import socket
+    import subprocess
+    out: dict = {}
+    # Local IP -- the "connect to a public IP and look at the local end"
+    # trick that doesn't actually open any traffic.
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("1.1.1.1", 1))
+            out["ip"] = s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        pass
+    # Termux:API WiFi info
+    try:
+        r = subprocess.run(
+            ["termux-wifi-connectioninfo"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            data = _json.loads(r.stdout)
+            ssid = data.get("ssid")
+            if ssid and ssid != "<unknown ssid>":
+                out["wifi_ssid"] = ssid.strip('"')
+            for k in ("rssi", "link_speed_mbps", "frequency_mhz"):
+                v = data.get(k) if k in data else data.get(k.replace("_mbps", ""))
+                if v is not None:
+                    out["wifi_" + k.replace("_mbps", "").replace("_mhz", "")] = v
+    except (FileNotFoundError, subprocess.TimeoutExpired,
+            _json.JSONDecodeError, OSError):
+        pass
+    return out
+
+
+def _read_kernel() -> Optional[str]:
+    try:
+        with open("/proc/version") as f:
+            line = f.read().strip()
+        # "Linux version 4.19.157-... (build@host) ..." -> "Linux 4.19.157-..."
+        parts = line.split(" ", 3)
+        if len(parts) >= 3:
+            return f"{parts[0]} {parts[2]}"
+    except OSError:
+        pass
+    return None
+
+
+def op_device_info(args: dict) -> dict:
+    """Comprehensive device dump for the dashboard's info modal.
+
+    Builds on `op_system_info` (so we don't duplicate battery / memory /
+    storage / uptime probes) and adds Android-specific fields scraped
+    from `getprop`, `/proc/cpuinfo`, `/sys/...`, and Termux:API.
+    """
+    out = op_system_info(args)
+
+    props = _getprop_many([
+        "ro.product.model",
+        "ro.product.manufacturer",
+        "ro.product.brand",
+        "ro.product.name",
+        "ro.build.version.release",
+        "ro.build.version.sdk",
+        "ro.build.fingerprint",
+        "ro.board.platform",       # SoC platform code
+        "ro.hardware",             # SoC family
+        "ro.soc.manufacturer",     # Android 12+
+        "ro.soc.model",            # Android 12+
+    ])
+
+    # Pretty-up the SoC field: prefer ro.soc.* (Android 12+), fall back
+    # to ro.board.platform / ro.hardware. We end up with something like
+    # "Qualcomm SM7325" or "samsung exynos9820" depending on what's
+    # exposed.
+    soc_parts = []
+    if props.get("ro.soc.manufacturer"):
+        soc_parts.append(props["ro.soc.manufacturer"])
+    if props.get("ro.soc.model"):
+        soc_parts.append(props["ro.soc.model"])
+    soc = " ".join(soc_parts) or props.get("ro.board.platform") or props.get("ro.hardware")
+
+    sdk_str = props.get("ro.build.version.sdk")
+    try:
+        sdk = int(sdk_str) if sdk_str else None
+    except ValueError:
+        sdk = None
+
+    out["device"] = {
+        "model": props.get("ro.product.model"),
+        "manufacturer": props.get("ro.product.manufacturer"),
+        "brand": props.get("ro.product.brand"),
+        "android_version": props.get("ro.build.version.release"),
+        "android_sdk": sdk,
+        "soc": soc,
+        "build_fingerprint": props.get("ro.build.fingerprint"),
+        "kernel": _read_kernel(),
+    }
+    out["cpu"] = _read_cpu()
+    out["network"] = _read_network()
+    return out
+
+
+# --------------------------------------------------------------------------
 # Thumbnails -- Pillow if available, on-disk cache keyed by (path, mtime, size).
 # Returns base64-encoded JPEG since thumbnails are small (<50 KB) and a single
 # unary response is simpler than the binary-stream protocol for such payloads.
@@ -689,6 +865,7 @@ UNARY_OPS = {
     "stat": op_stat,
     "list_dir": op_list_dir,
     "system_info": op_system_info,
+    "device_info": op_device_info,             # V5.1: rich one-shot dump for info modal
     "thumbnail": op_thumbnail,
     "camera_info": op_camera_info,
     "input": op_input,                         # V5.0 M3: tap/swipe/back/home/recents
