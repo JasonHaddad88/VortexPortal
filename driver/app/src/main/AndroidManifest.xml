@@ -45,7 +45,7 @@
         <!--
           M2: launches the system MediaProjection consent dialog. Themed
           translucent so the dialog appears to overlay whatever the user
-          was looking at. Not exported -- only MainActivity launches it.
+          was looking at. Not exported, only MainActivity launches it.
         -->
         <activity
             android:name=".ScreenSetupActivity"
