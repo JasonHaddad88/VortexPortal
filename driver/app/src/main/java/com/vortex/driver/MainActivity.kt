@@ -48,9 +48,25 @@ class MainActivity : AppCompatActivity() {
 
         binding.startBtn.setOnClickListener { startDriver() }
         binding.stopBtn.setOnClickListener { stopDriver() }
+        binding.armScreenBtn.setOnClickListener { armScreenSharing() }
+        binding.disarmScreenBtn.setOnClickListener { disarmScreenSharing() }
 
         ensureNotificationPermission()
         refreshNotifStatus()
+    }
+
+    /** Launch the system MediaProjection consent dialog (M2). */
+    private fun armScreenSharing() {
+        startActivity(Intent(this, ScreenSetupActivity::class.java))
+        binding.disarmScreenBtn.visibility = View.VISIBLE
+    }
+
+    private fun disarmScreenSharing() {
+        val i = Intent(this, DriverService::class.java).apply {
+            action = DriverService.ACTION_DISARM_SCREEN
+        }
+        ContextCompat.startForegroundService(this, i)
+        binding.disarmScreenBtn.visibility = View.GONE
     }
 
     private fun ensureNotificationPermission() {

@@ -12,6 +12,7 @@
     <!-- Service-type permissions (required since Android 14 / API 34). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Notifications since Android 13 (API 33) need runtime grant. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- M1: camera (Camera2 API). Runtime grant required. -->
@@ -41,9 +42,19 @@
             </intent-filter>
         </activity>
 
+        <!--
+          M2: launches the system MediaProjection consent dialog. Themed
+          translucent so the dialog appears to overlay whatever the user
+          was looking at. Not exported -- only MainActivity launches it.
+        -->
+        <activity
+            android:name=".ScreenSetupActivity"
+            android:exported="false"
+            android:theme="@style/Theme.VortexDriver.Translucent" />
+
         <service
             android:name=".DriverService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|camera" />
+            android:foregroundServiceType="dataSync|camera|mediaProjection" />
     </application>
 </manifest>

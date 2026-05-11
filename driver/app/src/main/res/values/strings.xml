@@ -24,5 +24,16 @@
     <!-- M1: notification states reflecting client + camera lifecycle. -->
     <string name="notif_idle">Idle. Waiting for Termux agent on 127.0.0.1:%1$d</string>
     <string name="notif_streaming">Streaming camera to Termux agent · %1$d frames</string>
-    <string name="notif_error">Camera error: %1$s</string>
+    <string name="notif_error">Error: %1$s</string>
+
+    <!-- M2: screen-share UI + notifications. -->
+    <string name="btn_arm_screen">Arm screen sharing</string>
+    <string name="btn_disarm_screen">Disarm screen sharing</string>
+    <string name="screen_armed">Screen sharing armed.</string>
+    <string name="screen_denied">Screen sharing was denied.</string>
+    <string name="screen_unavailable">Screen capture unavailable on this device.</string>
+
+    <string name="notif_streaming_camera">Streaming camera · %1$d frames</string>
+    <string name="notif_streaming_screen">Streaming screen</string>
+    <string name="notif_screen_armed">Screen armed; waiting for client on 127.0.0.1:%1$d</string>
 </resources>

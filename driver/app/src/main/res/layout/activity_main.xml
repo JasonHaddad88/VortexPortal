@@ -55,6 +55,31 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- M2: separate row for the screen-share toggle. The system consent
+         dialog only fires from an Activity, so the user has to arm it
+         here before the laptop can stream the screen. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/armScreenBtn"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="@string/btn_arm_screen"
+        app:layout_constraintTop_toBottomOf="@id/stopBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/disarmScreenBtn"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/btn_disarm_screen"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/armScreenBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <TextView
         android:id="@+id/serviceStatus"
         android:layout_width="0dp"
@@ -64,7 +89,7 @@
         android:textColor="#67E8F9"
         android:fontFamily="monospace"
         android:text="@string/service_idle"
-        app:layout_constraintTop_toBottomOf="@id/stopBtn"
+        app:layout_constraintTop_toBottomOf="@id/disarmScreenBtn"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

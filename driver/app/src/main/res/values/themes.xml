@@ -11,4 +11,14 @@
         <item name="android:navigationBarColor">#06060A</item>
         <item name="android:windowBackground">#06060A</item>
     </style>
+
+    <!-- Used by ScreenSetupActivity. Fully transparent + no animation so
+         the system MediaProjection consent dialog appears to overlay
+         whatever the user was looking at. -->
+    <style name="Theme.VortexDriver.Translucent" parent="Theme.VortexDriver">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>
