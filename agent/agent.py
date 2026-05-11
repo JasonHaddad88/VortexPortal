@@ -541,6 +541,35 @@ async def op_write_file(session: "Session", rid: str, args: dict) -> dict:
     return {"path": rel, "written": written}
 
 
+def op_input(args: dict) -> dict:
+    """Forward an input command to the Driver APK (V5.0-M3).
+
+    Wraps `input_bridge.send_command` with the standard agent op error
+    contract: failures become RuntimeError so the dispatcher converts to
+    ok:false and the hub returns a useful 502.
+
+    The hub passes the browser's command JSON through verbatim in
+    `args["command"]`. Result (if any) is bubbled back up as the op
+    result; on `ok:true` with no payload we return `{"acked": true}` so
+    the hub still has something to JSON-serialise.
+    """
+    from .input_bridge import (
+        send_command, DriverNotAvailable, DriverInputError,
+    )
+    cmd = args.get("command")
+    if not isinstance(cmd, dict):
+        raise ValueError("op_input expects args.command to be an object")
+    try:
+        result = send_command(cmd)
+    except DriverNotAvailable as e:
+        raise RuntimeError(str(e))
+    except DriverInputError as e:
+        raise RuntimeError(str(e))
+    if result is None:
+        return {"acked": True}
+    return result
+
+
 async def op_screen_stream(session: "Session", rid: str, args: dict) -> None:
     """Real-time screen capture from the Vortex Driver APK (V5.0-M2).
 
@@ -662,6 +691,7 @@ UNARY_OPS = {
     "system_info": op_system_info,
     "thumbnail": op_thumbnail,
     "camera_info": op_camera_info,
+    "input": op_input,                         # V5.0 M3: tap/swipe/back/home/recents
 }
 
 # Ops that stream chunks from agent to hub (sender-side).

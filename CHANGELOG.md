@@ -3,6 +3,78 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.0-M3] — 2026-05-11
+
+Real **remote control**: click on the mirrored screen in the browser, the
+finger lands on the phone. Closes the loop V5.0 was building toward --
+M0 was scaffold, M1 added camera, M2 added screen-mirror, M3 makes it
+interactive.
+
+### Added
+- **Driver `VortexAccessibilityService`** -- the only non-root Android
+  API that allows input injection. Implements `dispatchGesture` for
+  tap / long-press / swipe and `performGlobalAction` for
+  Back / Home / Recents / Notifications. Stashes a static `instance`
+  in `onServiceConnected` so the InputServer can call it directly;
+  clears in `onUnbind`. The user must MANUALLY enable the service in
+  Settings → Accessibility → Vortex Driver -- Android explicitly
+  forbids programmatic enable, for the same reason it forbids
+  programmatic input injection (this is the API malware uses to
+  impersonate users).
+- **`accessibility_service_config.xml`** -- declares
+  `canPerformGestures="true"` (required for `dispatchGesture` to do
+  anything), the description text the system shows in Settings, plus
+  a generic event filter (we don't actually consume accessibility
+  events; we just want the gesture API).
+- **Driver `InputServer`** -- request/response JSON server on
+  127.0.0.1:5097, separate from the streaming sockets because input is
+  request/response not stream and needs per-call success feedback.
+  Wire format: `[u32 BE length][JSON]` both directions. Commands:
+  `screen_size`, `a11y_state`, `tap`, `long_press`, `swipe`, `back`,
+  `home`, `recents`, `notifications`. When the AccessibilityService
+  isn't enabled, returns `ok:false` with a verbatim "go to Settings →
+  Accessibility..." message so the browser can render an actionable
+  error. Multiple parallel clients allowed.
+- **`agent/input_bridge.py`** + new **`op_input`** -- thin per-call
+  wrapper around `InputServer`. Maps `DriverNotAvailable` /
+  `DriverInputError` to `RuntimeError` so the dispatcher converts to
+  `ok:false` and the hub returns a clean 502 with the exact driver
+  message in the body.
+- **Hub `POST /devices/{id}/input`** -- accepts a JSON command, forwards
+  via the existing WS `input` op, returns the result. Plus
+  **`GET /api/devices/{id}/screen-size`** so the browser knows the
+  phone's actual pixel dimensions to scale clicks against.
+- **Screen page click/drag handling**:
+    - Left-click on the mirror → `tap`
+    - Click + drag (>8 px) → `swipe` with duration measured from the press
+    - Right-click → `long_press` (and the browser's context menu is
+      suppressed so it doesn't pop up)
+  - Plus a row of nav buttons: **Back / Home / Recents / Notifs**.
+    These work without screen sharing armed -- they only need the
+    AccessibilityService.
+  - Click coordinates are translated from rendered-image pixels to the
+    phone's real screen pixels using `/api/.../screen-size`. Falls back
+    to `<img>.naturalWidth/Height` if the lookup hasn't completed yet
+    (good enough since `ScreenEngine` downscales proportionally).
+
+### Driver versions
+- versionCode 3 → 4, versionName 0.3.0-m2 → 0.4.0-m3.
+
+### Manifest / permissions
+- New `<service VortexAccessibilityService>` declaration with
+  `BIND_ACCESSIBILITY_SERVICE` permission (so ONLY the system can bind
+  it), the `AccessibilityService` action intent-filter, and meta-data
+  pointing at the config XML.
+
+### Smoke-tested
+- Sad path: agent on Windows (no Driver APK on loopback 5097) →
+  `POST /input` returns 502 in 2.2 s with the install message;
+  `/api/.../screen-size` returns `{ok:false,error:...}`; malformed
+  JSON / missing `type` returns 400. Camera + screen live-stream
+  regressions still pass.
+- Happy path verification is on the user's phone after sideloading
+  v0.4.0-m3 + enabling Vortex Driver in system Accessibility settings.
+
 ## [V5.0-M2] — 2026-05-11
 
 Real-time screen mirror, end-to-end. Phone's screen → Driver APK

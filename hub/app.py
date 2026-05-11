@@ -531,6 +531,64 @@ async def api_device_cameras(device_id: str,
 _MJPEG_BOUNDARY = "vortexframe"
 
 
+# V5.0 M3: remote touch input via the Driver APK's AccessibilityService.
+# Browser POSTs JSON commands here; hub forwards via the existing WS op
+# `input` to the agent, which talks to the Driver's :5097 socket. Coords
+# are in REAL phone-screen pixels -- the browser asks /screen-size on
+# page load to know what to scale to.
+
+@app.post("/devices/{device_id}/input")
+async def device_input(device_id: str, request: Request,
+                       user: dict = Depends(auth.require_user)):
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+    try:
+        cmd = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    if not isinstance(cmd, dict) or "type" not in cmd:
+        raise HTTPException(status_code=400,
+                            detail="Body must be a JSON object with a 'type' field")
+    try:
+        result = await conn.request("input", {"command": cmd}, timeout=8.0)
+    except ws_router.AgentError as e:
+        # The verbatim driver error message is in here -- bubble it up so
+        # the browser can show it inline.
+        raise HTTPException(status_code=502, detail=str(e))
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Agent did not respond in time")
+    return JSONResponse({"ok": True, "result": result})
+
+
+@app.get("/api/devices/{device_id}/screen-size")
+async def api_device_screen_size(device_id: str,
+                                 user: dict = Depends(auth.require_user)):
+    """Convenience proxy: the browser needs the phone's real screen
+    dimensions to translate click coords into the same pixel space the
+    AccessibilityService dispatches into."""
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+    try:
+        result = await conn.request(
+            "input", {"command": {"type": "screen_size"}}, timeout=5.0,
+        )
+    except ws_router.AgentError as e:
+        return JSONResponse(
+            {"ok": False, "error": str(e)}, status_code=200,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Agent did not respond")
+    return JSONResponse({"ok": True, "result": result})
+
+
 @app.get("/devices/{device_id}/screen/live")
 async def device_screen_live(device_id: str,
                              user: dict = Depends(auth.require_user)):

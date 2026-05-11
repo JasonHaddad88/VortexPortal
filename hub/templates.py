@@ -1232,9 +1232,12 @@ def device_camera_page(user: dict, device: dict) -> str:
 
 
 def device_screen_page(user: dict, device: dict) -> str:
-    """V5.0-M2: real-time screen mirror viewer. Same stage / toolbar
-    skeleton as the camera page but with a single Live-stream toggle (no
-    snapshot mode -- screen capture is always live or nothing)."""
+    """V5.0-M2 viewer + V5.0-M3 remote control.
+
+    The `<img>` is the live MJPEG stream; mouse events on it are
+    translated to phone-screen pixel coords (using the screen-size
+    queried from the agent) and POSTed as `tap` / `swipe` commands.
+    Nav buttons (Back / Home / Recents) post their own commands."""
     did = device["id"]
     did_js = _json_dumps_for_html(did)
     body = f"""
@@ -1245,28 +1248,28 @@ def device_screen_page(user: dict, device: dict) -> str:
 
 <div class="cam-toolbar">
   <button class="btn btn-primary" id="scr-stream">▶ Live stream</button>
+  <button class="btn" id="nav-back" title="Hardware back button">◀ Back</button>
+  <button class="btn" id="nav-home" title="Home">⌂ Home</button>
+  <button class="btn" id="nav-recents" title="Recent apps">▣ Recents</button>
+  <button class="btn" id="nav-notifs" title="Pull down notification shade">⤓ Notifs</button>
   <span class="cam-status" id="scr-status">idle</span>
 </div>
 
-<div class="cam-stage" id="scr-stage">
+<div class="cam-stage" id="scr-stage" style="cursor:crosshair">
   <div class="placeholder" id="scr-placeholder">
     Tap <b>▶ Live stream</b> to mirror the phone's screen here.<br>
-    The phone must have <strong>Vortex Driver</strong> installed and
-    <strong>screen sharing armed</strong> (open the Driver app, tap
-    <em>Arm screen sharing</em>, accept the system consent dialog).
+    For remote control: install <strong>Vortex Driver</strong>, tap
+    <em>Arm screen sharing</em> (consent dialog), AND enable
+    <em>Vortex Driver</em> in <strong>Settings → Accessibility</strong>.
   </div>
 </div>
 
 <p style="margin-top:1rem;color:var(--muted);font-size:.75rem">
-  Why the extra step on the phone: Android only lets the system
-  <code style="color:var(--cyan)">MediaProjection</code> consent dialog be triggered from a
-  foreground Activity, not from a shell command or a background service.
-  Once armed, the consent stays valid until you disarm it (or the system
-  revokes it via the persistent "Stop sharing" notification).
-  Frames are downscaled to a max-720 longest side to keep bandwidth
-  manageable; we render in a vanilla <code>&lt;img&gt;</code> tag using
-  multipart/x-mixed-replace, so latency is roughly one frame plus your
-  network RTT.
+  <strong>Click</strong> on the stream to tap there. <strong>Click and drag</strong> to swipe.
+  <strong>Right-click</strong> for a long-press.
+  Coordinates are translated from the rendered image size to real
+  phone-screen pixels; the phone's actual display resolution is fetched
+  from the Driver APK on page load.
 </p>
 
 <script>
@@ -1278,6 +1281,23 @@ def device_screen_page(user: dict, device: dict) -> str:
   const placeholder = document.getElementById('scr-placeholder');
 
   let streaming = false;
+  // Phone's REAL screen size in pixels. Filled in via /api/.../screen-size
+  // once the Driver responds. Until then, taps fall back to using the
+  // <img>'s naturalWidth/Height (the captured frame size, not the real
+  // screen) which is approximately correct -- ScreenEngine downscales
+  // proportionally so the relative ratios match.
+  let realScreen = null;
+
+  async function loadScreenSize() {{
+    try {{
+      const r = await fetch(`/api/devices/${{encodeURIComponent(did)}}/screen-size`,
+                            {{cache: 'no-store'}});
+      const data = await r.json();
+      if (data.ok && data.result && data.result.w && data.result.h) {{
+        realScreen = {{w: data.result.w, h: data.result.h}};
+      }}
+    }} catch (e) {{}}
+  }}
 
   function setStatus(s) {{ status.textContent = s; }}
   function showError(msg) {{
@@ -1292,7 +1312,7 @@ def device_screen_page(user: dict, device: dict) -> str:
     placeholder.style.display = 'none';
     const err = stage.querySelector('.err'); if (err) err.remove();
     let img = stage.querySelector('img');
-    if (!img) {{ img = document.createElement('img'); stage.appendChild(img); }}
+    if (!img) {{ img = document.createElement('img'); stage.appendChild(img); attachInput(img); }}
     img.src = `/devices/${{encodeURIComponent(did)}}/screen/live?t=${{Date.now()}}`;
     img.onerror = () => {{
       showError('Stream failed. Make sure the Vortex Driver APK is installed, the service is started, and screen sharing is armed.');
@@ -1304,6 +1324,7 @@ def device_screen_page(user: dict, device: dict) -> str:
     btn.textContent = '■ Stop stream';
     btn.classList.remove('btn-primary');
     setStatus('streaming');
+    loadScreenSize();
   }}
   function stopStream() {{
     streaming = false;
@@ -1316,6 +1337,96 @@ def device_screen_page(user: dict, device: dict) -> str:
   btn.addEventListener('click', () => {{
     if (streaming) stopStream(); else startStream();
   }});
+
+  // ---- M3: input ----
+
+  /** Translate a (clientX, clientY) on the <img> into phone-pixel coords. */
+  function toPhoneCoords(img, evt) {{
+    const rect = img.getBoundingClientRect();
+    const xFrac = (evt.clientX - rect.left) / rect.width;
+    const yFrac = (evt.clientY - rect.top) / rect.height;
+    if (xFrac < 0 || xFrac > 1 || yFrac < 0 || yFrac > 1) return null;
+    const w = (realScreen && realScreen.w) || img.naturalWidth || 1080;
+    const h = (realScreen && realScreen.h) || img.naturalHeight || 2400;
+    return [Math.round(xFrac * w), Math.round(yFrac * h)];
+  }}
+
+  async function postInput(cmd) {{
+    try {{
+      const r = await fetch(`/devices/${{encodeURIComponent(did)}}/input`, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(cmd),
+      }});
+      if (!r.ok) {{
+        const text = await r.text();
+        const detail = (() => {{
+          try {{ return JSON.parse(text).detail; }} catch (_) {{ return text; }}
+        }})();
+        setStatus('input error: ' + detail.slice(0, 120));
+      }} else {{
+        // brief confirm flash so the user knows the click registered
+        setStatus(`${{cmd.type}} ok`);
+      }}
+    }} catch (e) {{
+      setStatus('input failed: ' + e.message);
+    }}
+  }}
+
+  // Drag-vs-tap detection: distinguish a click from a swipe by total
+  // pixel movement during the press. Below DRAG_THRESHOLD = a tap;
+  // above = a swipe from down-coords to up-coords.
+  const DRAG_THRESHOLD_PX = 8;
+  function attachInput(img) {{
+    let downCoords = null;
+    let downAt = 0;
+
+    img.addEventListener('mousedown', (evt) => {{
+      if (evt.button !== 0 && evt.button !== 2) return;  // only left + right
+      const c = toPhoneCoords(img, evt);
+      if (!c) return;
+      downCoords = c;
+      downAt = performance.now();
+    }});
+
+    img.addEventListener('mouseup', (evt) => {{
+      if (!downCoords) return;
+      const upCoords = toPhoneCoords(img, evt);
+      if (!upCoords) {{ downCoords = null; return; }}
+      const dx = upCoords[0] - downCoords[0];
+      const dy = upCoords[1] - downCoords[1];
+      const dist = Math.hypot(dx, dy);
+      const elapsed = performance.now() - downAt;
+      if (dist >= DRAG_THRESHOLD_PX) {{
+        postInput({{
+          type: 'swipe',
+          from: downCoords,
+          to: upCoords,
+          duration_ms: Math.max(80, Math.min(800, Math.round(elapsed))),
+        }});
+      }} else if (evt.button === 2) {{
+        postInput({{type: 'long_press', x: downCoords[0], y: downCoords[1], duration_ms: 600}});
+      }} else {{
+        postInput({{type: 'tap', x: downCoords[0], y: downCoords[1]}});
+      }}
+      downCoords = null;
+    }});
+
+    // Suppress the browser's right-click context menu so right-click can
+    // mean long-press without the menu popping up.
+    img.addEventListener('contextmenu', (evt) => evt.preventDefault());
+  }}
+
+  // Nav buttons. These work even without screen sharing armed -- they
+  // only need the AccessibilityService.
+  document.getElementById('nav-back').addEventListener('click', () => postInput({{type: 'back'}}));
+  document.getElementById('nav-home').addEventListener('click', () => postInput({{type: 'home'}}));
+  document.getElementById('nav-recents').addEventListener('click', () => postInput({{type: 'recents'}}));
+  document.getElementById('nav-notifs').addEventListener('click', () => postInput({{type: 'notifications'}}));
+
+  // Pre-warm the screen-size lookup on page load so taps work even before
+  // streaming starts (e.g., user just wants to fire a Back press).
+  loadScreenSize();
 }})();
 </script>"""
     return page(f"{device['name']} · Screen", body, user=user, active="/")

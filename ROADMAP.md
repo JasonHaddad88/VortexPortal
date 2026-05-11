@@ -52,11 +52,25 @@ artifacts (no Android Studio required).
   to keep bandwidth manageable. The screen page in the dashboard
   replaces the V4.0 "needs APK" placeholder.
 
-- [ ] **M3 — Touch input simulation** 🔴
-  `AccessibilityService` for gesture dispatch so the laptop dashboard
-  can drive the phone (tap / long-press / swipe). Requires the user to
-  enable the service in system Accessibility settings (Android won't
-  let us auto-enable it). Closes the loop on remote control.
+- [x] **M3 — Touch input simulation** 🔴 — _shipped V5.0-M3_
+  `VortexAccessibilityService` does the actual `dispatchGesture()` calls
+  and `performGlobalAction()` for nav buttons. New `InputServer` on
+  127.0.0.1:5097 (request/response JSON, separate from the streaming
+  ports) accepts commands from the agent and dispatches to the
+  AccessibilityService. Coords are in REAL phone-screen pixels; the
+  browser fetches the screen size via a new `/api/.../screen-size`
+  endpoint on page load.
+  Hub gets `POST /devices/{id}/input` (forwards a JSON command to the
+  agent). The screen page now has clickable mirror (left-click = tap,
+  right-click = long-press, drag = swipe with measured duration) plus
+  Back/Home/Recents/Notifs nav buttons. Nav buttons work even without
+  screen sharing armed -- they only need the AccessibilityService.
+  User must manually enable the service in
+  Settings → Accessibility → Vortex Driver. Android won't let us
+  toggle it for them; that's the security model on the API
+  malware uses to impersonate the user. The Driver app deep-links to
+  the right Settings page and surfaces enabled/disabled state in both
+  the in-app status row and the persistent notification.
 
 - [ ] **M4 — Polish + signed releases + autostart** 🟡
   Boot-completed receiver to autostart; signed release builds attached
