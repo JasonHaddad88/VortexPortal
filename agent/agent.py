@@ -541,6 +541,47 @@ async def op_write_file(session: "Session", rid: str, args: dict) -> dict:
     return {"path": rel, "written": written}
 
 
+async def op_screen_stream(session: "Session", rid: str, args: dict) -> None:
+    """Real-time screen capture from the Vortex Driver APK (V5.0-M2).
+
+    Same shape as op_camera_stream but talks to the screen socket on
+    127.0.0.1:5098. The driver only delivers frames when the user has
+    armed screen sharing in the Driver app (system MediaProjection
+    consent dialog accepted); otherwise the connect succeeds but no
+    frames arrive and we time out cleanly.
+    """
+    from .screen_bridge import open_stream as open_screen, ScreenNotArmedOrDriverMissing
+
+    loop = asyncio.get_event_loop()
+
+    def _next_frame(it):
+        try: return next(it)
+        except StopIteration: return None
+
+    try:
+        frames = await loop.run_in_executor(None, open_screen)
+    except ScreenNotArmedOrDriverMissing as e:
+        raise RuntimeError(str(e))
+
+    await session.send_text({
+        "type": "stream_start", "id": rid,
+        "content_type": "image/jpeg",
+    })
+
+    sent = 0
+    try:
+        while True:
+            chunk = await loop.run_in_executor(None, _next_frame, frames)
+            if chunk is None:
+                break
+            await session.send_chunk(rid, chunk)
+            sent += 1
+    finally:
+        try: frames.close()
+        except Exception: pass
+        await session.send_text({"type": "stream_end", "id": rid, "frames": sent})
+
+
 async def op_camera_stream(session: "Session", rid: str, args: dict) -> None:
     """Real-time camera stream from the Vortex Driver APK (V5.0).
 
@@ -628,6 +669,7 @@ STREAM_OPS = {
     "read_file": op_read_file_stream,
     "camera_capture": op_camera_capture,
     "camera_stream": op_camera_stream,        # V5.0 M1: real-time MJPEG via Driver APK
+    "screen_stream": op_screen_stream,        # V5.0 M2: real-time screen mirror via Driver APK
 }
 
 # Ops that receive a stream from the hub and return a unary result. They

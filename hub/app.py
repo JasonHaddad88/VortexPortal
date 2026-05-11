@@ -531,6 +531,74 @@ async def api_device_cameras(device_id: str,
 _MJPEG_BOUNDARY = "vortexframe"
 
 
+@app.get("/devices/{device_id}/screen/live")
+async def device_screen_live(device_id: str,
+                             user: dict = Depends(auth.require_user)):
+    """Real-time screen-mirror via the Vortex Driver APK (V5.0-M2).
+
+    Same multipart/x-mixed-replace shape as /camera/live; different op
+    name on the agent side which routes to the Driver's :5098 socket.
+    Requires the user to have armed screen sharing in the Driver app.
+    """
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device offline")
+
+    stream = conn.stream("screen_stream", {}, start_timeout=10)
+    try:
+        first = await stream.__anext__()
+    except ws_router.AgentError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except (StopAsyncIteration, asyncio.TimeoutError):
+        raise HTTPException(
+            status_code=504,
+            detail="No screen frames arrived. Open Vortex Driver on the "
+                   "phone, tap 'Arm screen sharing' and accept the system "
+                   "dialog.",
+        )
+    if first.get("type") != "stream_start":
+        raise HTTPException(status_code=502, detail="Unexpected agent response")
+
+    boundary = _MJPEG_BOUNDARY
+    headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+        "Connection": "close",
+    }
+
+    async def gen():
+        try:
+            async for msg in stream:
+                if msg.get("type") == "stream_chunk":
+                    jpeg = msg.get("_binary")
+                    if not jpeg:
+                        data = msg.get("data")
+                        if data:
+                            jpeg = base64.b64decode(data)
+                    if not jpeg:
+                        continue
+                    yield (
+                        f"--{boundary}\r\n"
+                        f"Content-Type: image/jpeg\r\n"
+                        f"Content-Length: {len(jpeg)}\r\n\r\n"
+                    ).encode("ascii") + jpeg + b"\r\n"
+                elif msg.get("type") == "stream_end":
+                    return
+        except ws_router.AgentError:
+            return
+        finally:
+            yield f"--{boundary}--\r\n".encode("ascii")
+
+    return StreamingResponse(
+        gen(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers=headers,
+    )
+
+
 @app.get("/devices/{device_id}/camera/live")
 async def device_camera_live(device_id: str,
                              user: dict = Depends(auth.require_user)):

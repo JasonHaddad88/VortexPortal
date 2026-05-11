@@ -1232,41 +1232,92 @@ def device_camera_page(user: dict, device: dict) -> str:
 
 
 def device_screen_page(user: dict, device: dict) -> str:
-    """Honest placeholder: real screen capture / mirroring / control needs
-    root or a companion APK because Android doesn't expose screen-frame
-    access to a non-system app like Termux."""
+    """V5.0-M2: real-time screen mirror viewer. Same stage / toolbar
+    skeleton as the camera page but with a single Live-stream toggle (no
+    snapshot mode -- screen capture is always live or nothing)."""
     did = device["id"]
+    did_js = _json_dumps_for_html(did)
     body = f"""
 <div class="section-head" style="align-items:center">
   <h2>// {escape(device['name'])} · Screen</h2>
   <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
 </div>
 
-<div class="unsupported">
-  <h3>// Not yet available</h3>
-  <p>
-    Real screen capture, mirroring and remote-touch control on Android
-    require either <strong>root access</strong> (so we can call
-    <code>screencap</code> and <code>input</code> directly) or a
-    <strong>companion APK</strong> that uses Android's
-    <code>MediaProjection</code> + <code>AccessibilityService</code> APIs.
-  </p>
-  <p>
-    Termux on its own can't do this — the OS gates screen-frame access
-    behind permissions a non-system app can't request, and accessibility
-    services have to be enabled by the user from system settings.
-  </p>
-  <p>
-    Tracked on the roadmap as
-    <em>"Screen capture / mirror / remote control via companion APK."</em>
-    It's a real chunk of new work (~500-1000 LOC of Kotlin) so it's
-    deferred until there's clear demand.
-  </p>
-  <p style="margin-bottom:0">
-    <a class="btn" href="/devices/{escape(did)}/files/">Browse files</a>
-    <a class="btn btn-primary" href="/devices/{escape(did)}/camera">Open camera</a>
-  </p>
-</div>"""
+<div class="cam-toolbar">
+  <button class="btn btn-primary" id="scr-stream">▶ Live stream</button>
+  <span class="cam-status" id="scr-status">idle</span>
+</div>
+
+<div class="cam-stage" id="scr-stage">
+  <div class="placeholder" id="scr-placeholder">
+    Tap <b>▶ Live stream</b> to mirror the phone's screen here.<br>
+    The phone must have <strong>Vortex Driver</strong> installed and
+    <strong>screen sharing armed</strong> (open the Driver app, tap
+    <em>Arm screen sharing</em>, accept the system consent dialog).
+  </div>
+</div>
+
+<p style="margin-top:1rem;color:var(--muted);font-size:.75rem">
+  Why the extra step on the phone: Android only lets the system
+  <code style="color:var(--cyan)">MediaProjection</code> consent dialog be triggered from a
+  foreground Activity, not from a shell command or a background service.
+  Once armed, the consent stays valid until you disarm it (or the system
+  revokes it via the persistent "Stop sharing" notification).
+  Frames are downscaled to a max-720 longest side to keep bandwidth
+  manageable; we render in a vanilla <code>&lt;img&gt;</code> tag using
+  multipart/x-mixed-replace, so latency is roughly one frame plus your
+  network RTT.
+</p>
+
+<script>
+(function() {{
+  const did = {did_js};
+  const btn = document.getElementById('scr-stream');
+  const status = document.getElementById('scr-status');
+  const stage = document.getElementById('scr-stage');
+  const placeholder = document.getElementById('scr-placeholder');
+
+  let streaming = false;
+
+  function setStatus(s) {{ status.textContent = s; }}
+  function showError(msg) {{
+    placeholder.style.display = 'none';
+    let err = stage.querySelector('.err');
+    if (!err) {{ err = document.createElement('div'); err.className = 'err'; stage.appendChild(err); }}
+    err.textContent = msg;
+    setStatus('error');
+  }}
+
+  function startStream() {{
+    placeholder.style.display = 'none';
+    const err = stage.querySelector('.err'); if (err) err.remove();
+    let img = stage.querySelector('img');
+    if (!img) {{ img = document.createElement('img'); stage.appendChild(img); }}
+    img.src = `/devices/${{encodeURIComponent(did)}}/screen/live?t=${{Date.now()}}`;
+    img.onerror = () => {{
+      showError('Stream failed. Make sure the Vortex Driver APK is installed, the service is started, and screen sharing is armed.');
+      streaming = false;
+      btn.textContent = '▶ Live stream';
+      btn.classList.add('btn-primary');
+    }};
+    streaming = true;
+    btn.textContent = '■ Stop stream';
+    btn.classList.remove('btn-primary');
+    setStatus('streaming');
+  }}
+  function stopStream() {{
+    streaming = false;
+    btn.textContent = '▶ Live stream';
+    btn.classList.add('btn-primary');
+    const img = stage.querySelector('img');
+    if (img) img.src = '';
+    setStatus('stopped');
+  }}
+  btn.addEventListener('click', () => {{
+    if (streaming) stopStream(); else startStream();
+  }});
+}})();
+</script>"""
     return page(f"{device['name']} · Screen", body, user=user, active="/")
 
 

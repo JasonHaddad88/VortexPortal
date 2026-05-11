@@ -38,10 +38,19 @@ artifacts (no Android Studio required).
   plumbing. Bandwidth is 5-10× worse than H.264; H.264+MSE moves to a
   V5.0-M1.5 if needed.
 
-- [ ] **M2 — Screen capture / mirror** 🔴
-  `MediaProjection` consent dialog → H.264 encode of the screen frame
-  buffer → same socket pipeline as camera. Adds
-  `FOREGROUND_SERVICE_MEDIA_PROJECTION`. The view-only counterpart of M3.
+- [x] **M2 — Screen capture / mirror** 🔴 — _shipped V5.0-M2_
+  MediaProjection + VirtualDisplay + ImageReader (RGBA) → Bitmap → JPEG →
+  separate loopback socket on 127.0.0.1:5098 → Python agent's
+  `op_screen_stream` → hub `/devices/{id}/screen/live` (multipart MJPEG)
+  → browser `<img>`. Same MJPEG-via-`<img>` shape as M1 camera; chosen
+  for the same reason (zero browser-side JS, easy debugging).
+  User flow: Driver app gets a new "Arm screen sharing" button which
+  launches `ScreenSetupActivity` (transparent Activity hosting the
+  system consent dialog). Once armed, the laptop's screen viewer can
+  open the stream until the user disarms or the system "Stop sharing"
+  notification revokes. Frames are downscaled to a max-720 longest side
+  to keep bandwidth manageable. The screen page in the dashboard
+  replaces the V4.0 "needs APK" placeholder.
 
 - [ ] **M3 — Touch input simulation** 🔴
   `AccessibilityService` for gesture dispatch so the laptop dashboard

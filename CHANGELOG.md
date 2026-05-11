@@ -3,6 +3,67 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.0-M2] — 2026-05-11
+
+Real-time screen mirror, end-to-end. Phone's screen → Driver APK
+(MediaProjection + VirtualDisplay + JPEG) → Termux agent → hub →
+laptop browser `<img>`. Closes the V4.0 "screen control needs an APK"
+placeholder.
+
+### Added
+- **Driver APK `ScreenEngine.kt`** — `MediaProjection` +
+  `VirtualDisplay` capture pipeline. Downscales to max-720 longest side
+  preserving aspect ratio, RGBA→Bitmap→JPEG with rowStride padding
+  handled correctly. Registers a `MediaProjection.Callback` so the user
+  revoking from the system "Stop sharing" notification cleanly tears us
+  down.
+- **`ScreenSetupActivity.kt`** — transparent Activity that summons the
+  system MediaProjection consent dialog. The dialog can ONLY be
+  triggered from an Activity context (not a Service or shell), so this
+  is the only piece of the APK that touches that API. On accept it
+  hands the (resultCode, data) pair to `DriverService` via
+  `ACTION_ARM_SCREEN`.
+- **`DriverService` rewrite** — now owns two `StreamServer`s (camera on
+  5099, screen on 5098) plus the projection-armed state. Each engine
+  starts lazily per-client; the screen engine additionally requires
+  consent. Foreground service-type bookkeeping promotes the declared
+  type up & down (`dataSync` always, `+camera` when CameraEngine is
+  live, `+mediaProjection` when screen is armed) so we never lie to
+  Android about active types.
+- **MainActivity** gets two new buttons: **Arm screen sharing** (launches
+  `ScreenSetupActivity`) and **Disarm screen sharing** (releases the
+  projection so the next attempt re-prompts).
+- **`agent/screen_bridge.py`** + new `op_screen_stream` — same shape as
+  the camera bridge but on port 5098. Raises
+  `ScreenNotArmedOrDriverMissing` (re-raised as `RuntimeError` so the
+  dispatcher converts to `ok:false`) when the socket is unreachable;
+  the hub returns this verbatim as a 502 so the user sees the exact
+  install/arm instructions in the browser.
+- **Hub `GET /devices/{id}/screen/live`** — multipart/x-mixed-replace
+  MJPEG response that any modern `<img>` tag renders as live video.
+- **`device_screen_page` rewrite** — replaces the V4.0 honest "needs
+  APK" placeholder with a real viewer (Live stream toggle + stage +
+  status). Hint text walks the user through the Driver-APK Arm-screen
+  flow.
+
+### Manifest / permissions
+- `FOREGROUND_SERVICE_MEDIA_PROJECTION` permission.
+- Service `foregroundServiceType` extended to
+  `dataSync|camera|mediaProjection`.
+- New translucent theme `Theme.VortexDriver.Translucent` for
+  `ScreenSetupActivity` so the consent dialog overlays whatever the
+  user was looking at.
+
+### Driver versions
+- versionCode 2 → 3, versionName 0.2.0-m1 → 0.3.0-m2.
+
+### Smoke-tested
+- Sad path: agent on Windows (no Driver APK → ECONNREFUSED on 5098) →
+  hub returns 502 in 2.3 s with the full install/arm message in the
+  body. Camera live-stream regression-tested (still works).
+- Happy path verification: on the user's phone after sideloading the
+  M2 Driver APK + tapping Arm screen sharing.
+
 ## [V5.0-M1] — 2026-05-10
 
 Real-time camera video, end-to-end. Phone → driver APK → Termux agent
