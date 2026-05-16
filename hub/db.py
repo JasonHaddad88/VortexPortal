@@ -1,28 +1,40 @@
-"""SQLite schema + queries for the Vortex hub.
+"""Schema + queries for the Vortex hub.
 
-Schema:
-  users            — login accounts (admin flag for invite-issuing rights)
-  invites          — single-use invite codes for self-registration
-  devices          — paired agent devices, owned by a user, identified by a
-                     stable hub-issued UUID; auth via hashed token
-  pairing_codes    — short-lived 6-digit codes for pairing flow
-  sessions         — browser session tokens (cookie value -> user_id)
+Two interchangeable storage backends, chosen at init() time:
 
-Token storage rule: we store SHA-256 hashes of agent tokens (and never the
-plaintext), so a leaked DB doesn't grant agent access. Agent tokens are 32
-bytes of os.urandom, so SHA-256 is safe without a KDF (no dictionary risk).
-Session tokens are likewise stored as hashes.
+  * **SQLite** (default, zero-config): a local file, per-call connections.
+    Byte-for-byte the pre-V6 behaviour. If VORTEX_SYNC_URL is unset this
+    is what you get and nothing about the deployment changes.
+
+  * **libSQL embedded replica** (opt-in via VORTEX_SYNC_URL +
+    VORTEX_SYNC_TOKEN): a local replica file kept in sync with a remote
+    primary (Turso or any libSQL server). Reads are served from the
+    local file -- instant and offline-capable. Writes go to the remote
+    primary; db.sync() pulls the canonical state back into the replica.
+
+    The honest CAP trade-off (explained to and accepted by the operator):
+    while the remote is unreachable the hub is effectively READ-ONLY.
+    Existing logins survive (session lookup is a local read) and you can
+    browse, but you can't pair new devices / create users until the
+    remote is back. touch_device() is deliberately best-effort so a
+    transient outage never breaks live agent connections.
+
+Token storage rule: we store SHA-256 hashes of agent tokens (and never
+the plaintext), so a leaked DB doesn't grant agent access. Agent tokens
+are 32 bytes of os.urandom, so SHA-256 is safe without a KDF. Session
+tokens are likewise stored as hashes.
 """
 
 import hashlib
 import os
 import secrets
 import sqlite3
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -70,32 +82,199 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 
 _db_path: Optional[Path] = None
+_backend: "Optional[_Backend]" = None
 _init_lock = Lock()
 
 
+def _split_sql(script: str) -> list:
+    """Split a multi-statement script on ';'. Safe for our schema, which
+    contains no semicolons inside statements (no triggers / string
+    literals with ';'). Used for the libSQL path, which has no
+    executescript()."""
+    return [s.strip() for s in script.split(";") if s.strip()]
+
+
+# ---------------------------------------------------------------------------
+# libSQL adapters -- present the small sqlite3-ish surface the ~25 query
+# functions rely on (con.execute(...).fetchone()/fetchall(), .lastrowid,
+# .rowcount, con.executescript(), con.commit()) and normalise rows to
+# plain dicts so `row["col"]` and `dict(row)` work exactly like
+# sqlite3.Row downstream.
+# ---------------------------------------------------------------------------
+class _LibsqlCur:
+    def __init__(self, cur):
+        self._cur = cur
+
+    @property
+    def lastrowid(self):
+        return self._cur.lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    def _cols(self):
+        desc = self._cur.description
+        return [d[0] for d in desc] if desc else []
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is None:
+            return None
+        cols = self._cols()
+        return {cols[i]: row[i] for i in range(len(cols))}
+
+    def fetchall(self):
+        rows = self._cur.fetchall()
+        cols = self._cols()
+        return [{cols[i]: r[i] for i in range(len(cols))} for r in rows]
+
+
+class _LibsqlConn:
+    def __init__(self, conn):
+        self._c = conn
+
+    def execute(self, sql: str, params: tuple = ()):
+        return _LibsqlCur(self._c.execute(sql, params))
+
+    def executescript(self, script: str):
+        for stmt in _split_sql(script):
+            self._c.execute(stmt)
+
+    def commit(self):
+        try:
+            self._c.commit()
+        except Exception:
+            pass
+
+
+class _Backend:
+    @contextmanager
+    def connect(self) -> Iterator[Any]:
+        raise NotImplementedError
+
+    def sync(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        pass
+
+
+class _SqliteBackend(_Backend):
+    """Per-call connections, sqlite3.Row rows. Identical to pre-V6."""
+
+    def __init__(self, path: Path):
+        self._path = path
+
+    @contextmanager
+    def connect(self) -> Iterator[Any]:
+        con = sqlite3.connect(self._path, isolation_level=None, timeout=10.0)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA foreign_keys = ON")
+        con.execute("PRAGMA journal_mode = WAL")
+        try:
+            yield con
+        finally:
+            con.close()
+
+
+class _LibsqlBackend(_Backend):
+    """One long-lived embedded-replica connection guarded by a lock.
+
+    libSQL connections are not safe under concurrent use, and FastAPI
+    runs sync route handlers in a threadpool, so every access serialises
+    through _lock. Cheap given how rare hub writes are.
+    """
+
+    def __init__(self, path: Path, sync_url: str, auth_token: str):
+        import libsql_experimental as libsql  # noqa: F401  (import-guarded by caller)
+        self._conn = libsql.connect(
+            str(path), sync_url=sync_url, auth_token=auth_token,
+        )
+        # Initial pull so reads see the canonical state immediately.
+        self._conn.sync()
+        self._lock = Lock()
+
+    @contextmanager
+    def connect(self) -> Iterator[Any]:
+        with self._lock:
+            yield _LibsqlConn(self._conn)
+
+    def sync(self) -> bool:
+        with self._lock:
+            self._conn.sync()
+        return True
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+
 def init(db_path: Path) -> None:
-    """Set the DB path and create the schema if missing."""
-    global _db_path
+    """Select the backend and create the schema if missing.
+
+    Backend: libSQL embedded replica if VORTEX_SYNC_URL is set AND the
+    libsql_experimental package imports AND the initial connect+sync
+    succeeds; otherwise plain local SQLite. Falling back rather than
+    refusing to start is deliberate -- a dead remote at boot shouldn't
+    take the whole hub down when a perfectly good local file exists.
+    """
+    global _db_path, _backend
     with _init_lock:
         _db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        sync_url = os.environ.get("VORTEX_SYNC_URL", "").strip()
+        sync_token = os.environ.get("VORTEX_SYNC_TOKEN", "").strip()
+
+        if sync_url:
+            try:
+                _backend = _LibsqlBackend(db_path, sync_url, sync_token)
+                print(f"==> DB: libSQL embedded replica "
+                      f"(local {db_path}, remote {sync_url})")
+            except Exception as e:
+                print(
+                    f"!! libSQL replica unavailable ({e!r}); falling back "
+                    f"to local-only SQLite at {db_path}. Pairing / login / "
+                    f"user-create will work locally but won't replicate "
+                    f"until the remote is reachable and the hub restarts.",
+                    file=sys.stderr,
+                )
+                _backend = _SqliteBackend(db_path)
+        else:
+            _backend = _SqliteBackend(db_path)
+
         with _connect() as con:
             con.executescript(_SCHEMA)
             con.commit()
 
 
-@contextmanager
-def _connect() -> Iterator[sqlite3.Connection]:
-    if _db_path is None:
-        raise RuntimeError("db.init() not called")
-    con = sqlite3.connect(_db_path, isolation_level=None, timeout=10.0)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
-    con.execute("PRAGMA journal_mode = WAL")
+def sync() -> bool:
+    """Pull the remote primary's latest state into the local replica.
+
+    No-op (returns False) in plain-SQLite mode. Never raises -- a sync
+    failure (remote unreachable) is logged and swallowed so the caller's
+    background loop never dies. Returns True iff a real sync ran.
+    """
+    if _backend is None:
+        return False
     try:
+        return _backend.sync()
+    except Exception as e:
+        print(f"!! db.sync() failed (remote unreachable?): {e}",
+              file=sys.stderr)
+        return False
+
+
+@contextmanager
+def _connect() -> Iterator[Any]:
+    if _backend is None:
+        raise RuntimeError("db.init() not called")
+    with _backend.connect() as con:
         yield con
-    finally:
-        con.close()
 
 
 # ---------------------------------------------------------------------------
@@ -281,11 +460,19 @@ def authenticate_device(device_id: str, token: str) -> Optional[dict]:
 
 
 def touch_device(device_id: str) -> None:
-    with _connect() as con:
-        con.execute(
-            "UPDATE devices SET last_seen = ? WHERE id = ?",
-            (int(time.time()), device_id),
-        )
+    # last_seen is cosmetic and this fires on every WS message. In libSQL
+    # replica mode a write needs the remote primary; if it's unreachable
+    # we must NOT let that bubble up and tear down the agent connection
+    # loop. Best-effort by design -- a missed last_seen update is
+    # invisible to users; a dropped agent connection is not.
+    try:
+        with _connect() as con:
+            con.execute(
+                "UPDATE devices SET last_seen = ? WHERE id = ?",
+                (int(time.time()), device_id),
+            )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

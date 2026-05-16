@@ -197,7 +197,9 @@ app_v1.py           # V1.2 monolith, kept for fallback
 
 | Env var                 | Default                       | What                                   |
 |-------------------------|-------------------------------|----------------------------------------|
-| `VORTEX_HUB_DB`         | `~/vortex/hub.db`             | SQLite file path (hub)                 |
+| `VORTEX_HUB_DB`         | `~/vortex/hub.db`             | Local DB file path (hub)               |
+| `VORTEX_SYNC_URL`       | *(unset → local-only)*        | libSQL remote primary URL (`libsql://…`) |
+| `VORTEX_SYNC_TOKEN`     | *(empty)*                     | Auth token for the libSQL remote       |
 | `VORTEX_HUB_PUBLIC_URL` | derived from request headers  | Override URL shown in pairing UI       |
 | `APP_PORT`              | `8000`                        | Local hub port                         |
 | `APP_DIR`               | `~/server` (Termux only)      | Where serve.sh / setup.sh install code |
@@ -210,6 +212,66 @@ app_v1.py           # V1.2 monolith, kept for fallback
 | `VORTEX_PING_INTERVAL`  | `30` (seconds)                | Agent WS ping interval                 |
 | `VORTEX_PING_TIMEOUT`   | `60` (seconds)                | Agent WS ping timeout                  |
 | `VORTEX_RESET=1`        | *(unset)*                     | Wipe agent config on startup           |
+
+## Local + remote database (libSQL embedded replica)
+
+By default the hub uses a single local SQLite file. That's fine when you
+always run the hub on the same machine. If you want your accounts +
+device pairings to live in **both** a local file and a cloud database —
+so the local copy keeps working when the network is down, and the cloud
+copy is the canonical source you could restore from or point a second
+machine at — turn on libSQL embedded-replica mode.
+
+### How it behaves
+
+- **Reads** (login session check, dashboard, device list) are served
+  from the **local replica file** — instant, and they keep working even
+  when the remote is unreachable. Existing logins survive an outage.
+- **Writes** (pair a device, create a user, fresh login) go to the
+  **remote primary**, then `sync()` pulls the canonical state back into
+  the local replica every 10 s.
+- **The honest trade-off**: while the remote is unreachable the hub is
+  effectively *read-only*. You stay logged in and can browse, but you
+  can't pair a new device or create a user until the remote is back.
+  This is unavoidable (CAP) — "both always in sync" and "writeable while
+  offline" can't both be true. `last_seen` updates are best-effort so a
+  blip never drops live agent connections.
+- If `libsql-experimental` isn't installed or the remote can't be
+  reached at startup, the hub **logs loudly and falls back to local-only
+  SQLite** — it never refuses to boot.
+
+### Setup with Turso (free tier)
+
+1. Create a free account at <https://turso.tech> and install their CLI.
+2. Create a database and a token:
+   ```bash
+   turso db create vortex
+   turso db show vortex --url            # -> libsql://vortex-you.turso.io
+   turso db tokens create vortex          # -> a long auth token
+   ```
+3. Set the two env vars before starting the hub:
+   ```bash
+   # Linux / Termux
+   export VORTEX_SYNC_URL="libsql://vortex-you.turso.io"
+   export VORTEX_SYNC_TOKEN="<token from step 2>"
+   bash ~/server/serve.sh        # MODE=hub, or serve.ps1 on Windows
+   ```
+   ```powershell
+   # Windows
+   $env:VORTEX_SYNC_URL  = "libsql://vortex-you.turso.io"
+   $env:VORTEX_SYNC_TOKEN = "<token>"
+   .\serve.ps1
+   ```
+4. On first start with `VORTEX_SYNC_URL` set, the launcher attempts
+   `pip install libsql-experimental`. Windows has prebuilt wheels so it
+   just works; on Termux/aarch64 there's no reliable wheel and a source
+   build needs Rust, so it may fall back to local-only (you'll see a
+   loud log line). Run the hub on a Linux box / Windows / cloud VM if
+   you want the replica on a platform where the wheel exists.
+
+Any libSQL-compatible server works, not just Turso — point
+`VORTEX_SYNC_URL` at a self-hosted `sqld` if you'd rather not use their
+cloud.
 
 ## Troubleshooting
 

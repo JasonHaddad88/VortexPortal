@@ -8,6 +8,92 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
 
 ---
 
+## V5.2 — local + remote database (libSQL embedded replica)
+
+(Hub-only feature; independent of the planned V6 native-agent cycle below.)
+
+- [x] **Dual local+remote DB** 🟡 — _shipped V5.2_
+  Why: the operator wants accounts + device pairings to live both on the
+  local Source Device and in a cloud DB, with the local copy still
+  working when the network is down. (Can't log in to the same
+  credentials from a second hub today — each hub has its own isolated
+  SQLite.)
+  Notes: `hub/db.py` gained a backend abstraction — plain SQLite
+  (default, zero-config, pre-V6 behaviour byte-for-byte) **or** a libSQL
+  embedded replica (opt-in via `VORTEX_SYNC_URL` + `VORTEX_SYNC_TOKEN`).
+  Reads served from the local replica (offline-capable), writes go to
+  the remote primary, `db.sync()` pulls canonical state back every 10 s
+  (background task in app.py, run in a thread executor since the libSQL
+  sync is a blocking network call). `touch_device` made best-effort so
+  a remote outage never tears down live agent connections. Honest CAP
+  trade-off documented in README: read-only while remote unreachable;
+  existing logins survive (session lookup is a local read). Falls back
+  to local-only SQLite + loud log if libsql-experimental is missing or
+  the remote is unreachable at boot — never refuses to start.
+  `libsql-experimental` is best-effort in the installers (Rust ext, no
+  reliable Termux wheel; Windows wheels exist).
+
+## V6.0 / V6.1 — planned (universal: Android + PC + Termux)
+
+The goal is to make the app **as universal as possible**: any device, any
+OS, single hub. Three agent implementations all speak the same WebSocket
+protocol; the user picks whichever fits their phone or PC best.
+
+| Agent track | Platform | Install path | Status |
+|---|---|---|---|
+| **Native Android APK** | Android (Termux-free) | F-Droid one-tap | planned (V6.0-C) |
+| **Python agent (PC)** | Windows / macOS / Linux | `pip install` or single `.exe` | mostly-built, polishing (V6.0-A) |
+| **Python agent (Termux)** | Android (advanced / hub-mode / scripting) | `bash setup.sh` (as today) | already shipped |
+
+### V6.0-A — PC Python agent polish 🟢
+- [ ] `pyproject.toml` at repo root with `[agent]` / `[hub]` / `[pc-screen]`
+      / `[pc-input]` extras and `vortex-agent` / `vortex-hub` console
+      scripts. After this, PC users can `pip install -e .[agent]` and run
+      `HUB_URL=... PAIRING_CODE=... vortex-agent`.
+- [ ] README "Install on Windows / macOS / Linux" section.
+- [ ] (Optional follow-up) GitHub Actions job that builds a PyInstaller
+      `vortex-agent.exe` / `vortex-agent` per OS and attaches to releases.
+
+### V6.1 — Cross-platform PC: screen + input ops 🟡
+- [ ] `pc_screen_bridge.py` — screen capture via `mss` (pure-Python,
+      cross-platform, no compile), JPEG-encode via Pillow, same wire
+      format as the Android screen bridge so the hub doesn't care which
+      source it's getting frames from. Falls back to no-op gracefully if
+      `mss` isn't installed.
+- [ ] `pc_input_bridge.py` — mouse + keyboard injection via `pyautogui`
+      (cross-platform). Maps the same `tap` / `swipe` / `back-home-recents`
+      commands to mouse clicks / drags / keyboard shortcuts.
+- [ ] Agent registers `screen_stream` + `input` ops at startup based on
+      platform: Android picks driver-bridge, PC picks pc-bridge.
+- [ ] No hub-side changes — the existing `/screen/live` and `/input`
+      routes don't care whether they're talking to a phone or a laptop.
+
+### V6.0-C — Native Android Agent APK (replaces Termux for typical users) 🔴
+
+Folds the agent functionality into the existing Driver APK so the user
+installs **one** Vortex APK from F-Droid and is done. Termux agent stays
+in the repo as "advanced mode" (for hub-on-phone, custom paths,
+debugging) but the typical user never sees it.
+
+- [ ] **N0 — Pairing scaffold**: QR-scanner Activity, manual-entry
+      fallback, persistent config storage, WebSocket client to the hub
+      with `auth` message + the V2.1 binary-frame protocol. After N0
+      the dashboard shows the phone as online but no ops are wired yet.
+- [ ] **N1 — File ops**: `list_dir` / `stat` / `read_file` / `write_file`
+      via Storage Access Framework (user tree-picks folders on first
+      run) with `MANAGE_EXTERNAL_STORAGE` opt-in for the
+      "browse-everything" UX Termux gives today.
+- [ ] **N2 — System / device info**: `system_info` + `device_info` via
+      `BatteryManager`, `WifiManager`, `Build.*`, `StatFs`,
+      `ActivityManager`. Replaces every Termux:API call.
+- [ ] **N3 — Thumbnails**: `Bitmap` + `Bitmap.compress(JPEG)` with the
+      same on-disk cache layout the Python `op_thumbnail` uses.
+- [ ] **N4 — Polish + signed release**: signed release builds attached
+      to GitHub Releases on `vortex-v*` tag, F-Droid metadata, Knox-
+      friendly app name + signing, autostart-on-boot receiver.
+
+---
+
 ## V5.0 — current cycle (device hardware via companion APK)
 
 The Vortex Driver APK lives at `driver/` — a Kotlin Android app that

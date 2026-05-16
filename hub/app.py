@@ -52,6 +52,7 @@ app = FastAPI(title="Vortex Hub", version=__VORTEX_VERSION__)
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(_purge_loop())
+    asyncio.create_task(_db_sync_loop())
 
 
 async def _purge_loop():
@@ -61,6 +62,21 @@ async def _purge_loop():
         except Exception:
             pass
         await asyncio.sleep(3600)
+
+
+async def _db_sync_loop():
+    """Pull the remote primary's latest state into the local replica
+    every 10 s. In plain-SQLite mode db.sync() is a cheap no-op so this
+    loop is harmless either way. Runs in a thread executor because
+    libSQL's sync() does a blocking network round-trip.
+    """
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            await loop.run_in_executor(None, db.sync)
+        except Exception:
+            pass
+        await asyncio.sleep(10)
 
 
 @app.get("/health")

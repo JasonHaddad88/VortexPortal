@@ -119,6 +119,23 @@ if ($importCheck -ne 0) {
     }
 }
 
+# Optional: libsql-experimental for the local+remote replica DB. Only
+# attempt it if the operator actually set VORTEX_SYNC_URL. Windows has
+# prebuilt wheels so this usually just works; if it doesn't, the hub
+# silently runs local-only SQLite (pre-V6 behaviour).
+if ($env:VORTEX_SYNC_URL) {
+    $hasLibsql = Invoke-NativeQuiet $VenvPython @("-c", "import libsql_experimental")
+    if ($hasLibsql -ne 0) {
+        Write-Host "==> VORTEX_SYNC_URL set; installing libsql-experimental (optional)"
+        $rcL = Invoke-NativeStreaming $VenvPython @(
+            "-m", "pip", "install", "--quiet", "libsql-experimental"
+        )
+        if ($rcL -ne 0) {
+            Write-Host "    libsql-experimental install failed; hub will run local-only SQLite" -ForegroundColor Yellow
+        }
+    }
+}
+
 # ---------------------------------------------------------------------------
 # cloudflared
 # ---------------------------------------------------------------------------

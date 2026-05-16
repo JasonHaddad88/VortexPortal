@@ -88,6 +88,18 @@ if [ "$MODE" = "hub" ]; then
         "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
         "$VPY" -m pip install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart qrcode
     fi
+    # Optional: libsql-experimental enables the local+remote replica DB
+    # (set VORTEX_SYNC_URL to use it). It's a Rust extension with no
+    # reliable Termux/aarch64 wheel and a source build needs the Rust
+    # toolchain, so this is strictly best-effort. If it doesn't install,
+    # the hub silently runs local-only SQLite -- exactly the pre-V6
+    # behaviour. Only attempt it if the operator actually configured a
+    # remote, so we don't waste a long Rust build nobody asked for.
+    if [ -n "${VORTEX_SYNC_URL:-}" ] && ! "$VPY" -c 'import libsql_experimental' 2>/dev/null; then
+        echo "==> VORTEX_SYNC_URL set; attempting libsql-experimental (optional)"
+        "$VPY" -m pip install --quiet libsql-experimental 2>/dev/null \
+            || echo "    libsql-experimental unavailable; hub will run local-only SQLite"
+    fi
 else
     if ! "$VPY" -c 'import websockets, httpx' 2>/dev/null; then
         echo "==> Installing agent dependencies"

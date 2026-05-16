@@ -789,7 +789,7 @@ footer {
 
 
 def page(title: str, body: str, *, user: Optional[dict] = None,
-         active: str = "", chrome: bool = True, version: str = "5.1") -> str:
+         active: str = "", chrome: bool = True, version: str = "5.2") -> str:
     """Wrap body in the standard page chrome (topbar + footer)."""
     if chrome:
         nav_items = [

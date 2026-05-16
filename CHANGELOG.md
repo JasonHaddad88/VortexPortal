@@ -3,6 +3,72 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.2] — 2026-05-13
+
+Optional **local + remote database** via a libSQL embedded replica.
+Hub-only; agent + Driver APK unchanged. Zero-config deployments are
+byte-for-byte unaffected — this is strictly opt-in.
+
+### Added
+- **`hub/db.py` backend abstraction.** Two interchangeable backends
+  chosen at `init()`:
+  - `_SqliteBackend` — per-call `sqlite3` connections, `sqlite3.Row`
+    rows. Identical to pre-V6 behaviour; what you get when
+    `VORTEX_SYNC_URL` is unset.
+  - `_LibsqlBackend` — one long-lived libSQL embedded-replica
+    connection (lock-guarded, since FastAPI runs sync handlers in a
+    threadpool and libSQL connections aren't concurrency-safe). Local
+    replica file for reads (instant, offline-capable); writes go to the
+    remote primary; `db.sync()` pulls canonical state back.
+  - `_LibsqlConn` / `_LibsqlCur` adapters normalise libSQL's tuple rows
+    to plain dicts and re-expose `lastrowid` / `rowcount` /
+    `executescript` (split on `;` since libSQL has no `executescript`),
+    so the ~25 query functions are **completely untouched** — they
+    still do `con.execute(...).fetchone()` and `row["col"]` exactly as
+    before regardless of backend.
+- **`db.sync()`** — pulls the remote primary into the local replica.
+  No-op (returns `False`) in SQLite mode; never raises (a sync failure
+  is logged + swallowed so the background loop can't die).
+- **`hub/app.py` `_db_sync_loop`** — calls `db.sync()` every 10 s via a
+  thread executor (libSQL's sync is a blocking network call). Cheap
+  no-op in SQLite mode.
+- **`VORTEX_SYNC_URL` + `VORTEX_SYNC_TOKEN`** env vars; README section
+  documenting the Turso (or self-hosted `sqld`) setup and the honest
+  CAP trade-off.
+- Installers (`serve.sh` hub-mode, `serve.ps1`) best-effort
+  `pip install libsql-experimental` **only if** `VORTEX_SYNC_URL` is
+  set, so nobody eats a Rust build they didn't ask for.
+
+### Behaviour / trade-offs (documented honestly)
+- Reads always work from the local replica — **existing logins survive
+  a remote outage** (session lookup is a local read).
+- Writes need the remote primary; while it's unreachable the hub is
+  effectively **read-only** (can't pair / create users until it's
+  back). This is unavoidable (CAP); accepted by the operator when they
+  chose this option.
+- `touch_device` made **best-effort** (try/except, swallow) so a
+  transient remote-write failure never tears down a live agent
+  WebSocket — `last_seen` is cosmetic.
+- If `libsql-experimental` is missing or the remote is unreachable at
+  boot, the hub **logs loudly and falls back to local-only SQLite** —
+  it never refuses to start.
+
+### Smoke-tested
+- **Regression**: full 25-op exercise on the default SQLite path —
+  byte-identical to V2.0 behaviour. `db.sync()` returns `False`.
+- **Fallback (A)**: `VORTEX_SYNC_URL` set + `libsql_experimental`
+  absent → loud stderr log, runs local SQLite, ops still work.
+- **libSQL adapter (B)**: faithful sqlite3-backed stub of
+  `libsql_experimental` (tuple rows + `description`/`lastrowid`/
+  `rowcount`/`sync`) injected; full 25-op exercise passes — dict-row
+  normalisation, `lastrowid`, `rowcount`, `executescript`-split, the
+  initial `sync()` on init, and `db.sync()` returning `True` + actually
+  calling `conn.sync()` all verified.
+- `libsql-experimental` does not build on this Windows/Python 3.13 box
+  (no wheel, no Rust) — which exercised, in real life, exactly the
+  graceful-fallback path (A). On Windows with a working wheel / a
+  cloud-VM hub it runs for real.
+
 ## [V5.1] — 2026-05-11
 
 Dashboard streamline + a richer device-info modal. Pure Python/UX
