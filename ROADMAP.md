@@ -8,6 +8,45 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
 
 ---
 
+## V5.4 — find-my-device / fleet UX (candidate, not yet built)
+
+User-requested. Ordered by value-per-effort.
+
+- [ ] **Device search bar** 🟢
+  Client-only filter on the dashboard — substring match on device name
+  (and id). ~30 LOC JS + an input in the section-head. No agent/hub
+  changes. Highest value-per-effort once you have >5 devices.
+- [ ] **Sort + filter chips** 🟢
+  Sort by name / online / last-seen / battery; quick chips for
+  online-only / offline. Complements search. Pure client-side.
+- [ ] **Find Location (GPS)** 🟡
+  Tier A (now): agent op `location` via `termux-location` (needs
+  Termux:API location permission). Hub page shows coords + accuracy +
+  timestamp + an OpenStreetMap embed/"open in Maps" link (no API key,
+  no heavy JS). Tier B (later): Driver APK `FusedLocationProvider` —
+  more accurate, survives without Termux. Only works while the phone is
+  on + agent running (same limitation as everything else; true
+  powered-off finding is an OS feature we can't replicate).
+- [ ] **Play Sound (ring it)** 🟡
+  Tier A (now): agent op `play_sound` via `termux-media-player` /
+  `termux-tts-speak`. Caveat: respects media volume, won't override
+  silent/DND. Tier B (proper, recommended): Driver APK plays a tone on
+  `STREAM_ALARM` at max volume + vibrate — **bypasses silent mode**,
+  i.e. actually finds the phone under the couch. Needs the Driver APK
+  (the Termux-only version is a weak MVP).
+- [ ] **Vibrate** 🟢
+  `termux-vibrate` agent op; pairs with Play Sound for when you want a
+  buzz not a noise. Trivial.
+- [ ] **Push a message** 🟢
+  `termux-notification` agent op — pop a notification on the phone
+  ("whoever found this, call me +1…"). Useful for a lost device.
+- [ ] **Location history** 🔴 — phase 2
+  Periodically log location so you can see where a device *was* even if
+  it's now off/dead. Storage + a track view; bigger lift.
+- [ ] **Device tags / groups** 🟡 — phase 2
+  Tag devices (home / kids / work); group the dashboard. Makes search +
+  a large fleet manageable.
+
 ## V5.3 — device "in use" lock (lease-based mutex)
 
 (Hub-only feature; rides on V5.2's shared-DB story for cross-hub locking.)
