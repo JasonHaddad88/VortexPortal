@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS device_locks (
+    device_id   TEXT    PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    holder      TEXT    NOT NULL,
+    label       TEXT,
+    acquired_at INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+);
 """
 
 
@@ -555,9 +563,122 @@ def delete_session(token: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Device locks (V5.3) -- a lease-based "this device is in use" mutex.
+#
+# Lease, not a hard lock: every holder must refresh before expires_at or
+# the lock is considered free (so a closed tab / crashed browser releases
+# in <= LOCK_TTL instead of wedging the device forever). Stored in the DB
+# so it works cross-hub when hubs share a libSQL replica (V5.2); within a
+# single hub it's effectively immediate.
+#
+# Holder is an opaque, server-derived per-(user,browser-session) id, so a
+# user on two different browsers/devices gets two holders -> the second
+# one is blocked, which is exactly the "in use elsewhere" behaviour.
+# ---------------------------------------------------------------------------
+LOCK_TTL = 30  # seconds; the UI must heartbeat more often than this
+
+
+def get_lock(device_id: str) -> Optional[dict]:
+    """Current non-expired lock for a device, or None if free."""
+    now = int(time.time())
+    with _connect() as con:
+        row = con.execute(
+            "SELECT device_id, holder, label, acquired_at, expires_at "
+            "FROM device_locks WHERE device_id = ? AND expires_at > ?",
+            (device_id, now),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def acquire_lock(device_id: str, holder: str, label: str,
+                 *, force: bool = False, ttl: int = LOCK_TTL):
+    """Try to acquire/refresh the lock.
+
+    Returns (acquired: bool, lock: dict|None). acquired is True if
+    `holder` now owns it (free, expired, already-mine, or force-stolen).
+    If False, `lock` is the *other* holder's current lock so the caller
+    can tell the user who's using it.
+
+    Note: read-then-write without an explicit transaction. For this
+    single-user / their-own-devices use case the race window is
+    irrelevant -- worst case two acquirers both win for a split second
+    and the loser's next refresh fails (holder mismatch), so the UI
+    converges within one poll. Kept transaction-free so it's identical
+    on the sqlite3 and libSQL backends.
+    """
+    now = int(time.time())
+    with _connect() as con:
+        row = con.execute(
+            "SELECT holder, label, acquired_at, expires_at "
+            "FROM device_locks WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
+        active = row is not None and row["expires_at"] > now
+        if active and row["holder"] != holder and not force:
+            return False, {
+                "device_id": device_id,
+                "holder": row["holder"],
+                "label": row["label"],
+                "acquired_at": row["acquired_at"],
+                "expires_at": row["expires_at"],
+            }
+        exp = now + ttl
+        con.execute(
+            "INSERT INTO device_locks "
+            "(device_id, holder, label, acquired_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(device_id) DO UPDATE SET "
+            "holder=excluded.holder, label=excluded.label, "
+            "acquired_at=excluded.acquired_at, expires_at=excluded.expires_at",
+            (device_id, holder, label, now, exp),
+        )
+        return True, {
+            "device_id": device_id, "holder": holder, "label": label,
+            "acquired_at": now, "expires_at": exp,
+        }
+
+
+def refresh_lock(device_id: str, holder: str, ttl: int = LOCK_TTL) -> bool:
+    """Extend the lease. Returns False if the caller no longer holds it
+    (someone force-stole it, or it expired and was retaken)."""
+    now = int(time.time())
+    with _connect() as con:
+        cur = con.execute(
+            "UPDATE device_locks SET expires_at = ? "
+            "WHERE device_id = ? AND holder = ? AND expires_at > ?",
+            (now + ttl, device_id, holder, now),
+        )
+        return cur.rowcount > 0
+
+
+def release_lock(device_id: str, holder: str) -> None:
+    """Release iff still held by this holder (don't yank someone else's)."""
+    with _connect() as con:
+        con.execute(
+            "DELETE FROM device_locks WHERE device_id = ? AND holder = ?",
+            (device_id, holder),
+        )
+
+
+def get_locks_for_user(owner_id: int) -> dict:
+    """{device_id: lock-dict} for every non-expired lock on a user's
+    devices. Drives the dashboard's busy badges."""
+    now = int(time.time())
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT l.device_id, l.holder, l.label, l.expires_at "
+            "FROM device_locks l JOIN devices d ON d.id = l.device_id "
+            "WHERE d.owner_id = ? AND l.expires_at > ?",
+            (owner_id, now),
+        ).fetchall()
+        return {r["device_id"]: dict(r) for r in rows}
+
+
 def purge_expired() -> None:
-    """Housekeeping: drop expired sessions and pairing codes."""
+    """Housekeeping: drop expired sessions, pairing codes, device locks."""
     now = int(time.time())
     with _connect() as con:
         con.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
         con.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (now,))
+        con.execute("DELETE FROM device_locks WHERE expires_at < ?", (now,))

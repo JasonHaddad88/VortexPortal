@@ -3,6 +3,64 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.3] — 2026-05-13
+
+A lease-based **"device in use" lock** so two sessions (or two hubs
+sharing a V5.2 replica) can't fight over the same camera / screen /
+input. Hub-only; agent + Driver APK unchanged.
+
+### Added
+- **`device_locks` table + `db` lock API**: `acquire_lock` (free /
+  expired / already-mine / `force` steal), `refresh_lock`,
+  `release_lock` (holder-scoped), `get_lock`, `get_locks_for_user`.
+  `purge_expired()` now also sweeps stale locks. Lease model: a holder
+  must refresh before `expires_at` (TTL 30 s) or the lock reads as
+  free, so a closed tab / crashed browser auto-releases in ≤30 s.
+  Transaction-free read-then-write (fine for this single-user /
+  own-devices case; identical on the sqlite3 and libSQL backends).
+- **Session-derived holder id**: `f"u{uid}:" + sha256(cookie)[:12]`.
+  Same browser across pages = one holder (never self-blocks); a
+  different browser / laptop / phone = a distinct holder (sees the
+  device as in-use). Cannot be spoofed — computed server-side from the
+  caller's own cookie.
+- **Endpoints**: `POST /devices/{id}/lock` (acquire, optional
+  `force`), `/lock/refresh` (heartbeat), `/lock/release`. `/api/online`
+  now also returns a `locks` map (`{device_id: {label, mine}}`) so the
+  existing 5 s dashboard poll carries lock state — no extra request.
+- **Hard guards (409)** on the hardware-exclusive routes
+  `/camera/live`, `/camera/capture`, `/screen/live`, `/input` when held
+  by another holder. The holder themselves passes through.
+- **Dashboard UI**: a locked-by-another card hides the
+  Browse/Camera/Screen/Edit row, shows a "🔒 In use — <label>" banner +
+  a **Take control** button (force-acquire then immediately release, so
+  the next page re-acquires cleanly). Info stays available (read-only,
+  can't disrupt anything).
+- **Per-page guard** (`_lock_guard`) injected into the camera, screen
+  and files pages: acquires on load, heartbeats every 12 s, releases on
+  unload via `navigator.sendBeacon` (survives page unload where
+  `fetch` wouldn't), and drops a full-viewport blocking overlay with
+  "Take control" if the device is held elsewhere or the lock is
+  force-stolen mid-session.
+
+### Behaviour notes
+- **Hybrid by design**: hard server-side 409 on the genuinely
+  exclusive hardware (camera/screen/input); soft UI button-hiding on
+  Browse/Edit (concurrent file reads / renames are harmless).
+- **Cross-hub**: with V5.2's shared libSQL replica the lock is visible
+  across hubs (≤10 s sync lag). Single-hub: effectively immediate.
+- "Take control" force-steals; the previous holder's next heartbeat
+  returns 409 and its page shows the overlay — clean hand-off.
+
+### Smoke-tested
+- DB layer: acquire / block-other / refresh / force-steal / release /
+  lease-expiry / purge.
+- HTTP with two real sessions (distinct cookies → distinct holders):
+  409 on second acquire with the other's label; `/api/online` `mine`
+  flag correct per session; hard 409 on camera/screen/capture/input
+  for the non-holder; holder NOT 409'd (got 504 driver-unreachable,
+  proving the guard let it through); refresh holder-scoped; force-steal
+  flips who's blocked; release frees it for re-acquire.
+
 ## [V5.2] — 2026-05-13
 
 Optional **local + remote database** via a libSQL embedded replica.

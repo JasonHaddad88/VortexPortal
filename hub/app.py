@@ -97,6 +97,36 @@ def _hub_public_url(request: Request) -> str:
     return f"{scheme}://{host}"
 
 
+# --- V5.3: device-lock helpers ---------------------------------------------
+def _lock_holder(request: Request, user: dict) -> str:
+    """Opaque, stable per (user, browser-session) lock-holder id.
+
+    Derived from the session cookie hash so: the same browser navigating
+    between pages keeps one holder (never blocks itself), while a
+    different browser / laptop / phone gets a different holder (so it
+    sees the device as in-use). The user can never spoof another holder
+    because it's computed server-side from their own cookie.
+    """
+    cookie = request.cookies.get(auth.SESSION_COOKIE) or ""
+    return f"u{user['id']}:" + db.hash_token(cookie)[:12]
+
+
+def _guard_not_locked(device_id: str, request: Request, user: dict) -> None:
+    """Hard guard for the hardware-exclusive routes (camera/screen/input).
+
+    409 if the device is locked by a *different* holder. The holder
+    themselves passes through. 'Take control' on the dashboard force-
+    acquires, which flips the holder and unblocks the new session.
+    """
+    lk = db.get_lock(device_id)
+    if lk and lk["holder"] != _lock_holder(request, user):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Device is in use — {lk.get('label') or 'another session'}. "
+                   f"Use “Take control” on the dashboard to override.",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Auth: login / register / logout
 # ---------------------------------------------------------------------------
@@ -212,10 +242,63 @@ def dashboard(request: Request, user: dict = Depends(auth.require_user)):
 
 
 @app.get("/api/online")
-def api_online(user: dict = Depends(auth.require_user)):
+def api_online(request: Request, user: dict = Depends(auth.require_user)):
     user_devices = {d["id"] for d in db.list_devices(user["id"])}
     online = list(user_devices & ws_router.registry.online_ids())
-    return {"online": online}
+    # V5.3: fold lock state into the existing 5s dashboard poll so a
+    # device freeing up reflects quickly without a separate request.
+    holder = _lock_holder(request, user)
+    locks = {}
+    for did, lk in db.get_locks_for_user(user["id"]).items():
+        locks[did] = {
+            "label": lk.get("label"),
+            "mine": lk.get("holder") == holder,
+        }
+    return {"online": online, "locks": locks}
+
+
+# --- V5.3: device-lock acquire / refresh / release -------------------------
+@app.post("/devices/{device_id}/lock")
+async def device_lock_acquire(device_id: str, request: Request,
+                              user: dict = Depends(auth.require_user)):
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    context = str(body.get("context") or "session")[:24]
+    force = bool(body.get("force"))
+    holder = _lock_holder(request, user)
+    label = f"{user['username']} ({context})"
+    acquired, lock = db.acquire_lock(device_id, holder, label, force=force)
+    return JSONResponse({
+        "acquired": acquired,
+        "mine": acquired,
+        "label": lock.get("label") if lock else None,
+        "expires_at": lock.get("expires_at") if lock else None,
+        "ttl": db.LOCK_TTL,
+    }, status_code=200 if acquired else 409)
+
+
+@app.post("/devices/{device_id}/lock/refresh")
+async def device_lock_refresh(device_id: str, request: Request,
+                              user: dict = Depends(auth.require_user)):
+    if db.get_device_for_user(device_id, user["id"]) is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    holder = _lock_holder(request, user)
+    ok = db.refresh_lock(device_id, holder)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 409)
+
+
+@app.post("/devices/{device_id}/lock/release")
+async def device_lock_release(device_id: str, request: Request,
+                              user: dict = Depends(auth.require_user)):
+    if db.get_device_for_user(device_id, user["id"]) is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    db.release_lock(device_id, _lock_holder(request, user))
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/devices/{device_id}/info")
@@ -590,6 +673,7 @@ async def device_input(device_id: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    _guard_not_locked(device_id, request, user)
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -637,7 +721,7 @@ async def api_device_screen_size(device_id: str,
 
 
 @app.get("/devices/{device_id}/screen/live")
-async def device_screen_live(device_id: str,
+async def device_screen_live(device_id: str, request: Request,
                              user: dict = Depends(auth.require_user)):
     """Real-time screen-mirror via the Vortex Driver APK (V5.0-M2).
 
@@ -648,6 +732,7 @@ async def device_screen_live(device_id: str,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    _guard_not_locked(device_id, request, user)
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -705,11 +790,12 @@ async def device_screen_live(device_id: str,
 
 
 @app.get("/devices/{device_id}/camera/live")
-async def device_camera_live(device_id: str,
+async def device_camera_live(device_id: str, request: Request,
                              user: dict = Depends(auth.require_user)):
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    _guard_not_locked(device_id, request, user)
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -772,7 +858,7 @@ async def device_camera_live(device_id: str,
 
 
 @app.get("/devices/{device_id}/camera/capture")
-async def device_camera_capture(device_id: str,
+async def device_camera_capture(device_id: str, request: Request,
                                 camera_id: str = "0",
                                 user: dict = Depends(auth.require_user)):
     """Stream a single JPEG capture from the device's camera straight to
@@ -780,6 +866,7 @@ async def device_camera_capture(device_id: str,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    _guard_not_locked(device_id, request, user)
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")

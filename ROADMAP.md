@@ -8,6 +8,34 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
 
 ---
 
+## V5.3 — device "in use" lock (lease-based mutex)
+
+(Hub-only feature; rides on V5.2's shared-DB story for cross-hub locking.)
+
+- [x] **Device lock** 🟡 — _shipped V5.3_
+  Why: if a device is being controlled from one session/hub, other
+  sessions should see it as busy and not stomp on the camera / screen /
+  input. The user asked to "set its status and hide the non-Info
+  buttons."
+  Notes: `device_locks` table — lease-based (expires; UI heartbeats
+  every 12 s, TTL 30 s, so a closed tab self-releases). Holder is a
+  server-derived per-(user, browser-session) id from the session cookie
+  hash, so the same browser navigating pages keeps one holder while a
+  different browser/device is a distinct holder (→ blocked). Hybrid
+  enforcement: **hard 409** on `/camera/live`, `/camera/capture`,
+  `/screen/live`, `/input` for non-holders; **soft** button-hide on the
+  dashboard (Browse/Camera/Screen/Edit hidden, Info stays) with a "Take
+  control" force-acquire. Per-page guard (camera/screen/files) acquires
+  on load, heartbeats, releases on unload via `sendBeacon`, and shows a
+  full-viewport blocking overlay with "Take control" if held elsewhere.
+  Lock state folded into the existing 5 s `/api/online` poll (no extra
+  request). Cross-hub aware automatically via the V5.2 libSQL replica
+  (≤10 s sync lag); immediate within a single hub. `purge_expired()`
+  also sweeps stale locks. Smoke-tested at the db layer (acquire / block
+  / refresh / force-steal / release / expiry / purge) and over HTTP with
+  two real sessions (distinct holders, 409 guards, force-steal flips who
+  is blocked, release frees it).
+
 ## V5.2 — local + remote database (libSQL embedded replica)
 
 (Hub-only feature; independent of the planned V6 native-agent cycle below.)

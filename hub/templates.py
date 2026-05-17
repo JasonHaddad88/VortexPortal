@@ -777,6 +777,42 @@ select.cam-pick {
   font-size: 0.8rem;
 }
 
+/* ---------- V5.3 device-lock UI ---------- */
+.lock-banner {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  margin-top: 0.25rem;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: #f59e0b;
+}
+.lock-banner .lock-icon { font-size: 0.9rem; }
+.lock-banner span[data-lock-label] {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+}
+/* Viewport blocking overlay used on camera/screen/files pages. */
+.lock-overlay {
+  position: fixed; inset: 0;
+  background: rgba(6, 6, 10, 0.86);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.85rem; text-align: center; padding: 2rem;
+  z-index: 20;
+}
+.lock-overlay.show { display: flex; }
+.lock-overlay .big { font-size: 2rem; }
+.lock-overlay .who {
+  color: var(--text); font-size: 0.95rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.lock-overlay .sub { color: var(--muted); font-size: 0.78rem; max-width: 360px; }
+
 footer {
   text-align: center;
   padding: 2rem 1rem;
@@ -789,7 +825,7 @@ footer {
 
 
 def page(title: str, body: str, *, user: Optional[dict] = None,
-         active: str = "", chrome: bool = True, version: str = "5.2") -> str:
+         active: str = "", chrome: bool = True, version: str = "5.3") -> str:
     """Wrap body in the standard page chrome (topbar + footer)."""
     if chrome:
         nav_items = [
@@ -939,7 +975,12 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
   </p>
   <p class="meta" data-last-seen>last seen: {escape(last_seen)}</p>
   <div class="stats" data-stats hidden></div>
-  <div class="actions compact">
+  <div class="lock-banner" data-lock-banner hidden>
+    <span class="lock-icon">🔒</span>
+    <span data-lock-label>In use</span>
+    <button class="btn btn-small" type="button" data-take-control>Take control</button>
+  </div>
+  <div class="actions compact" data-actions>
     <a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>
     <a class="btn" href="/devices/{did}/camera">Camera</a>
     <a class="btn" href="/devices/{did}/screen">Screen</a>
@@ -1028,11 +1069,46 @@ function renderStats(card, s) {{
   el.hidden = parts.length === 0;
 }}
 
+async function takeControl(deviceId) {{
+  try {{
+    await fetch(`/devices/${{encodeURIComponent(deviceId)}}/lock`, {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{context: 'override', force: true}}),
+    }});
+    // We grabbed the lock but the dashboard doesn't itself use the
+    // device -- immediately release so we don't block ourselves when we
+    // open Camera/Screen next. The point of "take control" here is to
+    // boot the stale/other holder; the next page will re-acquire.
+    await fetch(`/devices/${{encodeURIComponent(deviceId)}}/lock/release`, {{
+      method: 'POST',
+    }});
+  }} catch (e) {{}}
+  pollOnline();
+}}
+
+function applyLock(card, lock) {{
+  const banner = card.querySelector('[data-lock-banner]');
+  const actions = card.querySelector('[data-actions]');
+  if (!banner || !actions) return;
+  if (lock && !lock.mine) {{
+    banner.querySelector('[data-lock-label]').textContent =
+      'In use — ' + (lock.label || 'another session');
+    banner.hidden = false;
+    actions.hidden = true;
+  }} else {{
+    banner.hidden = true;
+    actions.hidden = false;
+  }}
+}}
+
 async function pollOnline() {{
   try {{
     const r = await fetch('/api/online', {{cache: 'no-store'}});
     if (!r.ok) return;
-    const online = new Set((await r.json()).online || []);
+    const data = await r.json();
+    const online = new Set(data.online || []);
+    const locks = data.locks || {{}};
     document.querySelectorAll('[data-device-id]').forEach(card => {{
       const id = card.dataset.deviceId;
       const badge = card.querySelector('[data-status]');
@@ -1042,9 +1118,17 @@ async function pollOnline() {{
         badge.className = 'badge offline'; badge.textContent = 'Offline';
         renderStats(card, null);
       }}
+      applyLock(card, locks[id]);
     }});
   }} catch (e) {{}}
 }}
+
+document.addEventListener('click', (e) => {{
+  const btn = e.target.closest('[data-take-control]');
+  if (!btn) return;
+  const card = btn.closest('[data-device-id]');
+  if (card) takeControl(card.dataset.deviceId);
+}});
 async function pollStats() {{
   try {{
     const r = await fetch('/api/devices/stats', {{cache: 'no-store'}});
@@ -1361,6 +1445,7 @@ def device_camera_page(user: dict, device: dict) -> str:
     name = device["name"]
     name_js = _json_dumps_for_html(name)
     body = f"""
+{_lock_guard(did, "camera")}
 <div class="section-head" style="align-items:center">
   <h2>// {escape(name)} · Camera</h2>
   <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
@@ -1586,6 +1671,7 @@ def device_screen_page(user: dict, device: dict) -> str:
     did = device["id"]
     did_js = _json_dumps_for_html(did)
     body = f"""
+{_lock_guard(did, "screen")}
 <div class="section-head" style="align-items:center">
   <h2>// {escape(device['name'])} · Screen</h2>
   <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
@@ -1808,7 +1894,8 @@ def files_page(user: dict, device: dict, rel: str, entries: list) -> str:
     # JS escapes for safety inside the data-* attributes / template literals.
     js_did = device['id']
     js_dir_prefix = rel_prefix
-    body = f"""<div class="breadcrumbs">
+    body = f"""{_lock_guard(device['id'], "files")}
+<div class="breadcrumbs">
   <span class="device-pill">{escape(device['name'])}</span>
   <span class="sep">·</span>
   <a href="/devices/{escape(device['id'])}">manage</a>
@@ -1926,6 +2013,91 @@ def _json_dumps_for_html(value) -> str:
 
 # alias for f-string-friendly use above
 json_dumps = _json_dumps_for_html
+
+
+def _lock_guard(device_id: str, context: str) -> str:
+    """Reusable per-page lock guard (V5.3) for the camera/screen/files
+    pages. Acquires the device lock on load, heartbeats every 12 s
+    (lease TTL is 30 s server-side), releases on page unload via
+    sendBeacon (survives unload where fetch wouldn't), and shows a
+    full-viewport blocking overlay with a 'Take control' (force) button
+    if the device is held by another session.
+
+    Returns plain HTML+JS (single braces). It's injected as a *runtime
+    value* into the page f-strings, so it must NOT use the {{ }} doubling
+    those f-strings need.
+    """
+    did = _json_dumps_for_html(device_id)
+    ctx = _json_dumps_for_html(context)
+    js = """
+<div class="lock-overlay" id="lock-overlay">
+  <div class="big">🔒</div>
+  <div class="who" id="lock-who">This device is in use</div>
+  <div class="sub">Another session (a different browser or device) is
+    controlling this device. Taking control will boot that session.</div>
+  <button class="btn btn-primary" id="lock-take">Take control</button>
+  <a class="btn btn-small" href="/">← Back to dashboard</a>
+</div>
+<script>
+(function() {
+  const DID = __DID__, CTX = __CTX__;
+  const overlay = document.getElementById('lock-overlay');
+  const who = document.getElementById('lock-who');
+  let heartbeat = null;
+
+  function startHeartbeat() {
+    if (heartbeat) return;
+    heartbeat = setInterval(async () => {
+      try {
+        const r = await fetch(`/devices/${encodeURIComponent(DID)}/lock/refresh`,
+                              {method: 'POST'});
+        if (r.status === 409) {
+          who.textContent = 'Control was taken by another session';
+          overlay.classList.add('show');
+          stopHeartbeat();
+        }
+      } catch (e) {}
+    }, 12000);
+  }
+  function stopHeartbeat() {
+    if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+  }
+  async function acquire(force) {
+    try {
+      const r = await fetch(`/devices/${encodeURIComponent(DID)}/lock`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({context: CTX, force: !!force}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.acquired) {
+        overlay.classList.remove('show');
+        startHeartbeat();
+        return true;
+      }
+      who.textContent = 'In use — ' + (data.label || 'another session');
+      overlay.classList.add('show');
+      stopHeartbeat();
+      return false;
+    } catch (e) {
+      // Network hiccup: don't hard-block the UI -- the server-side 409
+      // guards on the control endpoints still protect the hardware.
+      return true;
+    }
+  }
+  function release() {
+    try {
+      navigator.sendBeacon(`/devices/${encodeURIComponent(DID)}/lock/release`);
+    } catch (e) {}
+  }
+  document.getElementById('lock-take').addEventListener('click', () => acquire(true));
+  window.addEventListener('pagehide', release);
+  window.addEventListener('beforeunload', release);
+  acquire(false);
+})();
+</script>
+"""
+    return js.replace("__DID__", did).replace("__CTX__", ctx)
 
 
 def files_error_page(user: dict, device: dict, message: str) -> str:
