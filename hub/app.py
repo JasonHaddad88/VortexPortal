@@ -37,25 +37,50 @@ from . import __VORTEX_VERSION__, auth, db, templates, ws_router
 from .config import config
 
 # ---------------------------------------------------------------------------
-# Config — MUST boot before db.init(): it folds .env files into os.environ
-# and loads ~/vortex/config.json (the file the Settings tab writes), and
-# db.init() reads VORTEX_SYNC_URL/TOKEN.
+# Config — MUST boot before the DB is initialised: it folds .env files
+# into os.environ and loads ~/vortex/config.json (the file the Settings
+# tab + the pre-auth /setup page write). _init_db_from_config() then
+# resolves VORTEX_SYNC_URL/TOKEN via config.get() and passes them
+# explicitly to db.init() (no os.environ poisoning, so /setup can
+# re-resolve a changed config.json live).
 # ---------------------------------------------------------------------------
 _ENV_FILES = config.boot()
 
 _DEFAULT_DB = Path(os.path.expanduser("~/vortex/hub.db"))
-_DB_PATH = Path(config.get("VORTEX_HUB_DB") or _DEFAULT_DB)
 
-# Bootstrap-critical: read once here. The Settings tab persists changes to
-# config.json and tells the operator a restart is needed to apply them.
-for _k in ("VORTEX_SYNC_URL", "VORTEX_SYNC_TOKEN"):
-    _v = config.get(_k)
-    if _v and not os.environ.get(_k):
-        os.environ[_k] = _v   # db.init() reads these from os.environ
+
+def _resolve_db_path() -> Path:
+    return Path(config.get("VORTEX_HUB_DB") or _DEFAULT_DB)
+
+
+def _init_db_from_config() -> None:
+    """(Re)select the DB backend from the *current* config. We resolve
+    the values via config.get() — which already honours the precedence
+    chain (real env var > config.json > default) — and pass them
+    EXPLICITLY to db.init(). We deliberately never write them back into
+    os.environ: doing so would pin the resolved value as a fake env
+    override and stop a later config.json edit (via /setup or the
+    Settings tab) from ever re-resolving."""
+    global _DB_PATH
+    _DB_PATH = _resolve_db_path()
+    db.init(
+        _DB_PATH,
+        sync_url=config.get("VORTEX_SYNC_URL"),
+        sync_token=config.get("VORTEX_SYNC_TOKEN"),
+    )
+
 
 print(f"==> Config: {len(_ENV_FILES)} .env file(s) + {config.path}")
 
-db.init(_DB_PATH)
+_init_db_from_config()
+
+
+def _reinit_db() -> None:
+    """Apply a live config change to the DB backend — no restart, before
+    any login. config.set_many() has already updated the store
+    in-memory + on disk; db.init() re-selects the backend and re-runs
+    schema + migrate. Safe on a fresh node: nothing in flight."""
+    _init_db_from_config()
 
 
 def _public_url_override() -> str:
@@ -1099,11 +1124,8 @@ def admin_invites_create(user: dict = Depends(auth.require_admin)):
 # Persists to ~/vortex/config.json via the config store; secrets are
 # write-only (blank submit = keep existing).
 # ---------------------------------------------------------------------------
-@app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request,
-                  user: dict = Depends(auth.require_admin),
-                  saved: str = ""):
-    status = {
+def _hub_status(request: Request) -> dict:
+    return {
         "backend": "libSQL replica" if config.get("VORTEX_SYNC_URL")
                    else "local SQLite",
         "db_path": str(_DB_PATH),
@@ -1113,8 +1135,14 @@ def settings_page(request: Request,
         "config_path": str(config.path),
         "users": db.user_count(),
     }
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request,
+                  user: dict = Depends(auth.require_admin),
+                  saved: str = ""):
     return HTMLResponse(templates.settings_page(
-        user, config.public_view(), status, saved=bool(saved),
+        user, config.public_view(), _hub_status(request), saved=bool(saved),
     ))
 
 
@@ -1130,28 +1158,20 @@ async def settings_save(request: Request,
     return RedirectResponse(url="/settings?saved=1", status_code=303)
 
 
-@app.post("/api/settings/test-db")
-async def settings_test_db(request: Request,
-                           user: dict = Depends(auth.require_admin)):
-    """Validate a libSQL URL+token BEFORE saving, so the operator isn't
-    in a save→restart→fail→guess loop. If the token field is blank we
-    test against the currently-stored token (so 'just checking the URL'
-    works without re-pasting the secret)."""
-    body = await request.json()
-    url = str(body.get("url", "")).strip()
-    token = str(body.get("token", "")).strip() or config.get("VORTEX_SYNC_TOKEN")
+async def _run_db_probe(url: str, token: str):
+    """Validate a libSQL URL+token (temp replica → sync → SELECT 1) so
+    the operator isn't in a save→restart→fail→guess loop. Shared by the
+    admin Settings test and the pre-auth /setup test. Returns
+    (ok: bool, message: str)."""
     if not url:
-        return JSONResponse({"ok": False, "error": "URL is required"})
+        return False, "URL is required"
     try:
         import libsql_experimental as libsql
     except ImportError:
-        return JSONResponse({
-            "ok": False,
-            "error": "libsql-experimental isn't installed in this hub's "
-                     "venv, so the replica can't be used here even if the "
-                     "URL is valid. Run the hub where the wheel is "
-                     "available (Windows / Linux / cloud VM).",
-        })
+        return False, ("libsql-experimental isn't installed in this hub's "
+                       "venv, so the replica can't be used here even if "
+                       "the URL is valid. Run the hub where the wheel is "
+                       "available (Windows / Linux / cloud VM).")
 
     def _probe():
         import tempfile, os as _os
@@ -1167,8 +1187,92 @@ async def settings_test_db(request: Request,
     try:
         await asyncio.get_event_loop().run_in_executor(None, _probe)
     except Exception as e:
-        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"})
-    return JSONResponse({"ok": True, "message": "Connected + synced OK."})
+        return False, f"{type(e).__name__}: {e}"
+    return True, "Connected + synced OK."
+
+
+@app.post("/api/settings/test-db")
+async def settings_test_db(request: Request,
+                           user: dict = Depends(auth.require_admin)):
+    """Admin pre-save connection test. Blank token = test against the
+    currently-stored one (so 'just checking the URL' needs no re-paste)."""
+    body = await request.json()
+    url = str(body.get("url", "")).strip()
+    token = str(body.get("token", "")).strip() or config.get("VORTEX_SYNC_TOKEN")
+    ok, msg = await _run_db_probe(url, token)
+    return JSONResponse({"ok": ok, ("message" if ok else "error"): msg})
+
+
+# ---------------------------------------------------------------------------
+# V5.7: pre-auth bootstrap setup. Solves the chicken-and-egg on a fresh
+# device: the Settings tab needs an admin login, but the accounts live
+# in the remote DB whose URL/token aren't on the new box yet. So while
+# there are NO users in the active DB (i.e. the node is unconfigured —
+# remote unset or unreachable so we fell back to an empty local SQLite),
+# expose a login-free page to enter the remote credentials. It writes
+# config.json AND re-inits the DB live, so the change "takes effect on
+# the UI before you log in". The moment any account is visible (the
+# remote resolved, or an admin was created) /setup self-locks and only
+# the admin Settings tab can change config from then on.
+#
+# No new attack surface: a brand-new hub with zero users already lets
+# anyone hit /register and create the first admin — same bootstrap
+# window. Lock it down by completing setup promptly.
+# ---------------------------------------------------------------------------
+def _setup_open() -> bool:
+    """Setup is editable only on an unconfigured node (no accounts yet)."""
+    try:
+        return db.user_count() == 0
+    except Exception:
+        # DB unreachable enough to not even count users => definitely
+        # unconfigured; allow setup so it can be fixed.
+        return True
+
+
+@app.get("/setup", response_class=HTMLResponse)
+def setup_get(request: Request, saved: str = ""):
+    if auth.current_user_optional(request) is not None:
+        # Logged in already → the real Settings tab (admin-gated).
+        return RedirectResponse(url="/settings", status_code=303)
+    if not _setup_open():
+        # Accounts exist (remote resolved) → setup is locked.
+        return RedirectResponse(url="/login", status_code=303)
+    return HTMLResponse(templates.setup_page(
+        config.public_view(), _hub_status(request), saved=bool(saved),
+    ))
+
+
+@app.post("/setup")
+async def setup_post(request: Request):
+    if not _setup_open():
+        raise HTTPException(
+            status_code=403,
+            detail="Setup is locked — an account already exists. "
+                   "Sign in and use the Settings tab.",
+        )
+    form = await request.form()
+    values = {k: str(v) for k, v in form.items() if k.startswith("VORTEX_")
+              or k in ("APP_PORT", "CLOUDFLARE_TUNNEL_TOKEN")}
+    config.set_many(values)
+    # Apply immediately: re-resolve the DB backend from the new config so
+    # a correct remote URL/token connects right now — before any login.
+    _reinit_db()
+    # If the (now-connected) DB has accounts, go sign in; otherwise this
+    # is still a blank DB → create the first admin (replicates to remote).
+    dest = "/login?ready=1" if db.user_count() > 0 else "/register"
+    return RedirectResponse(url=dest, status_code=303)
+
+
+@app.post("/api/setup/test-db")
+async def setup_test_db(request: Request):
+    """Pre-auth connection test — only while setup is open."""
+    if not _setup_open():
+        raise HTTPException(status_code=403, detail="Setup is locked.")
+    body = await request.json()
+    url = str(body.get("url", "")).strip()
+    token = str(body.get("token", "")).strip() or config.get("VORTEX_SYNC_TOKEN")
+    ok, msg = await _run_db_probe(url, token)
+    return JSONResponse({"ok": ok, ("message" if ok else "error"): msg})
 
 
 # ---------------------------------------------------------------------------

@@ -226,6 +226,15 @@ a pre-save **Test connection** probe. **Tier B** keys (public-URL
 override, lock/session TTL, registration mode) apply live.
 `VORTEX_CONFIG_FILE` overrides the config-file path.
 
+**New device / no account yet (V5.7).** Since `~/vortex/config.json`
+is gitignored and not synced, a fresh box starts with an empty local
+DB and no way to reach the admin-only Settings tab. Visit **`/setup`**
+(linked from the sign-in and first-run pages): a login-free page —
+available *only* while the node has zero accounts — to enter the
+remote DB URL+token. It saves and **re-connects live** (no restart),
+so if your account lives in the remote DB you can immediately sign in.
+It self-locks the moment any account is visible.
+
 | Env var                 | Default                       | What                                   |
 |-------------------------|-------------------------------|----------------------------------------|
 | `VORTEX_HUB_DB`         | `~/vortex/hub.db`             | Local DB file path (hub)               |

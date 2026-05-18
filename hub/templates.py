@@ -870,7 +870,8 @@ def login_page(error: Optional[str] = None, next_url: str = "/") -> str:
     <button type="submit" class="btn btn-primary" style="margin-top:.75rem">Sign In</button>
   </form>
   <div class="footer-link">
-    Have an invite code? <a href="/register">Create account</a>
+    Have an invite code? <a href="/register">Create account</a><br>
+    New device, no account here? <a href="/setup">Set up remote database</a>
   </div>
 </div></div>"""
     return page("Sign in", body, chrome=False)
@@ -948,6 +949,10 @@ def first_run_page(error: Optional[str] = None) -> str:
     <label>Confirm <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
     <button type="submit" class="btn btn-primary" style="margin-top:.75rem">Create Admin</button>
   </form>
+  <div class="footer-link">
+    Accounts already exist in a remote database?
+    <a href="/setup">Connect to it →</a>
+  </div>
 </div></div>"""
     return page("First-run", body, chrome=False)
 
@@ -2190,7 +2195,10 @@ _TIER_A = ["VORTEX_SYNC_URL", "VORTEX_SYNC_TOKEN", "VORTEX_HUB_DB",
 _TIER_B = ["VORTEX_HUB_PUBLIC_URL", "VORTEX_LOCK_TTL",
            "VORTEX_SESSION_TTL", "VORTEX_REGISTRATION_MODE"]
 
-_SETTINGS_TEST_JS = """
+def _db_test_js(endpoint: str) -> str:
+    """Inline 'Test connection' script. `endpoint` differs by context:
+    /api/settings/test-db (admin) vs /api/setup/test-db (pre-auth)."""
+    return """
 <script>
 (function(){
   var btn=document.getElementById('testdb');
@@ -2205,7 +2213,7 @@ _SETTINGS_TEST_JS = """
     out.textContent='Testing connection…';
     btn.disabled=true;
     try{
-      var r=await fetch('/api/settings/test-db',{method:'POST',
+      var r=await fetch('__ENDPOINT__',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({url:url,token:token})});
       var j=await r.json();
@@ -2216,7 +2224,7 @@ _SETTINGS_TEST_JS = """
     btn.disabled=false;
   });
 })();
-</script>"""
+</script>""".replace("__ENDPOINT__", endpoint)
 
 
 def _settings_field(s: dict) -> str:
@@ -2319,7 +2327,7 @@ def settings_page(user: dict, settings: list, status: dict,
   </div>
 </div>
 </form>
-{_SETTINGS_TEST_JS}
+{_db_test_js("/api/settings/test-db")}
 <style>
 .kv .row {{ display:flex; justify-content:space-between; gap:1rem;
   padding:.4rem 0; border-bottom:1px solid var(--border); font-size:.85rem; }}
@@ -2329,6 +2337,75 @@ def settings_page(user: dict, settings: list, status: dict,
 .kv .row .v {{ color:var(--text); word-break:break-all; text-align:right; }}
 </style>"""
     return page("Settings", body, user=user, active="/settings")
+
+
+def setup_page(settings: list, status: dict, *, saved: bool = False) -> str:
+    """V5.7 pre-auth bootstrap. Same fields as the admin Settings tab,
+    but reachable WITHOUT logging in — only while the node has no
+    accounts (fresh device / remote not yet configured). Saving applies
+    live (DB re-init), so the remote credentials take effect before any
+    login. chrome=False: no nav (you're not authenticated)."""
+    by_key = {s["key"]: s for s in settings}
+
+    flash = ""
+    if saved:
+        flash = ('<div class="flash success">Saved &amp; reconnected. '
+                 'If your account lives in the remote database you can '
+                 'sign in now.</div>')
+
+    tier_a = "".join(_settings_field(by_key[k]) for k in _TIER_A
+                     if k in by_key)
+    tier_b = "".join(_settings_field(by_key[k]) for k in _TIER_B
+                     if k in by_key)
+
+    backend = escape(str(status.get("backend", "")))
+    cfg_path = escape(str(status.get("config_path", "")))
+
+    body = f"""
+<div class="center-wrap" style="align-items:flex-start;padding:2rem 1rem">
+<div style="width:100%;max-width:640px;margin:0 auto">
+  <div class="brand-large" style="text-align:center;margin-bottom:1.5rem">
+    <div class="logo" style="margin:0 auto 1rem"></div>
+    <h1 style="margin:0">Vortex<span class="accent">Hub</span></h1>
+    <p class="subtitle">First-run setup</p>
+  </div>
+  {flash}
+  <div class="flash info">
+    This device has no account yet. If your accounts live in a
+    <strong>remote database</strong>, enter its URL + token below — it
+    applies immediately, then you can sign in. Settings are stored in
+    <code>{cfg_path}</code>. Currently using: <strong>{backend}</strong>.
+  </div>
+
+<form method="post" action="/setup" id="tierA">
+<div class="card" style="margin-top:1.25rem">
+  <h3 style="margin:0 0 .25rem;color:var(--purple)">Connection &amp; database</h3>
+  {tier_a}
+  <div style="display:flex;gap:.6rem;align-items:center;margin-top:.5rem">
+    <button type="submit" class="btn btn-primary">Save &amp; connect</button>
+    <button type="button" class="btn" id="testdb">Test connection</button>
+  </div>
+  <div id="testdb-result" class="flash" style="display:none;margin-top:.75rem"></div>
+</div>
+</form>
+
+<form method="post" action="/setup">
+<div class="card" style="margin-top:1.25rem">
+  <h3 style="margin:0 0 .25rem;color:var(--purple)">Behaviour</h3>
+  {tier_b}
+  <div style="margin-top:.5rem">
+    <button type="submit" class="btn btn-primary">Save</button>
+  </div>
+</div>
+</form>
+
+  <div class="footer-link" style="text-align:center;margin-top:1.5rem">
+    Already configured? <a href="/login">Sign in</a>
+  </div>
+</div>
+</div>
+{_db_test_js("/api/setup/test-db")}"""
+    return page("Setup", body, chrome=False)
 
 
 # ---------------------------------------------------------------------------

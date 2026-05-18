@@ -3,6 +3,59 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.7] — 2026-05-18
+
+**Pre-auth bootstrap setup.** Fixes the chicken-and-egg reported on a
+fresh device: your accounts live in the remote (Turso/libSQL) DB, but
+its URL+token aren't on the new box (config.json is gitignored & not
+synced), so the hub falls back to an empty local SQLite → no account →
+can't log in → can't reach the admin-only Settings tab to enter the
+credentials. Now you can edit the config and have it take effect on
+the UI **before** logging in.
+
+### Added
+- **`GET/POST /setup` + `POST /api/setup/test-db` (no login).**
+  A login-free page with the same Tier A/B fields as the Settings tab
+  (reuses `config.public_view()` + `_settings_field`), available **only
+  while the active DB has zero accounts** (`_setup_open()` —
+  unconfigured node: remote unset or unreachable so we fell back to a
+  blank local SQLite). Save persists to `~/vortex/config.json` **and
+  re-inits the DB live** (`_reinit_db()`), so a correct remote
+  URL/token connects immediately — then it redirects to `/login`
+  (accounts now visible) or `/register` (still blank). The pre-auth
+  connection test reuses the shared libSQL probe.
+- **Self-locking.** The moment any account is visible (remote
+  resolved, or a first admin created) `/setup` 302s away and only the
+  admin Settings tab can change config. No new attack surface — a
+  zero-user hub already exposes first-admin creation via `/register`
+  (same bootstrap window).
+- **Entry points.** "Connect to it →" link on the first-run page and
+  "Set up remote database" on the sign-in page.
+
+### Changed
+- `app.py` DB bootstrap refactored into reusable helpers
+  (`_apply_db_env_from_config`, `_resolve_db_path`, `_reinit_db`,
+  `_hub_status`); `_DB_PATH` is now recomputed on re-init. The libSQL
+  test probe is factored into `_run_db_probe()` shared by the admin
+  and pre-auth test endpoints. `_SETTINGS_TEST_JS` → `_db_test_js(endpoint)`
+  (settings vs setup target the right URL).
+
+### Behaviour notes
+- Applying remote creds via `/setup` takes effect **without a restart**
+  (live `db.init()` re-selects the backend, re-runs schema + migrate).
+  Restart is still fine; this just removes the restart requirement for
+  the bootstrap case specifically.
+- A real `VORTEX_SYNC_URL`/`_TOKEN` env var still wins (config.get()
+  precedence unchanged); `/setup` writes config.json only.
+
+### Smoke-tested
+- `/setup` reachable with zero users; locked (302) once an account
+  exists; POST 403 when locked. Save → config.json written → live
+  re-init swaps backend; redirect target chosen by post-reinit
+  user_count. Shared probe parity (admin + setup). SQLite-fallback
+  import clean; settings test endpoint still admin-gated; version
+  5.6 → 5.7.
+
 ## [V5.6] — 2026-05-18
 
 **"Device in use" now means a write is in progress — not just a page

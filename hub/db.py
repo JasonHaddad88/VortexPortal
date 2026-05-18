@@ -222,22 +222,33 @@ class _LibsqlBackend(_Backend):
                 pass
 
 
-def init(db_path: Path) -> None:
-    """Select the backend and create the schema if missing.
+def init(db_path: Path, sync_url: Optional[str] = None,
+         sync_token: Optional[str] = None) -> None:
+    """Select the backend and create the schema if missing. Re-callable
+    (used by the V5.7 pre-auth /setup live re-init).
 
-    Backend: libSQL embedded replica if VORTEX_SYNC_URL is set AND the
+    Backend: libSQL embedded replica if a sync URL is given AND the
     libsql_experimental package imports AND the initial connect+sync
     succeeds; otherwise plain local SQLite. Falling back rather than
     refusing to start is deliberate -- a dead remote at boot shouldn't
     take the whole hub down when a perfectly good local file exists.
+
+    sync_url/sync_token are passed EXPLICITLY by the caller (resolved
+    through the config precedence chain). They default to the env vars
+    only when not supplied, so the caller never has to poison
+    os.environ to re-resolve a changed config.json.
     """
     global _db_path, _backend
     with _init_lock:
         _db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        sync_url = os.environ.get("VORTEX_SYNC_URL", "").strip()
-        sync_token = os.environ.get("VORTEX_SYNC_TOKEN", "").strip()
+        if sync_url is None:
+            sync_url = os.environ.get("VORTEX_SYNC_URL", "")
+        if sync_token is None:
+            sync_token = os.environ.get("VORTEX_SYNC_TOKEN", "")
+        sync_url = (sync_url or "").strip()
+        sync_token = (sync_token or "").strip()
 
         if sync_url:
             try:

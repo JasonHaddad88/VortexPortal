@@ -89,7 +89,25 @@ write-lock.
 Supersedes the V5.3 lock's semantics (the lease DB API + `/lock*`
 endpoints are unchanged — only when/why they're called).
 
-## V5.7 — find-my-device / fleet UX (candidate, deferred)
+## V5.7 — pre-auth bootstrap setup — _shipped V5.7_
+
+Bug from the field: on a new device the gitignored
+`~/vortex/config.json` isn't present, so the hub falls back to an empty
+local SQLite, there's no account, you can't log in, and the Settings
+tab (admin-gated) is unreachable to enter the remote DB creds.
+
+- [x] **Login-free `/setup`** 🟡 — _shipped_. Same Tier A/B fields as
+  the Settings tab, gated to zero-account nodes (`_setup_open()`).
+  Save → `config.set_many` + **live `_reinit_db()`** so the remote
+  connects before any login; redirects to `/login` or `/register`.
+- [x] **Self-locking + entry links** 🟢 — _shipped_. 302s away once an
+  account is visible; links from first-run + sign-in pages;
+  `/api/setup/test-db` reuses the shared libSQL probe.
+- [x] **DB bootstrap refactor** 🟢 — _shipped_.
+  `_apply_db_env_from_config` / `_resolve_db_path` / `_reinit_db` /
+  `_hub_status`; `_db_test_js(endpoint)`.
+
+## V5.8 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Recommended next; not yet
 built.
