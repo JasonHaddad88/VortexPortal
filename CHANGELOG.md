@@ -3,6 +3,75 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.8] — 2026-05-19
+
+**Theft Mode** (Phase 1, Termux:API). Owner anti-theft for paired
+devices: discreet photo, location, short audio clip, best-effort
+keep-awake — on-demand *and* an armed periodic loop. Captures are
+uploaded to a hub-side media store indexed per account+device and
+browsable in the UI.
+
+### Added
+- **Agent ops**: `location` (`termux-location`, streams JSON),
+  `record_audio` (`termux-microphone-record`, N s clip, 1–120),
+  `keepawake` (`termux-wake-lock`/`-unlock`, unary). Discreet photo
+  reuses the existing `camera_capture` op. All slow work runs in an
+  executor so WS pings keep flowing.
+- **DB**: `theft_state` (armed/interval/opts/last_run) +
+  `theft_media` (kind/path/mime/size/meta/trigger, owner-scoped) tables
+  + helpers (arm/disarm, `armed_devices`, add/list/get/delete,
+  `prune_theft_media` for retention). New tables via
+  `CREATE TABLE IF NOT EXISTS` — existing DBs upgrade in place.
+- **Hub media store**: files saved under `VORTEX_MEDIA_DIR`
+  (default `~/vortex/media/<device>/`), chmod 600, indexed in the DB,
+  retention-capped (`VORTEX_THEFT_RETENTION`, default 200 items/device,
+  oldest pruned + unlinked). Both keys are live Settings-tab tunables.
+- **Endpoints** (all session-auth, owner-scoped):
+  `GET /devices/{id}/theft` (control page),
+  `POST …/theft/arm` (requires an ownership **attestation** checkbox +
+  ≥1 capture type), `POST …/theft/disarm`,
+  `POST …/theft/capture` (on-demand; 503 if offline),
+  `GET …/theft/media` (JSON list/poll),
+  `GET …/theft/media/{mid}` (owner-scoped file stream, path-traversal
+  guarded), `POST …/theft/media/{mid}/delete`.
+- **Armed loop** (`_theft_loop`, 15 s tick): for each armed+online
+  device past its interval, debounce (`last_run`), re-assert
+  keep-awake, then capture the selected kinds; one failure never stops
+  the others or the loop. Hub-driven — robust to the device flapping
+  (it just resumes next tick).
+- **UI**: Theft Mode page — armed/disarmed status, arm form
+  (capture toggles, interval, audio length, camera id, mandatory
+  attestation), on-demand buttons, and a gallery (photo thumbnails,
+  inline audio players, location with OpenStreetMap/Google Maps
+  links), per-item delete, live auto-refresh. "🛡 Theft Mode" link on
+  the device-manage page. Versions 5.7→5.8 (agent 5.5→5.8).
+
+### Behaviour notes / limits (deliberately honest in the UI)
+- **Not truly invisible**: Android 12+ shows a camera/mic privacy
+  indicator; stock Android can't capture covertly without system/MDM
+  privileges.
+- **"Keep-awake" is weak**: a CPU wake-lock only — it cannot block the
+  lock screen or a hardware power-off without device-owner/MDM.
+- **Captures only while the device is online** to the hub (same
+  limitation as every other op). Media lives on the hub that captured
+  it (the DB row is account-global; the file is local to that hub).
+- **Covert video** and a stronger anti-lock are **deferred to a
+  Driver-APK phase** (Termux:API has no video capture; the unsigned
+  APK is Knox-flagged — known issue).
+- **Responsible use**: only ever targets the caller's own paired
+  devices; media is stored under that account; the arm form requires a
+  one-time "I own / am authorised" attestation. Covert audio/photo
+  recording is legally regulated in many jurisdictions — operator's
+  responsibility.
+
+### Smoke-tested
+- arm/disarm/armed_devices/last_run; theft_media add/list/get/delete +
+  retention prune + owner-scope; `_capture_to_store` (location→JSON
+  meta + file, photo→bytes) writes the media store; all 7 routes
+  registered; templates (device link, armed/disarmed page, gallery,
+  V5.8 footer); new tables added to a pre-existing DB, idempotent;
+  agent ops registered; SQLite-fallback import clean.
+
 ## [V5.7] — 2026-05-18
 
 **Pre-auth bootstrap setup.** Fixes the chicken-and-egg reported on a

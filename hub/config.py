@@ -105,6 +105,8 @@ _SPEC = {
     "VORTEX_LOCK_TTL":          {"live": True,     "default": "30"},
     "VORTEX_SESSION_TTL":       {"live": True,     "default": str(30 * 24 * 3600)},
     "VORTEX_REGISTRATION_MODE": {"live": True,     "default": "invite"},  # open|invite|closed
+    "VORTEX_MEDIA_DIR":         {"live": True,     "default": ""},        # blank => ~/vortex/media
+    "VORTEX_THEFT_RETENTION":   {"live": True,     "default": "200"},     # max media items kept per device
 }
 
 
@@ -232,6 +234,14 @@ class Config:
 
     def public_url_override(self) -> str:
         return self.get("VORTEX_HUB_PUBLIC_URL", "").rstrip("/")
+
+    def media_dir(self) -> str:
+        import os as _os
+        return (self.get("VORTEX_MEDIA_DIR", "").strip()
+                or _os.path.expanduser("~/vortex/media"))
+
+    def theft_retention(self) -> int:
+        return max(10, self.get_int("VORTEX_THEFT_RETENTION", 200))
 
 
 config = Config()

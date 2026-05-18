@@ -595,6 +595,129 @@ async def op_camera_capture(session: "Session", rid: str, args: dict) -> None:
         except OSError: pass
 
 
+# --------------------------------------------------------------------------
+# Theft Mode (V5.8) -- Termux:API. Owner anti-theft for paired devices:
+# discreet photo (reuses camera_capture), location, short audio clip, and
+# a best-effort keep-awake. All blocking work runs in an executor (STREAM
+# pattern) so WS pings keep flowing.
+# --------------------------------------------------------------------------
+async def op_location(session: "Session", rid: str, args: dict) -> None:
+    """One GPS/network fix via termux-location. Streams the JSON back
+    (content_type application/json) so the hub can parse + map it."""
+    import shutil
+    if shutil.which("termux-location") is None:
+        raise RuntimeError(
+            "termux-location not available. Install with `pkg install "
+            "termux-api` + the Termux:API app, and grant Location."
+        )
+    import subprocess
+    provider = str(args.get("provider", "")).strip()  # gps|network|passive
+    cmd = ["termux-location", "-r", "once"]
+    if provider in ("gps", "network", "passive"):
+        cmd += ["-p", provider]
+    loop = asyncio.get_event_loop()
+
+    def _locate():
+        # GPS cold-fix can be slow; cap generously. termux-location prints
+        # JSON to stdout (or an {"error": ...} object / nonzero on failure).
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+    result = await loop.run_in_executor(None, _locate)
+    out = (result.stdout or "").strip()
+    if result.returncode != 0 or not out:
+        err = (result.stderr or out or "no fix").strip()[:200]
+        raise RuntimeError(
+            f"termux-location failed ({result.returncode}): {err}. "
+            f"Is Location enabled and granted to Termux:API?"
+        )
+    payload = out.encode("utf-8")
+    await session.send_text({
+        "type": "stream_start", "id": rid,
+        "size": len(payload), "content_type": "application/json",
+    })
+    await session.send_chunk(rid, payload)
+    await session.send_text({"type": "stream_end", "id": rid})
+
+
+async def op_record_audio(session: "Session", rid: str, args: dict) -> None:
+    """Record a short clip from the mic via termux-microphone-record and
+    stream the file back. `duration` seconds is clamped to 1..120."""
+    import shutil
+    if shutil.which("termux-microphone-record") is None:
+        raise RuntimeError(
+            "termux-microphone-record not available. Install with "
+            "`pkg install termux-api` + the Termux:API app, grant Microphone."
+        )
+    import subprocess
+    import tempfile
+    try:
+        dur = int(args.get("duration", 15))
+    except (TypeError, ValueError):
+        dur = 15
+    dur = max(1, min(120, dur))
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".m4a", prefix="vortex-aud-")
+    os.close(tmp_fd)
+    loop = asyncio.get_event_loop()
+
+    def _record():
+        import time as _t
+        # -l auto-stops after `dur` s; the start call returns immediately.
+        subprocess.run(["termux-microphone-record", "-f", tmp_path,
+                        "-l", str(dur)],
+                       capture_output=True, text=True, timeout=15)
+        _t.sleep(dur + 1)
+        # Idempotent stop in case -l didn't fire (older Termux:API).
+        subprocess.run(["termux-microphone-record", "-q"],
+                       capture_output=True, text=True, timeout=10)
+
+    try:
+        await loop.run_in_executor(None, _record)
+        try:
+            size = os.path.getsize(tmp_path)
+        except OSError:
+            size = 0
+        if size == 0:
+            raise RuntimeError(
+                "Recording produced an empty file. Termux:API app may lack "
+                "the Microphone permission, or the mic is held by another app."
+            )
+        await session.send_text({
+            "type": "stream_start", "id": rid,
+            "size": size, "content_type": "audio/mp4",
+        })
+        with open(tmp_path, "rb") as f:
+            while True:
+                chunk = await loop.run_in_executor(None, f.read, CHUNK_SIZE)
+                if not chunk:
+                    break
+                await session.send_chunk(rid, chunk)
+        await session.send_text({"type": "stream_end", "id": rid})
+    finally:
+        try: os.unlink(tmp_path)
+        except OSError: pass
+
+
+def op_keepawake(args: dict) -> dict:
+    """Best-effort 'prevent sleep': termux-wake-lock holds a partial wake
+    lock (CPU stays on, reconnects survive doze). It does NOT block the
+    lock screen or a hardware power-off -- stock Android can't without
+    device-owner/MDM. Fast subprocess, safe as a unary op."""
+    import shutil, subprocess
+    on = bool(args.get("on", True))
+    cmd = "termux-wake-lock" if on else "termux-wake-unlock"
+    if shutil.which(cmd) is None:
+        raise RuntimeError(f"{cmd} not available (Termux only).")
+    try:
+        r = subprocess.run([cmd], capture_output=True, text=True, timeout=8)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+        raise RuntimeError(f"{cmd} failed: {e}")
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"{cmd} exit {r.returncode}: {(r.stderr or r.stdout).strip()[:160]}"
+        )
+    return {"keepawake": on, "best_effort": True}
+
+
 class Session:
     """Wraps the websocket with a send-lock + inbound-stream routing.
 
@@ -869,6 +992,7 @@ UNARY_OPS = {
     "thumbnail": op_thumbnail,
     "camera_info": op_camera_info,
     "input": op_input,                         # V5.0 M3: tap/swipe/back/home/recents
+    "keepawake": op_keepawake,                 # V5.8: best-effort wake-lock
 }
 
 # Ops that stream chunks from agent to hub (sender-side).
@@ -877,6 +1001,8 @@ STREAM_OPS = {
     "camera_capture": op_camera_capture,
     "camera_stream": op_camera_stream,        # V5.0 M1: real-time MJPEG via Driver APK
     "screen_stream": op_screen_stream,        # V5.0 M2: real-time screen mirror via Driver APK
+    "location": op_location,                  # V5.8: termux-location -> JSON
+    "record_audio": op_record_audio,          # V5.8: short mic clip
 }
 
 # Ops that receive a stream from the hub and return a unary result. They

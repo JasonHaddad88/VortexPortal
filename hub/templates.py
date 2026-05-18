@@ -5,6 +5,7 @@ light-blue (cyan) highlights, glassmorphism topbar, neon glows on hover.
 Lifted from app_v1.py and extended with login/register/pair/admin pages.
 """
 
+import json
 from html import escape
 from typing import Optional
 
@@ -1504,6 +1505,7 @@ def device_manage_page(user: dict, device: dict, online: bool) -> str:
     <a class="btn btn-primary" href="/devices/{escape(device['id'])}/files/">Browse Files</a>
     <a class="btn" href="/devices/{escape(device['id'])}/camera">Camera</a>
     <a class="btn" href="/devices/{escape(device['id'])}/screen">Screen</a>
+    <a class="btn btn-danger" href="/devices/{escape(device['id'])}/theft">🛡 Theft Mode</a>
     <form method="post" action="/devices/{escape(device['id'])}/delete" style="display:inline;margin:0">
       <button class="btn btn-danger" type="submit"
               onclick="return confirm('Unpair {escape(device['name'])}? You will need to re-pair to control it again.')">
@@ -1513,6 +1515,258 @@ def device_manage_page(user: dict, device: dict, online: bool) -> str:
   </div>
 </div>"""
     return page(device["name"], body, user=user, active="/")
+
+
+def _theft_media_card(did: str, m: dict) -> str:
+    mid = m["id"]
+    kind = m["kind"]
+    url = f"/devices/{escape(did)}/theft/media/{mid}"
+    when = escape(_ago(m["created_at"]) + " ago")
+    trig = escape(str(m.get("trigger") or ""))
+    meta = {}
+    if m.get("meta"):
+        try:
+            meta = json.loads(m["meta"])
+        except (ValueError, TypeError):
+            meta = {}
+
+    if kind == "photo":
+        inner = (f'<a href="{url}" target="_blank" rel="noopener">'
+                 f'<img loading="lazy" src="{url}" alt="covert photo"></a>')
+    elif kind == "audio":
+        inner = f'<audio controls preload="none" src="{url}"></audio>'
+    else:  # location
+        lat, lon = meta.get("lat"), meta.get("lon")
+        try:
+            latf, lonf = float(lat), float(lon)
+            acc = meta.get("accuracy")
+            acc_s = f" ±{int(float(acc))}m" if acc not in (None, "") else ""
+            osm = (f"https://www.openstreetmap.org/?mlat={latf}&mlon={lonf}"
+                   f"#map=17/{latf}/{lonf}")
+            gm = f"https://www.google.com/maps?q={latf},{lonf}"
+            inner = (f'<div class="loc">📍 {latf:.5f}, {lonf:.5f}{escape(acc_s)}'
+                     f'<br><a href="{osm}" target="_blank" rel="noopener">'
+                     f'OpenStreetMap</a> · '
+                     f'<a href="{gm}" target="_blank" rel="noopener">'
+                     f'Google&nbsp;Maps</a></div>')
+        except (TypeError, ValueError):
+            inner = '<div class="loc">no fix</div>'
+
+    return f"""<div class="tm-card">
+  <div class="tm-body tm-{escape(kind)}">{inner}</div>
+  <div class="tm-meta">
+    <span class="kind">{escape(kind)}</span>
+    <span class="status">{trig}</span>
+    <span class="when">{when}</span>
+    <form method="post" action="/devices/{escape(did)}/theft/media/{mid}/delete"
+          style="margin:0 0 0 auto">
+      <button class="icon-btn danger" type="submit" title="Delete"
+              onclick="return confirm('Delete this {escape(kind)}?')">✕</button>
+    </form>
+  </div>
+</div>"""
+
+
+def theft_page(user: dict, device: dict, state: dict,
+               media: list, online: bool) -> str:
+    did = device["id"]
+    did_js = _json_dumps_for_html(did)
+    armed = bool(state.get("armed"))
+    try:
+        opts = json.loads(state.get("opts") or "{}")
+    except (ValueError, TypeError):
+        opts = {}
+    interval = int(state.get("interval_s") or 300)
+    aud_secs = int(opts.get("audio_seconds") or 15)
+    cam_id = escape(str(opts.get("camera_id") or "0"))
+
+    badge_cls = "online" if online else "offline"
+    badge_lbl = "Online" if online else "Offline"
+
+    def ck(name: str) -> str:
+        return " checked" if opts.get(name) else ""
+
+    def sel(v: int) -> str:
+        return " selected" if interval == v else ""
+
+    if armed:
+        picked = ", ".join(k for k in ("location", "photo", "audio")
+                           if opts.get(k)) or "nothing"
+        ka = " + keep-awake" if opts.get("keepawake") else ""
+        status_html = f"""<div class="flash error" style="margin:0">
+      <strong>🛡 ARMED</strong> — capturing {escape(picked)}{escape(ka)}
+      every {interval//60 or 1} min{'s' if interval//60 != 1 else ''}
+      while online.
+    </div>
+    <form method="post" action="/devices/{escape(did)}/theft/disarm"
+          style="margin-top:1rem">
+      <button class="btn btn-primary" type="submit">Disarm</button>
+    </form>"""
+    else:
+        status_html = f"""<div class="flash info" style="margin:0">
+      Theft Mode is <strong>off</strong>. Arm it to auto-capture on a
+      schedule, or use the on-demand actions below.
+    </div>
+    <form method="post" action="/devices/{escape(did)}/theft/arm"
+          style="margin-top:1rem">
+      <label style="flex-direction:row;align-items:center;gap:.5rem;text-transform:none">
+        <input type="checkbox" name="location" value="1"{ck('location')}
+               style="width:auto"> Location
+      </label>
+      <label style="flex-direction:row;align-items:center;gap:.5rem;text-transform:none">
+        <input type="checkbox" name="photo" value="1"{ck('photo')}
+               style="width:auto"> Discreet photo
+      </label>
+      <label style="flex-direction:row;align-items:center;gap:.5rem;text-transform:none">
+        <input type="checkbox" name="audio" value="1"{ck('audio')}
+               style="width:auto"> Audio clip
+      </label>
+      <label style="flex-direction:row;align-items:center;gap:.5rem;text-transform:none">
+        <input type="checkbox" name="keepawake" value="1"{ck('keepawake')}
+               style="width:auto"> Best-effort keep-awake
+      </label>
+      <label>Interval
+        <select name="interval">
+          <option value="60"{sel(60)}>every 1 min</option>
+          <option value="300"{sel(300)}>every 5 min</option>
+          <option value="900"{sel(900)}>every 15 min</option>
+          <option value="1800"{sel(1800)}>every 30 min</option>
+          <option value="3600"{sel(3600)}>every 1 hour</option>
+        </select>
+      </label>
+      <label>Audio length (seconds)
+        <input type="number" name="audio_seconds" value="{aud_secs}"
+               min="1" max="120">
+      </label>
+      <label>Camera id (0 = back, 1 = front)
+        <input name="camera_id" value="{cam_id}" maxlength="2">
+      </label>
+      <label style="flex-direction:row;align-items:flex-start;gap:.5rem;text-transform:none;color:var(--text)">
+        <input type="checkbox" name="attest" value="1" required
+               style="width:auto;margin-top:.2rem">
+        I confirm I own this device or am legally authorised to monitor
+        it, and accept that covert recording is regulated in many places.
+      </label>
+      <button class="btn btn-primary" type="submit"
+              style="align-self:flex-start">Arm Theft Mode</button>
+    </form>"""
+
+    cards = "".join(_theft_media_card(did, m) for m in media)
+    gallery = (f'<div class="tm-grid">{cards}</div>' if cards else
+               '<div class="empty"><p>No captures yet.</p></div>')
+    newest = media[0]["id"] if media else 0
+
+    body = f"""
+<div class="section-head" style="align-items:center">
+  <h2>// {escape(device['name'])} · Theft Mode</h2>
+  <span class="badge {badge_cls}">{badge_lbl}</span>
+  <a class="btn btn-small" href="/devices/{escape(did)}" style="margin-left:auto">← Manage</a>
+</div>
+
+<div class="card" style="max-width:620px">
+  {status_html}
+</div>
+
+<div class="card" style="max-width:620px;margin-top:1.25rem">
+  <h3 style="margin:0 0 .75rem;color:var(--cyan)">On-demand</h3>
+  <div class="actions" style="flex-wrap:wrap">
+    <button class="btn" data-cap="location">📍 Locate now</button>
+    <button class="btn" data-cap="photo">📷 Photo now</button>
+    <button class="btn" data-cap="audio">🎙 Record
+      <input id="cap-secs" type="number" value="{aud_secs}" min="1" max="120"
+             onclick="event.stopPropagation()"
+             style="width:3.4rem;padding:.2rem .3rem;margin-left:.3rem"> s
+    </button>
+  </div>
+  <div id="cap-status" class="flash info" style="display:none;margin:.75rem 0 0"></div>
+  <p style="color:var(--muted);font-size:.72rem;margin:.75rem 0 0">
+    Needs <code>termux-api</code> + the Termux:API app, with Camera /
+    Microphone / Location granted. Android 12+ shows a privacy dot
+    while the camera/mic is active — truly invisible capture isn't
+    possible on stock Android. “Keep-awake” is a CPU wake-lock only; it
+    can’t block the lock screen or a hardware power-off.
+  </p>
+</div>
+
+<div class="section-head" style="margin-top:1.5rem">
+  <h2>// Captures</h2>
+  <span style="color:var(--muted);font-size:.75rem">saved to your account</span>
+</div>
+{gallery}
+
+<style>
+.tm-grid {{ display:grid; gap:1rem;
+  grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); }}
+.tm-card {{ background:var(--surface); border:1px solid var(--border);
+  border-radius:10px; overflow:hidden; }}
+.tm-body {{ display:flex; align-items:center; justify-content:center;
+  min-height:140px; background:var(--surface-2); }}
+.tm-body img {{ width:100%; height:auto; display:block; }}
+.tm-body audio {{ width:100%; padding:.6rem; }}
+.tm-body .loc {{ padding:1rem; font-size:.82rem; text-align:center;
+  font-family:ui-monospace,Menlo,Consolas,monospace; }}
+.tm-meta {{ display:flex; align-items:center; gap:.5rem;
+  padding:.5rem .7rem; font-size:.68rem; text-transform:uppercase;
+  letter-spacing:.06em; color:var(--muted); }}
+.tm-meta .kind {{ color:var(--cyan); }}
+.tm-meta .status {{ color:var(--purple); }}
+.icon-btn.danger {{ background:none; border:none; color:var(--danger);
+  cursor:pointer; font-size:.9rem; }}
+</style>
+<script>
+(function() {{
+  const DID = {did_js};
+  let newest = {newest};
+  const statusEl = document.getElementById('cap-status');
+
+  function setStatus(msg, cls) {{
+    statusEl.style.display = 'block';
+    statusEl.className = 'flash ' + (cls || 'info');
+    statusEl.textContent = msg;
+  }}
+
+  async function capture(kind) {{
+    const body = new URLSearchParams();
+    body.set('kind', kind);
+    if (kind === 'audio') {{
+      const s = parseInt(document.getElementById('cap-secs').value || '15', 10);
+      body.set('duration', String(s));
+    }}
+    setStatus('Capturing ' + kind + '… (device must be online)', 'info');
+    try {{
+      const r = await fetch(`/devices/${{encodeURIComponent(DID)}}/theft/capture`, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+        body: body.toString(),
+      }});
+      if (r.ok) {{
+        setStatus(kind + ' captured ✓ — refreshing…', 'success');
+        setTimeout(() => location.reload(), 900);
+      }} else {{
+        let d = 'HTTP ' + r.status;
+        try {{ d = (await r.json()).detail || d; }} catch (_) {{}}
+        setStatus(kind + ' failed: ' + d, 'error');
+      }}
+    }} catch (e) {{ setStatus('error: ' + e.message, 'error'); }}
+  }}
+
+  document.querySelectorAll('[data-cap]').forEach(b =>
+    b.addEventListener('click', () => capture(b.dataset.cap)));
+
+  // Live refresh: reload when a new capture lands (armed loop or another tab).
+  setInterval(async () => {{
+    try {{
+      const r = await fetch(`/devices/${{encodeURIComponent(DID)}}/theft/media`,
+                            {{cache: 'no-store'}});
+      if (!r.ok) return;
+      const j = await r.json();
+      const top = (j.media && j.media[0]) ? j.media[0].id : 0;
+      if (top !== newest) {{ newest = top; location.reload(); }}
+    }} catch (e) {{}}
+  }}, 8000);
+}})();
+</script>"""
+    return page(f"Theft — {device['name']}", body, user=user, active="/")
 
 
 def device_camera_page(user: dict, device: dict) -> str:

@@ -99,6 +99,7 @@ app = FastAPI(title="Vortex Hub", version=__VORTEX_VERSION__)
 async def _startup():
     asyncio.create_task(_purge_loop())
     asyncio.create_task(_db_sync_loop())
+    asyncio.create_task(_theft_loop())
 
 
 async def _purge_loop():
@@ -1273,6 +1274,319 @@ async def setup_test_db(request: Request):
     token = str(body.get("token", "")).strip() or config.get("VORTEX_SYNC_TOKEN")
     ok, msg = await _run_db_probe(url, token)
     return JSONResponse({"ok": ok, ("message" if ok else "error"): msg})
+
+
+# ---------------------------------------------------------------------------
+# V5.8: Theft Mode (owner anti-theft for paired devices). Termux:API
+# Phase 1 — discreet photo (reuses camera_capture), location, short
+# audio clip, best-effort keep-awake. Captures are uploaded to a
+# hub-side media store indexed per account+device, browsable in the UI.
+# On-demand triggers + an armed periodic loop. Covert *video* and a
+# stronger anti-lock are deferred to a Driver-APK phase.
+#
+# Responsible use: only ever targets devices paired to the caller's own
+# account; media is stored under that account. The arm form requires a
+# one-time ownership attestation. Covert audio/photo recording is
+# legally regulated in many places — that's on the operator.
+# ---------------------------------------------------------------------------
+_THEFT_KINDS = {
+    # kind -> (agent_op, mime, ext)
+    "photo":    ("camera_capture", "image/jpeg",       "jpg"),
+    "audio":    ("record_audio",   "audio/mp4",        "m4a"),
+    "location": ("location",       "application/json", "json"),
+}
+
+
+def _media_root() -> Path:
+    return Path(config.media_dir())
+
+
+def _theft_device_or_404(device_id: str, user: dict) -> dict:
+    d = db.get_device_for_user(device_id, user["id"])
+    if d is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return d
+
+
+def _norm_location(loc: dict) -> dict:
+    """Pick the fields termux-location returns into a stable shape."""
+    if not isinstance(loc, dict):
+        return {"raw": str(loc)[:300]}
+    g = loc.get
+    return {
+        "lat": g("latitude"), "lon": g("longitude"),
+        "accuracy": g("accuracy"), "altitude": g("altitude"),
+        "bearing": g("bearing"), "speed": g("speed"),
+        "provider": g("provider"),
+    }
+
+
+async def _capture_to_store(device_id: str, owner_id: int, kind: str,
+                            trigger: str, *, conn,
+                            camera_id: str = "0",
+                            duration: int = 15) -> int:
+    """Run a capture op on the agent, persist the result to the media
+    store, index it, prune to retention. Returns the new media id.
+    Raises ws_router.AgentError / TimeoutError / HTTPException upward."""
+    op, mime, ext = _THEFT_KINDS[kind]
+    if kind == "audio":
+        args = {"duration": int(duration)}
+        start_timeout = int(duration) + 30
+    elif kind == "photo":
+        args = {"camera_id": str(camera_id)}
+        start_timeout = 30
+    else:  # location
+        args = {}
+        start_timeout = 75
+
+    stream = conn.stream(op, args, start_timeout=start_timeout)
+    first = await stream.__anext__()
+    if first.get("type") != "stream_start":
+        raise ws_router.AgentError("Unexpected agent response")
+    buf = bytearray()
+    async for msg in stream:
+        t = msg.get("type")
+        if t == "stream_chunk":
+            if "_binary" in msg:
+                buf += msg["_binary"]
+            elif msg.get("data"):
+                buf += base64.b64decode(msg["data"])
+        elif t == "stream_end":
+            break
+
+    meta = None
+    if kind == "location":
+        try:
+            loc = json.loads(bytes(buf).decode("utf-8", "replace"))
+        except ValueError:
+            loc = {"raw": bytes(buf).decode("utf-8", "replace")[:300]}
+        meta = json.dumps(_norm_location(loc))
+
+    ts = int(time.time())
+    fname = f"{kind}-{ts}-{uuid.uuid4().hex[:8]}.{ext}"
+    rel = f"{device_id}/{fname}"
+    dest = _media_root() / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(bytes(buf))
+    try:
+        import stat as _stat
+        os.chmod(dest, _stat.S_IRUSR | _stat.S_IWUSR)
+    except OSError:
+        pass
+
+    mid = db.add_theft_media(
+        device_id, owner_id, kind, path=rel, mime=mime,
+        size=len(buf), meta=meta, trigger=trigger,
+    )
+    # Retention: drop oldest beyond the cap, unlink their files.
+    for stale in db.prune_theft_media(device_id, config.theft_retention()):
+        try:
+            p = (_media_root() / stale).resolve()
+            if str(p).startswith(str(_media_root().resolve())):
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return mid
+
+
+async def _theft_keepawake(device_id: str, on: bool) -> None:
+    """Best-effort wake-lock toggle; never raises (device may be offline
+    or pre-Termux:API)."""
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        return
+    try:
+        await conn.request("keepawake", {"on": on}, timeout=10)
+    except Exception:
+        pass
+
+
+@app.get("/devices/{device_id}/theft", response_class=HTMLResponse)
+def theft_page(device_id: str, request: Request,
+               user: dict = Depends(auth.require_user)):
+    d = _theft_device_or_404(device_id, user)
+    state = db.get_theft_state(device_id) or {}
+    media = db.list_theft_media(device_id, user["id"], limit=200)
+    online = device_id in ws_router.registry.online_ids()
+    return HTMLResponse(templates.theft_page(user, d, state, media, online))
+
+
+@app.post("/devices/{device_id}/theft/arm")
+async def theft_arm(device_id: str, request: Request,
+                    user: dict = Depends(auth.require_user),
+                    interval: int = Form(300),
+                    photo: str = Form(""),
+                    audio: str = Form(""),
+                    location: str = Form(""),
+                    keepawake: str = Form(""),
+                    audio_seconds: int = Form(15),
+                    camera_id: str = Form("0"),
+                    attest: str = Form("")):
+    _theft_device_or_404(device_id, user)
+    if not attest:
+        raise HTTPException(
+            status_code=400,
+            detail="You must confirm you own / are authorised to monitor "
+                   "this device before arming Theft Mode.",
+        )
+    opts = {
+        "photo": bool(photo), "audio": bool(audio),
+        "location": bool(location), "keepawake": bool(keepawake),
+        "audio_seconds": max(1, min(120, int(audio_seconds))),
+        "camera_id": str(camera_id),
+    }
+    if not (opts["photo"] or opts["audio"] or opts["location"]):
+        raise HTTPException(status_code=400,
+                            detail="Pick at least one capture type.")
+    db.set_theft_armed(device_id, True, by=user["id"],
+                       interval_s=max(30, int(interval)),
+                       opts=json.dumps(opts))
+    if opts["keepawake"]:
+        await _theft_keepawake(device_id, True)
+    return RedirectResponse(url=f"/devices/{device_id}/theft", status_code=303)
+
+
+@app.post("/devices/{device_id}/theft/disarm")
+async def theft_disarm(device_id: str, request: Request,
+                       user: dict = Depends(auth.require_user)):
+    _theft_device_or_404(device_id, user)
+    db.set_theft_armed(device_id, False, by=None, interval_s=300, opts="{}")
+    await _theft_keepawake(device_id, False)
+    return RedirectResponse(url=f"/devices/{device_id}/theft", status_code=303)
+
+
+@app.post("/devices/{device_id}/theft/capture")
+async def theft_capture(device_id: str, request: Request,
+                        user: dict = Depends(auth.require_user),
+                        kind: str = Form(...),
+                        duration: int = Form(15),
+                        camera_id: str = Form("0")):
+    _theft_device_or_404(device_id, user)
+    if kind not in _THEFT_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown capture kind")
+    conn = ws_router.registry.get(device_id)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Device is offline")
+    try:
+        mid = await _capture_to_store(
+            device_id, user["id"], kind, "manual", conn=conn,
+            camera_id=camera_id, duration=duration,
+        )
+    except ws_router.AgentError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except (asyncio.TimeoutError, StopAsyncIteration):
+        raise HTTPException(status_code=504,
+                            detail="Device did not respond in time")
+    return JSONResponse({"ok": True, "id": mid, "kind": kind})
+
+
+@app.get("/devices/{device_id}/theft/media")
+def theft_media_list(device_id: str, request: Request,
+                     user: dict = Depends(auth.require_user)):
+    _theft_device_or_404(device_id, user)
+    items = db.list_theft_media(device_id, user["id"], limit=200)
+    out = []
+    for m in items:
+        meta = {}
+        if m.get("meta"):
+            try:
+                meta = json.loads(m["meta"])
+            except ValueError:
+                meta = {}
+        out.append({
+            "id": m["id"], "kind": m["kind"], "created_at": m["created_at"],
+            "mime": m.get("mime"), "size": m.get("size"),
+            "trigger": m.get("trigger"), "meta": meta,
+        })
+    armed = bool((db.get_theft_state(device_id) or {}).get("armed"))
+    return JSONResponse({
+        "armed": armed,
+        "online": device_id in ws_router.registry.online_ids(),
+        "media": out,
+    })
+
+
+@app.get("/devices/{device_id}/theft/media/{media_id}")
+def theft_media_get(device_id: str, media_id: int, request: Request,
+                    user: dict = Depends(auth.require_user)):
+    _theft_device_or_404(device_id, user)
+    m = db.get_theft_media(media_id, user["id"])
+    if m is None or m["device_id"] != device_id or not m.get("path"):
+        raise HTTPException(status_code=404, detail="Not found")
+    root = _media_root().resolve()
+    fp = (_media_root() / m["path"]).resolve()
+    if not str(fp).startswith(str(root)) or not fp.is_file():
+        raise HTTPException(status_code=404, detail="File missing")
+
+    def _gen():
+        with open(fp, "rb") as f:
+            while True:
+                chunk = f.read(256 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        _gen(), media_type=m.get("mime") or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=31536000",
+                 "Content-Length": str(m.get("size") or 0)},
+    )
+
+
+@app.post("/devices/{device_id}/theft/media/{media_id}/delete")
+def theft_media_delete(device_id: str, media_id: int, request: Request,
+                       user: dict = Depends(auth.require_user)):
+    _theft_device_or_404(device_id, user)
+    row = db.delete_theft_media(media_id, user["id"])
+    if row and row.get("path"):
+        try:
+            p = (_media_root() / row["path"]).resolve()
+            if str(p).startswith(str(_media_root().resolve())):
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return RedirectResponse(url=f"/devices/{device_id}/theft", status_code=303)
+
+
+async def _theft_loop():
+    """Armed-device periodic capture. Hub-driven: simple, robust to the
+    device flapping (it just reconnects and we resume next tick). Coarse
+    15 s tick; per-device interval enforced via last_run."""
+    while True:
+        try:
+            now = int(time.time())
+            for st in db.armed_devices():
+                did = st["device_id"]
+                interval = max(30, int(st.get("interval_s") or 300))
+                last = int(st.get("last_run") or 0)
+                if now - last < interval:
+                    continue
+                conn = ws_router.registry.get(did)
+                if conn is None:
+                    continue  # offline; retry next tick (no last_run bump)
+                try:
+                    opts = json.loads(st.get("opts") or "{}")
+                except ValueError:
+                    opts = {}
+                # Debounce immediately so a slow cycle can't double-fire.
+                db.update_theft_last_run(did, now)
+                if opts.get("keepawake"):
+                    await _theft_keepawake(did, True)
+                for kind in ("location", "photo", "audio"):
+                    if not opts.get(kind):
+                        continue
+                    try:
+                        await _capture_to_store(
+                            did, st["owner_id"], kind, "auto", conn=conn,
+                            camera_id=str(opts.get("camera_id", "0")),
+                            duration=int(opts.get("audio_seconds", 15)),
+                        )
+                    except Exception:
+                        # One bad capture must not stop the others / loop.
+                        pass
+        except Exception:
+            pass
+        await asyncio.sleep(15)
 
 
 # ---------------------------------------------------------------------------

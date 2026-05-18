@@ -1,3 +1,3 @@
 """Vortex Agent — runs on each managed device, connects out to the hub."""
 
-__VORTEX_AGENT_VERSION__ = "5.5"
+__VORTEX_AGENT_VERSION__ = "5.8"

@@ -107,10 +107,30 @@ tab (admin-gated) is unreachable to enter the remote DB creds.
   `_apply_db_env_from_config` / `_resolve_db_path` / `_reinit_db` /
   `_hub_status`; `_db_test_js(endpoint)`.
 
-## V5.8 — find-my-device / fleet UX (candidate, deferred)
+## V5.8 — Theft Mode (Phase 1, Termux:API) — _shipped V5.8_
 
-User-requested. Ordered by value-per-effort. Recommended next; not yet
-built.
+User-requested owner anti-theft for paired devices.
+
+- [x] **Discreet photo / location / audio + keep-awake** 🟡 —
+  _shipped_. Agent ops `location`, `record_audio`, `keepawake`; photo
+  reuses `camera_capture`. Honest UI about OS privacy indicators and
+  the weak keep-awake.
+- [x] **Hub media store + account index** 🟡 — _shipped_.
+  `theft_media`/`theft_state` tables, `VORTEX_MEDIA_DIR` +
+  `VORTEX_THEFT_RETENTION`, owner-scoped download, retention prune.
+- [x] **On-demand + armed periodic loop** 🟡 — _shipped_.
+  `_theft_loop`, attestation-gated arm form, gallery UI with map links.
+
+Deferred to a **Theft Mode Phase 2 (Driver APK)**: covert *video*,
+stronger anti-lock (foreground service / device-admin), capture-while-
+offline buffering. Blocked on the Knox-flagged unsigned APK (no clean
+bypass — documented).
+
+## V5.9 — find-my-device / fleet UX (candidate, deferred)
+
+User-requested. Ordered by value-per-effort. Note: **Find Location**
+and a ring/record are now delivered by Theft Mode (V5.8); what remains
+here is fleet-management polish. Not yet built.
 
 - [ ] **Device search bar** 🟢
   Client-only filter on the dashboard — substring match on device name

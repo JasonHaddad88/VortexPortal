@@ -139,6 +139,38 @@ File downloads stream chunk-by-chunk over the WebSocket (base64 in JSON,
 ~33% overhead) so multi-GB files don't buffer in memory. For very large
 transfers prefer `scp -P 8022 ...` over the LAN.
 
+## Theft Mode (V5.8)
+
+Owner anti-theft for a paired device. From the device-manage page →
+**🛡 Theft Mode**:
+
+- **On-demand**: discreet photo, GPS/network location, a short audio
+  clip — captured now and saved to your account.
+- **Armed**: a periodic loop captures the selected types every
+  N minutes while the device is online, plus a best-effort keep-awake.
+- Captures land in a **hub-side media store**
+  (`VORTEX_MEDIA_DIR`, default `~/vortex/media/`, retention
+  `VORTEX_THEFT_RETENTION` items/device — both live Settings-tab keys),
+  indexed under your account and browsable in the UI (photo
+  thumbnails, audio players, map links).
+
+Requires `pkg install termux-api` + the Termux:API app with Camera /
+Microphone / Location granted.
+
+**Limits (the UI states these too):** Android 12+ shows a camera/mic
+privacy indicator — truly invisible capture isn't possible on stock
+Android. "Keep-awake" is a CPU wake-lock only; it **cannot** block the
+lock screen or a hardware power-off without device-owner/MDM. Captures
+only happen while the device is online to the hub. Covert **video** and
+a stronger anti-lock are deferred to a Driver-APK phase.
+
+**Responsible use:** Theft Mode only ever targets devices paired to
+*your own* account, and media is stored under that account. Arming
+requires a one-time on-screen attestation that you own / are
+authorised to monitor the device. Covert audio/photo/video recording
+is legally regulated in many jurisdictions — complying is the
+operator's responsibility.
+
 ## Promoting a phone to be the hub
 
 The hub is "wherever you run it." To switch which machine is the hub:

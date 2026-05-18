@@ -87,6 +87,31 @@ CREATE TABLE IF NOT EXISTS device_locks (
     acquired_at INTEGER NOT NULL,
     expires_at  INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS theft_state (
+    device_id  TEXT    PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    armed      INTEGER NOT NULL DEFAULT 0,
+    armed_at   INTEGER,
+    armed_by   INTEGER,
+    interval_s INTEGER NOT NULL DEFAULT 300,
+    opts       TEXT,
+    last_run   INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS theft_media (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id  TEXT    NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL,
+    created_at INTEGER NOT NULL,
+    path       TEXT,
+    mime       TEXT,
+    size       INTEGER,
+    meta       TEXT,
+    trigger    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_theft_media_dev
+    ON theft_media(device_id, created_at);
 """
 
 
@@ -740,6 +765,118 @@ def get_locks_for_user(owner_id: int) -> dict:
             (owner_id, now),
         ).fetchall()
         return {r["device_id"]: dict(r) for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Theft Mode (V5.8)
+# ---------------------------------------------------------------------------
+def get_theft_state(device_id: str) -> Optional[dict]:
+    with _connect() as con:
+        row = con.execute(
+            "SELECT device_id, armed, armed_at, armed_by, interval_s, "
+            "opts, last_run FROM theft_state WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def set_theft_armed(device_id: str, armed: bool, *, by: Optional[int],
+                    interval_s: int, opts: str) -> None:
+    now = int(time.time())
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO theft_state "
+            "(device_id, armed, armed_at, armed_by, interval_s, opts, last_run) "
+            "VALUES (?, ?, ?, ?, ?, ?, NULL) "
+            "ON CONFLICT(device_id) DO UPDATE SET "
+            "armed=excluded.armed, armed_at=excluded.armed_at, "
+            "armed_by=excluded.armed_by, interval_s=excluded.interval_s, "
+            "opts=excluded.opts",
+            (device_id, 1 if armed else 0, now if armed else None,
+             by if armed else None, max(30, int(interval_s)), opts),
+        )
+
+
+def update_theft_last_run(device_id: str, ts: int) -> None:
+    with _connect() as con:
+        con.execute("UPDATE theft_state SET last_run = ? WHERE device_id = ?",
+                    (ts, device_id))
+
+
+def armed_devices() -> list:
+    """[{device_id, owner_id, interval_s, opts, last_run}] for the loop."""
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT t.device_id, d.owner_id, t.interval_s, t.opts, t.last_run "
+            "FROM theft_state t JOIN devices d ON d.id = t.device_id "
+            "WHERE t.armed = 1",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_theft_media(device_id: str, owner_id: int, kind: str, *,
+                    path: Optional[str], mime: Optional[str],
+                    size: Optional[int], meta: Optional[str],
+                    trigger: str) -> int:
+    with _connect() as con:
+        cur = con.execute(
+            "INSERT INTO theft_media "
+            "(device_id, owner_id, kind, created_at, path, mime, size, "
+            " meta, trigger) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (device_id, owner_id, kind, int(time.time()), path, mime,
+             size, meta, trigger),
+        )
+        return cur.lastrowid
+
+
+def list_theft_media(device_id: str, owner_id: int, limit: int = 200) -> list:
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT id, kind, created_at, path, mime, size, meta, trigger "
+            "FROM theft_media WHERE device_id = ? AND owner_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (device_id, owner_id, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_theft_media(media_id: int, owner_id: int) -> Optional[dict]:
+    with _connect() as con:
+        row = con.execute(
+            "SELECT id, device_id, kind, created_at, path, mime, size, "
+            "meta, trigger FROM theft_media WHERE id = ? AND owner_id = ?",
+            (media_id, owner_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_theft_media(media_id: int, owner_id: int) -> Optional[dict]:
+    """Delete a row (owner-scoped). Returns it so the caller can unlink
+    the on-disk file."""
+    row = get_theft_media(media_id, owner_id)
+    if row is None:
+        return None
+    with _connect() as con:
+        con.execute("DELETE FROM theft_media WHERE id = ? AND owner_id = ?",
+                    (media_id, owner_id))
+    return row
+
+
+def prune_theft_media(device_id: str, keep: int) -> list:
+    """Keep only the newest `keep` rows for a device; return the deleted
+    rows' file paths so the caller can unlink them off-DB."""
+    with _connect() as con:
+        old = con.execute(
+            "SELECT id, path FROM theft_media WHERE device_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?",
+            (device_id, max(0, int(keep))),
+        ).fetchall()
+        paths = []
+        for r in old:
+            con.execute("DELETE FROM theft_media WHERE id = ?", (r["id"],))
+            if r["path"]:
+                paths.append(r["path"])
+        return paths
 
 
 def purge_expired() -> None:
