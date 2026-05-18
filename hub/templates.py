@@ -796,24 +796,10 @@ select.cam-pick {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--text);
 }
-/* Viewport blocking overlay used on camera/screen/files pages. */
-.lock-overlay {
-  position: fixed; inset: 0;
-  background: rgba(6, 6, 10, 0.86);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: none;
-  flex-direction: column; align-items: center; justify-content: center;
-  gap: 0.85rem; text-align: center; padding: 2rem;
-  z-index: 20;
-}
-.lock-overlay.show { display: flex; }
-.lock-overlay .big { font-size: 2rem; }
-.lock-overlay .who {
-  color: var(--text); font-size: 0.95rem;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-}
-.lock-overlay .sub { color: var(--muted); font-size: 0.78rem; max-width: 360px; }
+/* V5.6: viewing never blocks. The old full-viewport lock-overlay was
+   removed — "in use" is now a soft dashboard badge driven by an active
+   write-lock (control/upload), and the screen page surfaces a 409 from
+   /input inline without hiding the live mirror. */
 
 footer {
   text-align: center;
@@ -1012,7 +998,7 @@ def dashboard_page(user: dict, devices: list, online: set,
   <div class="stats" data-stats hidden></div>
   <div class="lock-banner" data-lock-banner hidden>
     <span class="lock-icon">🔒</span>
-    <span data-lock-label>In use</span>
+    <span data-lock-label>Being controlled</span>
     <button class="btn btn-small" type="button" data-take-control>Take control</button>
   </div>
   <div class="actions compact" data-actions>
@@ -1117,35 +1103,37 @@ function renderStats(card, s) {{
 }}
 
 async function takeControl(deviceId) {{
+  // V5.6: force-steal the WRITE lock and HOLD it (don't release). The
+  // dashboard, the Screen page and any other tab in this browser share
+  // one lock-holder id (derived from the session cookie), so grabbing
+  // it here means our next write — opening Screen and controlling, or
+  // an upload — wins immediately, while the previous controller's next
+  // write gets a 409. If we never write, the lease just lapses (~TTL).
   try {{
     await fetch(`/devices/${{encodeURIComponent(deviceId)}}/lock`, {{
       method: 'POST',
       headers: {{'Content-Type': 'application/json'}},
       body: JSON.stringify({{context: 'override', force: true}}),
     }});
-    // We grabbed the lock but the dashboard doesn't itself use the
-    // device -- immediately release so we don't block ourselves when we
-    // open Camera/Screen next. The point of "take control" here is to
-    // boot the stale/other holder; the next page will re-acquire.
-    await fetch(`/devices/${{encodeURIComponent(deviceId)}}/lock/release`, {{
-      method: 'POST',
-    }});
   }} catch (e) {{}}
   pollOnline();
 }}
 
 function applyLock(card, lock) {{
+  // V5.6: a lock now means "another session is actively writing
+  // (controlling / uploading)". Viewing is never blocked, so the
+  // action buttons STAY visible — we only show a soft banner so you
+  // know a write is in progress and can force "Take control".
   const banner = card.querySelector('[data-lock-banner]');
+  if (!banner) return;
   const actions = card.querySelector('[data-actions]');
-  if (!banner || !actions) return;
+  if (actions) actions.hidden = false;  // never hide: reads are free
   if (lock && !lock.mine) {{
     banner.querySelector('[data-lock-label]').textContent =
-      'In use — ' + (lock.label || 'another session');
+      'Being controlled — ' + (lock.label || 'another session');
     banner.hidden = false;
-    actions.hidden = true;
   }} else {{
     banner.hidden = true;
-    actions.hidden = false;
   }}
 }}
 
@@ -1531,7 +1519,6 @@ def device_camera_page(user: dict, device: dict) -> str:
     name = device["name"]
     name_js = _json_dumps_for_html(name)
     body = f"""
-{_lock_guard(did, "camera")}
 <div class="section-head" style="align-items:center">
   <h2>// {escape(name)} · Camera</h2>
   <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
@@ -1757,7 +1744,6 @@ def device_screen_page(user: dict, device: dict) -> str:
     did = device["id"]
     did_js = _json_dumps_for_html(did)
     body = f"""
-{_lock_guard(did, "screen")}
 <div class="section-head" style="align-items:center">
   <h2>// {escape(device['name'])} · Screen</h2>
   <a class="btn btn-small" href="/devices/{escape(did)}">← Manage</a>
@@ -1880,7 +1866,14 @@ def device_screen_page(user: dict, device: dict) -> str:
         const detail = (() => {{
           try {{ return JSON.parse(text).detail; }} catch (_) {{ return text; }}
         }})();
-        setStatus('input error: ' + detail.slice(0, 120));
+        // 409 = another session holds the write-lock. Viewing the live
+        // mirror keeps working; only control is refused. Make it clear.
+        if (r.status === 409) {{
+          setStatus('🔒 ' + (detail || 'Another session is controlling this device') +
+                    ' (you can still watch live)');
+        }} else {{
+          setStatus('input error: ' + detail.slice(0, 120));
+        }}
       }} else {{
         // brief confirm flash so the user knows the click registered
         setStatus(`${{cmd.type}} ok`);
@@ -1980,7 +1973,7 @@ def files_page(user: dict, device: dict, rel: str, entries: list) -> str:
     # JS escapes for safety inside the data-* attributes / template literals.
     js_did = device['id']
     js_dir_prefix = rel_prefix
-    body = f"""{_lock_guard(device['id'], "files")}
+    body = f"""
 <div class="breadcrumbs">
   <span class="device-pill">{escape(device['name'])}</span>
   <span class="sep">·</span>
@@ -2099,91 +2092,6 @@ def _json_dumps_for_html(value) -> str:
 
 # alias for f-string-friendly use above
 json_dumps = _json_dumps_for_html
-
-
-def _lock_guard(device_id: str, context: str) -> str:
-    """Reusable per-page lock guard (V5.3) for the camera/screen/files
-    pages. Acquires the device lock on load, heartbeats every 12 s
-    (lease TTL is 30 s server-side), releases on page unload via
-    sendBeacon (survives unload where fetch wouldn't), and shows a
-    full-viewport blocking overlay with a 'Take control' (force) button
-    if the device is held by another session.
-
-    Returns plain HTML+JS (single braces). It's injected as a *runtime
-    value* into the page f-strings, so it must NOT use the {{ }} doubling
-    those f-strings need.
-    """
-    did = _json_dumps_for_html(device_id)
-    ctx = _json_dumps_for_html(context)
-    js = """
-<div class="lock-overlay" id="lock-overlay">
-  <div class="big">🔒</div>
-  <div class="who" id="lock-who">This device is in use</div>
-  <div class="sub">Another session (a different browser or device) is
-    controlling this device. Taking control will boot that session.</div>
-  <button class="btn btn-primary" id="lock-take">Take control</button>
-  <a class="btn btn-small" href="/">← Back to dashboard</a>
-</div>
-<script>
-(function() {
-  const DID = __DID__, CTX = __CTX__;
-  const overlay = document.getElementById('lock-overlay');
-  const who = document.getElementById('lock-who');
-  let heartbeat = null;
-
-  function startHeartbeat() {
-    if (heartbeat) return;
-    heartbeat = setInterval(async () => {
-      try {
-        const r = await fetch(`/devices/${encodeURIComponent(DID)}/lock/refresh`,
-                              {method: 'POST'});
-        if (r.status === 409) {
-          who.textContent = 'Control was taken by another session';
-          overlay.classList.add('show');
-          stopHeartbeat();
-        }
-      } catch (e) {}
-    }, 12000);
-  }
-  function stopHeartbeat() {
-    if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
-  }
-  async function acquire(force) {
-    try {
-      const r = await fetch(`/devices/${encodeURIComponent(DID)}/lock`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({context: CTX, force: !!force}),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (r.ok && data.acquired) {
-        overlay.classList.remove('show');
-        startHeartbeat();
-        return true;
-      }
-      who.textContent = 'In use — ' + (data.label || 'another session');
-      overlay.classList.add('show');
-      stopHeartbeat();
-      return false;
-    } catch (e) {
-      // Network hiccup: don't hard-block the UI -- the server-side 409
-      // guards on the control endpoints still protect the hardware.
-      return true;
-    }
-  }
-  function release() {
-    try {
-      navigator.sendBeacon(`/devices/${encodeURIComponent(DID)}/lock/release`);
-    } catch (e) {}
-  }
-  document.getElementById('lock-take').addEventListener('click', () => acquire(true));
-  window.addEventListener('pagehide', release);
-  window.addEventListener('beforeunload', release);
-  acquire(false);
-})();
-</script>
-"""
-    return js.replace("__DID__", did).replace("__CTX__", ctx)
 
 
 def files_error_page(user: dict, device: dict, message: str) -> str:

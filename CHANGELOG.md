@@ -3,6 +3,61 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.6] — 2026-05-18
+
+**"Device in use" now means a write is in progress — not just a page
+open.** V5.3 acquired the lock on *page load* of camera/screen/files
+and hard-409'd every access, so merely *viewing* a device blocked
+everyone else. Per the clarified definition, the device is "in use"
+only while a genuine device-side **write** is happening; reads are
+freely concurrent.
+
+### Changed
+- **Write-lock, not access-lock.** The only device-side writes —
+  remote control (`POST /input`) and file upload
+  (`PUT …/files/{path}` → `write_file`) — now take the lease via the
+  new `_guard_write_lock()` (acquire-or-409; same holder writing again
+  just extends the lease, so writing *is* the heartbeat). When writing
+  stops the lease lapses (~TTL, 30 s) and the device is no longer in
+  use — no explicit release.
+- **Reads never lock.** `_guard_not_locked` removed from
+  `/camera/live`, `/camera/capture`, `/screen/live`; live view /
+  snapshot / file browse / download / device-info are unguarded and
+  fully concurrent — multiple sessions can watch the same device at
+  once (accepted the rare single-pipeline contention as a non-issue,
+  per the chosen "viewing concurrent, control locks" model).
+- **No more blocking overlay.** `templates._lock_guard` (page-load
+  acquire + 12 s heartbeat + full-viewport "in use" overlay +
+  sendBeacon release) and its `.lock-overlay` CSS deleted. Camera /
+  screen / files pages no longer acquire on load.
+- **Screen page**: a 409 from `/input` is shown inline ("🔒 … you can
+  still watch live") without hiding the live mirror.
+- **Dashboard**: the busy state keeps the action buttons **visible**
+  (you can still view/browse a device that's being controlled); it
+  only shows a soft "Being controlled — <label>" banner. "Take
+  control" now force-steals and **holds** the write-lock (no immediate
+  release) so the same browser's next write — Screen control or an
+  upload — wins, while the previous controller's next write gets 409.
+- **Long uploads** refresh the lease every ~½·TTL while bytes flow, so
+  a multi-minute transfer doesn't lapse mid-write.
+
+### Behaviour notes
+- The lock endpoints (`/lock`, `/lock/refresh`, `/lock/release`) and
+  the `db` lease API are unchanged and still back the "Take control"
+  force path; only *who calls them and when* changed.
+- Holder id is still per (user, browser-session cookie), so the
+  dashboard, Screen page and other tabs in one browser share a holder
+  and never self-block; a different browser/device is a distinct
+  holder and sees the write in progress.
+
+### Smoke-tested
+- Reads concurrent: two distinct holders both hit camera/screen/info
+  with no 409. Writes mutually exclusive: holder A's `/input` (or
+  upload) acquires; holder B's `/input`/upload → 409 with A's label;
+  A keeps writing (lease extends); A stops → lease lapses → B
+  succeeds. Force-steal flips it. SQLite + libSQL parity (db API
+  untouched). Compile-clean; templates render without `_lock_guard`.
+
 ## [V5.5] — 2026-05-18
 
 **Self-registration.** Any device that launches `serve.sh` now serves

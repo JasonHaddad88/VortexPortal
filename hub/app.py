@@ -184,18 +184,30 @@ def _lock_holder(request: Request, user: dict) -> str:
     return f"u{user['id']}:" + db.hash_token(cookie)[:12]
 
 
-def _guard_not_locked(device_id: str, request: Request, user: dict) -> None:
-    """Hard guard for the hardware-exclusive routes (camera/screen/input).
+def _guard_write_lock(device_id: str, request: Request, user: dict,
+                      context: str) -> None:
+    """Write-lock guard (V5.6). "Device in use" == a write/mutation is
+    being performed on the device. Only the genuine device-side WRITES
+    call this: remote control (`/input`) and file upload (`write_file`).
 
-    409 if the device is locked by a *different* holder. The holder
-    themselves passes through. 'Take control' on the dashboard force-
-    acquires, which flips the holder and unblocks the new session.
+    Reads — camera/screen live view, snapshot, file browse/download,
+    device info — never call this and are freely concurrent.
+
+    The act of writing *is* the lock: each write (re-)acquires the lease
+    for this holder. Same holder writing again just extends it (acts as
+    a heartbeat); a *different* holder writing while it's held → 409.
+    When writes stop the lease lapses (TTL, ~30 s) and the device is no
+    longer "in use" — no explicit release needed. 'Take control' on the
+    dashboard force-steals so the new holder's next write wins.
     """
-    lk = db.get_lock(device_id)
-    if lk and lk["holder"] != _lock_holder(request, user):
+    holder = _lock_holder(request, user)
+    label = f"{user['username']} ({context})"
+    acquired, lk = db.acquire_lock(device_id, holder, label, force=False)
+    if not acquired:
         raise HTTPException(
             status_code=409,
-            detail=f"Device is in use — {lk.get('label') or 'another session'}. "
+            detail=f"Device is being controlled by "
+                   f"{(lk or {}).get('label') or 'another session'}. "
                    f"Use “Take control” on the dashboard to override.",
         )
 
@@ -644,6 +656,10 @@ async def device_upload(device_id: str, rel: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    # WRITE: an upload mutates the device filesystem → take/refresh the
+    # lock (409 if a different holder is mid-control/upload). Browsing /
+    # downloading (GET) is a read and stays unguarded.
+    _guard_write_lock(device_id, request, user, "upload")
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -658,9 +674,20 @@ async def device_upload(device_id: str, rel: str, request: Request,
     except ValueError:
         size = None
 
+    # Keep the write-lock alive across a long transfer: re-acquire (as
+    # this holder, non-forced) roughly every half-TTL while bytes flow,
+    # so a multi-minute upload doesn't let the lease lapse mid-write.
+    holder = _lock_holder(request, user)
+    refresh_every = max(5, db.lock_ttl() // 2)
+
     async def chunks():
+        last = time.monotonic()
         async for chunk in request.stream():
             if chunk:
+                now = time.monotonic()
+                if now - last >= refresh_every:
+                    db.refresh_lock(device_id, holder)
+                    last = now
                 yield chunk
 
     try:
@@ -808,7 +835,8 @@ async def device_input(device_id: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    _guard_not_locked(device_id, request, user)
+    # WRITE: remote control mutates the device → take/refresh the lock.
+    _guard_write_lock(device_id, request, user, "control")
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -867,7 +895,7 @@ async def device_screen_live(device_id: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    _guard_not_locked(device_id, request, user)
+    # READ (V5.6): live view / snapshot never locks — freely concurrent.
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -930,7 +958,7 @@ async def device_camera_live(device_id: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    _guard_not_locked(device_id, request, user)
+    # READ (V5.6): live view / snapshot never locks — freely concurrent.
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")
@@ -1001,7 +1029,7 @@ async def device_camera_capture(device_id: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    _guard_not_locked(device_id, request, user)
+    # READ (V5.6): live view / snapshot never locks — freely concurrent.
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail="Device offline")

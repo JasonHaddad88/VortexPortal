@@ -62,7 +62,34 @@ peer-to-peer / per-device tunnels for cross-device live streaming.
 Transport is unchanged — the agent still dials a hub over the existing
 WebSocket.
 
-## V5.6 — find-my-device / fleet UX (candidate, deferred)
+## V5.6 — write-lock semantics ("in use" = a write is happening) — _shipped V5.6_
+
+User clarification: "Device in use" should mean a **write operation is
+being performed on the device**, not merely that someone opened a
+page. V5.3 was an access-lock (acquired on camera/screen/files page
+load, hard-409'd all access) — too aggressive. Re-scoped to a
+write-lock.
+
+- [x] **`_guard_write_lock()` on the two real device writes** 🟡 —
+  _shipped_. `POST /input` (remote control) and
+  `PUT …/files/{path}` (upload → `write_file`) acquire/extend the
+  lease; a different holder writing → 409. Writing is its own
+  heartbeat; lease lapses ~TTL after writes stop.
+- [x] **Reads unguarded** 🟢 — _shipped_. Lock removed from
+  `/camera/live`, `/camera/capture`, `/screen/live`; browse/download/
+  info already free. Multiple sessions can view concurrently
+  ("viewing concurrent, control locks" model chosen).
+- [x] **Blocking overlay deleted** 🟢 — _shipped_.
+  `templates._lock_guard` + `.lock-overlay` CSS removed; Screen page
+  shows an inline 409 without hiding the mirror; dashboard keeps
+  action buttons visible with a soft "Being controlled" banner;
+  "Take control" force-steals and holds the write-lock.
+- [x] **Long-upload lease refresh** 🟢 — _shipped_ (every ~½·TTL).
+
+Supersedes the V5.3 lock's semantics (the lease DB API + `/lock*`
+endpoints are unchanged — only when/why they're called).
+
+## V5.7 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Recommended next; not yet
 built.
@@ -103,6 +130,11 @@ built.
   a large fleet manageable.
 
 ## V5.3 — device "in use" lock (lease-based mutex)
+
+> **Semantics superseded by V5.6.** The lease/DB machinery shipped here
+> is still in use, but it was re-scoped from an access-lock (acquired on
+> page load, blocks viewing) to a write-lock (only `/input` + upload
+> take it; reads are concurrent). See V5.6.
 
 (Hub-only feature; rides on V5.2's shared-DB story for cross-hub locking.)
 
