@@ -3,6 +3,70 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.5] — 2026-05-18
+
+**Self-registration.** Any device that launches `serve.sh` now serves
+the UI *and* runs a co-located agent that waits to be enrolled from the
+browser — no pairing code, no env vars. You log into your account on
+that device, click **"+ Self-Register this device"**, name it + edit
+its characteristics, and it comes online in seconds. The login session
+is the authorization (you already proved you own the account), so
+there's nothing secret to copy between two things.
+
+### Added
+- **`POST /self-register` (session-auth).** Mints a device id + token
+  for the logged-in user, stores the device with free-form
+  `characteristics`, and writes the agent credential file
+  (`~/.vortex_agent/config.json`, atomic, chmod 600) so the co-located
+  agent picks it up. `hub_url` is set to whatever URL the browser
+  reached the hub on (`_hub_public_url`). `GET /self-register` renders
+  a form pre-filled with auto-detected host info
+  (`platform.node/system/release/machine/python`), fully editable.
+- **Dashboard.** "+ Self-Register this device" is the primary action;
+  "Pair remote device" (the classic code flow) is kept alongside.
+  Success flash on return. Empty-state copy updated.
+- **`devices.characteristics`** column + idempotent `_migrate()`
+  (PRAGMA-guarded `ALTER TABLE`, runs on both the sqlite3 and libSQL
+  backends — existing DBs upgrade in place). `create_device` takes an
+  optional `characteristics`; new `update_device(name, characteristics)`.
+- **Agent self-register-wait mode.** `agent.pairing.wait_for_config()`
+  blocks until the config file appears; `ensure_paired(wait=True)`
+  selects it. `agent.main()` enables it when `VORTEX_SELFREG_WAIT=1`
+  and no `PAIRING_CODE` is set (an explicit code still forces the
+  classic path).
+- **Launchers.** `serve.sh` default mode flipped to `hub`: it now runs
+  uvicorn + the quick tunnel **and** the selfreg-wait agent (pinned to
+  `HUB_URL=http://127.0.0.1:$APP_PORT` so it never depends on the
+  rotating tunnel). `serve.ps1` gains the same co-located agent.
+  `NO_SELF_AGENT=1` opts out (headless hub). `setup.sh` boot-hook and
+  guidance updated.
+
+### Behaviour notes
+- **Back-compat preserved.** `MODE=agent` is the unchanged legacy path
+  (outbound-only agent, pairing-code enrollment) for a phone you
+  control from a *separate* hub. `/pair` + `/api/pair` + pairing codes
+  are untouched.
+- **Self-register always enrolls the machine the hub process runs on**
+  — not the browser you're viewing from. The form says so and points
+  at "Pair remote device" for enrolling a different phone. With the
+  V5.2 shared libSQL DB this works the same from any hub against the
+  one account.
+- Transport is unchanged: the agent still connects over the existing
+  WebSocket. No P2P, no per-device fan-out — live camera / screen /
+  input behave exactly as before.
+
+### Smoke-tested
+- DB: migration adds `characteristics` to a pre-existing devices table
+  and is a no-op on re-run; `create_device`/`update_device`/`list`
+  round-trip it.
+- App: `/self-register` GET+POST registered and admin-not-required
+  (any logged-in user); POST creates the device under `user["id"]`,
+  writes a chmod-600 agent config with the request's hub URL, redirects
+  with the dashboard flash; SQLite-fallback import still clean.
+- Agent: `wait_for_config` returns immediately when a config exists,
+  blocks otherwise; `VORTEX_SELFREG_WAIT` gating respects an explicit
+  `PAIRING_CODE`. Compile-clean.
+
 ## [V5.4] — 2026-05-18
 
 An admin-only **Settings tab** so the operator configures the hub from

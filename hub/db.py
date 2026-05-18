@@ -54,12 +54,13 @@ CREATE TABLE IF NOT EXISTS invites (
 );
 
 CREATE TABLE IF NOT EXISTS devices (
-    id           TEXT    PRIMARY KEY,
-    owner_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name         TEXT    NOT NULL,
-    token_hash   TEXT    NOT NULL,
-    paired_at    INTEGER NOT NULL,
-    last_seen    INTEGER
+    id              TEXT    PRIMARY KEY,
+    owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name            TEXT    NOT NULL,
+    token_hash      TEXT    NOT NULL,
+    paired_at       INTEGER NOT NULL,
+    last_seen       INTEGER,
+    characteristics TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(owner_id);
 
@@ -257,7 +258,20 @@ def init(db_path: Path) -> None:
 
         with _connect() as con:
             con.executescript(_SCHEMA)
+            _migrate(con)
             con.commit()
+
+
+def _migrate(con) -> None:
+    """Idempotent column additions. _SCHEMA only CREATEs IF NOT EXISTS, so
+    an already-existing devices table won't pick up new columns — add them
+    here, guarded by PRAGMA table_info so re-runs are no-ops. Works on both
+    the sqlite3 and libSQL backends (both expose execute().fetchall())."""
+    cols = {r["name"] for r in
+            con.execute("PRAGMA table_info(devices)").fetchall()}
+    if "characteristics" not in cols:
+        # V5.5: free-form device characteristics captured at self-register.
+        con.execute("ALTER TABLE devices ADD COLUMN characteristics TEXT")
 
 
 def sync() -> bool:
@@ -400,20 +414,23 @@ def invite_is_valid(code: str) -> bool:
 # ---------------------------------------------------------------------------
 # Devices
 # ---------------------------------------------------------------------------
-def create_device(device_id: str, owner_id: int, name: str, token: str) -> None:
+def create_device(device_id: str, owner_id: int, name: str, token: str,
+                   characteristics: Optional[str] = None) -> None:
     with _connect() as con:
         con.execute(
-            "INSERT INTO devices (id, owner_id, name, token_hash, paired_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (device_id, owner_id, name, hash_token(token), int(time.time())),
+            "INSERT INTO devices "
+            "(id, owner_id, name, token_hash, paired_at, characteristics) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (device_id, owner_id, name, hash_token(token),
+             int(time.time()), characteristics),
         )
 
 
 def list_devices(owner_id: int) -> list:
     with _connect() as con:
         rows = con.execute(
-            "SELECT id, name, paired_at, last_seen FROM devices "
-            "WHERE owner_id = ? ORDER BY paired_at DESC",
+            "SELECT id, name, paired_at, last_seen, characteristics "
+            "FROM devices WHERE owner_id = ? ORDER BY paired_at DESC",
             (owner_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -432,8 +449,8 @@ def get_device(device_id: str) -> Optional[dict]:
 def get_device_for_user(device_id: str, owner_id: int) -> Optional[dict]:
     with _connect() as con:
         row = con.execute(
-            "SELECT id, name, paired_at, last_seen FROM devices "
-            "WHERE id = ? AND owner_id = ?",
+            "SELECT id, name, paired_at, last_seen, characteristics "
+            "FROM devices WHERE id = ? AND owner_id = ?",
             (device_id, owner_id),
         ).fetchone()
         return dict(row) if row else None
@@ -444,6 +461,19 @@ def update_device_name(device_id: str, owner_id: int, name: str) -> bool:
         cur = con.execute(
             "UPDATE devices SET name = ? WHERE id = ? AND owner_id = ?",
             (name, device_id, owner_id),
+        )
+        return cur.rowcount > 0
+
+
+def update_device(device_id: str, owner_id: int, name: str,
+                  characteristics: Optional[str]) -> bool:
+    """Update name + characteristics together (owner-scoped). Used by the
+    self-register edit form."""
+    with _connect() as con:
+        cur = con.execute(
+            "UPDATE devices SET name = ?, characteristics = ? "
+            "WHERE id = ? AND owner_id = ?",
+            (name, characteristics, device_id, owner_id),
         )
         return cur.rowcount > 0
 

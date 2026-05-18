@@ -18,6 +18,8 @@ import asyncio
 import base64
 import json
 import os
+import platform
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -115,6 +117,57 @@ def _hub_public_url(request: Request) -> str:
     scheme = fwd_proto or request.url.scheme
     host = fwd_host or request.url.netloc
     return f"{scheme}://{host}"
+
+
+# --- V5.5: self-register helpers -------------------------------------------
+def _agent_config_path() -> Path:
+    """Where the co-located agent reads its credentials. Same default as
+    agent.pairing.config_path() — overridable with VORTEX_AGENT_CONFIG so
+    the hub and the local agent always agree on the file."""
+    return Path(os.environ.get("VORTEX_AGENT_CONFIG")
+                or os.path.expanduser("~/.vortex_agent/config.json"))
+
+
+def _host_characteristics() -> str:
+    """Best-effort auto-detected description of the machine this hub
+    process runs on — prefilled into the self-register form, fully
+    editable by the user. Pure stdlib; never raises."""
+    try:
+        bits = [
+            f"host: {platform.node()}",
+            f"os: {platform.system()} {platform.release()}",
+            f"arch: {platform.machine()}",
+            f"python: {platform.python_version()}",
+        ]
+        return "\n".join(b for b in bits if b.split(": ", 1)[1].strip())
+    except Exception:
+        return ""
+
+
+def _write_local_agent_config(device_id: str, token: str,
+                              hub_url: str, name: str) -> None:
+    """Drop the agent credential file next to where the co-located agent
+    looks for it, so a serve.sh-launched agent (running in selfreg-wait
+    mode) picks it up and connects — no pairing code, no env vars.
+
+    Mirrors agent.pairing._atomic_write (atomic replace, chmod 600) but
+    intentionally does NOT import the agent package: the hub may run
+    without the agent installed."""
+    p = _agent_config_path()
+    payload = json.dumps({
+        "device_id": device_id,
+        "token": token,
+        "hub_url": hub_url.rstrip("/"),
+        "name": name,
+    }, indent=2)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, p)
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass  # no-op on Windows / restricted FS
 
 
 # --- V5.3: device-lock helpers ---------------------------------------------
@@ -277,10 +330,12 @@ def register_post(
 # Dashboard
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, user: dict = Depends(auth.require_user)):
+def dashboard(request: Request, user: dict = Depends(auth.require_user),
+              selfreg: str = ""):
     devices = db.list_devices(user["id"])
     online = ws_router.registry.online_ids()
-    return HTMLResponse(templates.dashboard_page(user, devices, online))
+    return HTMLResponse(templates.dashboard_page(
+        user, devices, online, selfreg=bool(selfreg)))
 
 
 @app.get("/api/online")
@@ -443,10 +498,48 @@ async def api_pair(request: Request):
     name = name_override or consumed.get("device_name") or "Unnamed Device"
     device_id = uuid.uuid4().hex
     # Long-lived agent token. Stored hashed; agent keeps the plaintext.
-    import secrets
     token = secrets.token_urlsafe(32)
     db.create_device(device_id, consumed["user_id"], name, token)
     return {"device_id": device_id, "token": token, "name": name}
+
+
+# ---------------------------------------------------------------------------
+# V5.5: self-register — enroll THIS device (the one running the hub
+# process) straight from the logged-in browser. No pairing code: the
+# session cookie already proves you own the account. Writes the local
+# agent credential file so a serve.sh-launched selfreg-wait agent picks
+# it up and connects within seconds.
+# ---------------------------------------------------------------------------
+@app.get("/self-register", response_class=HTMLResponse)
+def self_register_get(request: Request,
+                      user: dict = Depends(auth.require_user)):
+    default_name = platform.node() or "This device"
+    return HTMLResponse(templates.self_register_page(
+        user,
+        default_name=default_name,
+        default_characteristics=_host_characteristics(),
+        agent_config=str(_agent_config_path()),
+    ))
+
+
+@app.post("/self-register")
+def self_register_post(
+    request: Request,
+    user: dict = Depends(auth.require_user),
+    device_name: str = Form(""),
+    characteristics: str = Form(""),
+):
+    name = (device_name or "").strip()[:80] or (platform.node() or "This device")
+    chars = (characteristics or "").strip()[:4000] or None
+    device_id = uuid.uuid4().hex
+    token = secrets.token_urlsafe(32)
+    db.create_device(device_id, user["id"], name, token, chars)
+    # The agent must dial back to whatever URL this browser reached the
+    # hub on (LAN, localhost or the public tunnel) — that's exactly what
+    # _hub_public_url resolves.
+    _write_local_agent_config(device_id, token,
+                              _hub_public_url(request), name)
+    return RedirectResponse(url="/?selfreg=1", status_code=303)
 
 
 # ---------------------------------------------------------------------------

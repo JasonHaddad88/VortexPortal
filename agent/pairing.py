@@ -189,9 +189,39 @@ def pair_now(*, hub_url: Optional[str] = None,
     return cfg
 
 
-def ensure_paired() -> dict:
-    """Load existing config or run pairing. Returns the config dict."""
+def wait_for_config(poll: float = 2.0) -> dict:
+    """Block until a valid config file appears, then return it.
+
+    Used in self-register mode (V5.5): the device is enrolled from the
+    hub's browser UI, which writes ~/.vortex_agent/config.json. The agent
+    just waits for that file instead of doing an interactive pairing-code
+    handshake — so `serve.sh` can start the agent unattended on every
+    device and it connects the moment you click "Self-Register".
+    """
+    import time as _t
+    waited = 0.0
+    while True:
+        cfg = load_config()
+        if cfg is not None:
+            return cfg
+        if waited == 0.0 or waited % 30 < poll:
+            print("==> Waiting for self-registration "
+                  f"(open the hub UI, log in, click 'Self-Register'). "
+                  f"Watching {config_path()}")
+        _t.sleep(poll)
+        waited += poll
+
+
+def ensure_paired(*, wait: bool = False) -> dict:
+    """Load existing config or enroll. Returns the config dict.
+
+    wait=False (default): run the interactive/code pairing handshake.
+    wait=True: block until the hub's self-register flow writes the
+    config (no prompts) — for unattended serve.sh launches.
+    """
     cfg = load_config()
     if cfg is not None:
         return cfg
+    if wait:
+        return wait_for_config()
     return pair_now()

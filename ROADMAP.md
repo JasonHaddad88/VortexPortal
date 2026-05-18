@@ -35,10 +35,37 @@ env files, because the secret store is gitignored and not
   rotate-token / wipe-devices danger zone. Not started; revisit when
   there's a multi-user fleet to manage.
 
-## V5.5 — find-my-device / fleet UX (candidate, deferred)
+## V5.5 — self-registration (no-pairing-code enrollment) — _shipped V5.5_
 
-User-requested. Ordered by value-per-effort. Recommended next after
-the Settings tab; not yet built.
+User-requested: "any device that launches serve.sh should run the UI
+and self-register to the account" → "a Self-Register button that lets
+me configure the device name and characteristics."
+
+- [x] **`POST /self-register` (session-auth)** 🟡 — _shipped_. The
+  browser login session is the authorization; mints device id+token,
+  stores free-form `characteristics`, writes the co-located agent's
+  credential file (atomic, chmod 600) with the request's hub URL.
+- [x] **Dashboard button + prefilled form** 🟢 — _shipped_. Auto-
+  detected host info (`platform.*`), fully editable; "Pair remote
+  device" kept alongside for the classic code flow.
+- [x] **`devices.characteristics` + idempotent migration** 🟢 —
+  _shipped_. PRAGMA-guarded `ALTER TABLE`, both DB backends.
+- [x] **Agent self-register-wait mode** 🟢 — _shipped_.
+  `wait_for_config()` / `ensure_paired(wait=True)`; gated on
+  `VORTEX_SELFREG_WAIT`, an explicit `PAIRING_CODE` still wins.
+- [x] **Launchers** 🟢 — _shipped_. `serve.sh` default → hub + tunnel
+  + selfreg-wait agent (localhost-pinned); `serve.ps1` parity;
+  `NO_SELF_AGENT=1` opt-out; `MODE=agent` legacy preserved.
+
+Deliberately NOT done (would have been a rewrite, user dismissed it):
+peer-to-peer / per-device tunnels for cross-device live streaming.
+Transport is unchanged — the agent still dials a hub over the existing
+WebSocket.
+
+## V5.6 — find-my-device / fleet UX (candidate, deferred)
+
+User-requested. Ordered by value-per-effort. Recommended next; not yet
+built.
 
 - [ ] **Device search bar** 🟢
   Client-only filter on the dashboard — substring match on device name

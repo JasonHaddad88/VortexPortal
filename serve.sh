@@ -1,21 +1,30 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VORTEX_SERVE_VERSION=7
+# VORTEX_SERVE_VERSION=8
 # Vortex Termux launcher.
 #
-#   MODE=agent (default)  Runs the agent, connecting outbound to a hub.
-#   MODE=hub              Runs the hub (uvicorn + cloudflared quick tunnel).
+#   MODE=hub (default)  Runs the UI (uvicorn + cloudflared quick tunnel)
+#                       AND a co-located agent in self-register-wait mode:
+#                       open the public URL, log in, click "Self-Register"
+#                       and THIS device comes online — no pairing code.
+#   MODE=agent          Legacy: run only the outbound agent and enroll
+#                       with a pairing code (for a phone you control from
+#                       a separate hub). Still fully supported.
 #
-# First-run pairing for agent mode:
-#   PAIRING_CODE=123456 HUB_URL=https://abc.trycloudflare.com bash serve.sh
-# Once paired, the device_id + token are saved to ~/.vortex_agent/config.json
+# First-run, default mode: just `bash serve.sh`, then self-register in
+# the browser. Legacy code pairing:
+#   MODE=agent PAIRING_CODE=123456 HUB_URL=https://abc.trycloudflare.com bash serve.sh
+# Either way the device_id + token land in ~/.vortex_agent/config.json
 # and subsequent runs reconnect automatically.
+#
+#   NO_SELF_AGENT=1  (default mode) skip the co-located self-register
+#                    agent — run a headless hub only.
 
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$HOME/server}"
 VENV="$APP_DIR/.venv"
 LOG_DIR="$APP_DIR/logs"
-MODE="${MODE:-agent}"
+MODE="${MODE:-hub}"
 APP_PORT="${APP_PORT:-8000}"
 SSH_PORT="${SSH_PORT:-8022}"
 
@@ -174,17 +183,35 @@ if [ "$MODE" = "hub" ]; then
     LAN_IP=$(ip route get 1.1.1.1 2>/dev/null \
         | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)
 
+    # Co-located self-register agent: waits for the browser self-register
+    # flow to drop ~/.vortex_agent/config.json, then connects THIS device
+    # to the local hub. HUB_URL pins it to localhost so it never depends
+    # on the (rotating) public tunnel being up. Skip with NO_SELF_AGENT=1.
+    SELF_AGENT_PID=""
+    if [ "${NO_SELF_AGENT:-}" != "1" ]; then
+        echo "==> Starting co-located agent (self-register-wait mode)"
+        VORTEX_SELFREG_WAIT=1 HUB_URL="http://127.0.0.1:$APP_PORT" \
+            nohup "$VPY" -m agent.agent \
+            > "$LOG_DIR/agent.log" 2>&1 &
+        SELF_AGENT_PID=$!
+    fi
+
     echo
     echo "============================================================"
     echo "  Public URL : ${PUBLIC_URL:-<see logs/cloudflared.log>}"
     echo "  LAN URL    : http://${LAN_IP:-<wifi-ip>}:$APP_PORT"
     echo "  Logs       : $LOG_DIR/"
     echo "============================================================"
+    if [ -n "$SELF_AGENT_PID" ]; then
+        echo "  Next: open the Public URL, log in, click"
+        echo "  '+ Self-Register this device' — it comes online in seconds."
+    fi
     echo "Press Ctrl+C to stop."
-    wait "$UVICORN_PID" "$CF_PID"
+    wait "$UVICORN_PID" "$CF_PID" ${SELF_AGENT_PID:+"$SELF_AGENT_PID"}
 
 else
-    # Agent mode — connect outbound to the hub.
-    echo "==> Starting Vortex Agent"
+    # Legacy agent mode — connect outbound to a separate hub, enroll with
+    # a pairing code (PAIRING_CODE / HUB_URL env, or interactive prompt).
+    echo "==> Starting Vortex Agent (legacy pairing-code mode)"
     exec "$VPY" -m agent.agent
 fi

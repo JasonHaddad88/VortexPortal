@@ -5,7 +5,9 @@
 # - Downloads cloudflared.exe to ./bin if missing
 # - Starts uvicorn on 127.0.0.1:8000
 # - Starts a Cloudflare quick tunnel and surfaces the public URL
-# - Ctrl+C cleans up both processes
+# - Starts a co-located self-register-wait agent so you can enroll THIS
+#   machine from the browser (skip with $env:NO_SELF_AGENT="1")
+# - Ctrl+C cleans up every process
 #
 # Run from this directory:  .\serve.ps1
 # First time you may need:   Set-ExecutionPolicy -Scope Process Bypass
@@ -64,6 +66,8 @@ $UvicornOut = Join-Path $LogDir "uvicorn.out.log"
 $UvicornErr = Join-Path $LogDir "uvicorn.err.log"
 $CloudflaredOut = Join-Path $LogDir "cloudflared.out.log"
 $CloudflaredErr = Join-Path $LogDir "cloudflared.err.log"
+$AgentOut = Join-Path $LogDir "agent.out.log"
+$AgentErr = Join-Path $LogDir "agent.err.log"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -190,6 +194,22 @@ $cfProc = Start-Process -FilePath $CloudflaredExe -ArgumentList $cfArgs `
     -RedirectStandardOutput $CloudflaredOut -RedirectStandardError $CloudflaredErr `
     -PassThru -WindowStyle Hidden
 
+# ---------------------------------------------------------------------------
+# Co-located self-register agent: waits for the browser self-register flow
+# to write ~/.vortex_agent/config.json, then connects THIS machine to the
+# local hub. HUB_URL pins it to localhost (independent of the rotating
+# public tunnel). Skip with NO_SELF_AGENT=1.
+# ---------------------------------------------------------------------------
+$agentProc = $null
+if ($env:NO_SELF_AGENT -ne "1") {
+    Write-Host "==> Starting co-located agent (self-register-wait mode)"
+    $env:VORTEX_SELFREG_WAIT = "1"
+    $env:HUB_URL = "http://127.0.0.1:$AppPort"
+    $agentProc = Start-Process -FilePath $VenvPython -ArgumentList @("-m", "agent.agent") `
+        -RedirectStandardOutput $AgentOut -RedirectStandardError $AgentErr `
+        -PassThru -WindowStyle Hidden
+}
+
 # Surface the public URL. cloudflared writes its banner (with the URL) to
 # stderr, but we check both streams to be safe across versions.
 $publicUrl = $null
@@ -228,6 +248,10 @@ if ($lanIp) {
 }
 Write-Host "  Logs       : $LogDir"
 Write-Host "============================================================" -ForegroundColor Cyan
+if ($agentProc) {
+    Write-Host "  Next: open the URL, log in, click '+ Self-Register this"
+    Write-Host "  device' - this machine comes online in a few seconds."
+}
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 
@@ -244,6 +268,13 @@ try {
             Write-Host "cloudflared exited unexpectedly. See $CloudflaredErr" -ForegroundColor Red
             break
         }
+        if ($agentProc -and $agentProc.HasExited) {
+            # Non-fatal: the hub keeps running. The agent has its own
+            # reconnect loop, so an exit here means it gave up (bad
+            # config / fatal auth). Warn once, then stop re-checking.
+            Write-Host "co-located agent exited. See $AgentErr (hub still up)" -ForegroundColor Yellow
+            $agentProc = $null
+        }
         Start-Sleep -Seconds 2
     }
 } finally {
@@ -251,4 +282,5 @@ try {
     Write-Host "==> Shutting down"
     Stop-Process -Id $uvProc.Id -Force -ErrorAction SilentlyContinue
     Stop-Process -Id $cfProc.Id -Force -ErrorAction SilentlyContinue
+    if ($agentProc) { Stop-Process -Id $agentProc.Id -Force -ErrorAction SilentlyContinue }
 }

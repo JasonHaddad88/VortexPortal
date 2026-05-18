@@ -966,7 +966,8 @@ def first_run_page(error: Optional[str] = None) -> str:
     return page("First-run", body, chrome=False)
 
 
-def dashboard_page(user: dict, devices: list, online: set) -> str:
+def dashboard_page(user: dict, devices: list, online: set,
+                   selfreg: bool = False) -> str:
     cards = []
     for d in devices:
         did = escape(d["id"])
@@ -1026,14 +1027,26 @@ def dashboard_page(user: dict, devices: list, online: set) -> str:
         grid_html = f'<div class="grid">{"".join(cards)}</div>'
     else:
         grid_html = """<div class="empty">
-  <h3>No devices paired yet</h3>
-  <p>Click “+ Add Device” to pair your first phone.</p>
+  <h3>No devices yet</h3>
+  <p>If this machine runs <code>serve.sh</code>, click
+  “+ Self-Register this device”. To enroll a different phone, use
+  “Pair remote device”.</p>
 </div>"""
 
+    flash = ""
+    if selfreg:
+        flash = ('<div class="flash success">This device was registered to '
+                 'your account. If it’s running <code>serve.sh</code> it will '
+                 'come online within a few seconds.</div>')
+
     body = f"""
+{flash}
 <div class="section-head">
   <h2>// Your Devices</h2>
-  <a class="btn btn-primary" href="/pair">+ Add Device</a>
+  <div style="display:flex;gap:.6rem">
+    <a class="btn btn-primary" href="/self-register">+ Self-Register this device</a>
+    <a class="btn" href="/pair">Pair remote device</a>
+  </div>
 </div>
 {grid_html}
 
@@ -1338,6 +1351,45 @@ setInterval(pollStats, 15000);
 </script>
 """
     return page("Dashboard", body, user=user, active="/")
+
+
+def self_register_page(user: dict, *, default_name: str,
+                       default_characteristics: str,
+                       agent_config: str) -> str:
+    """V5.5: enroll the machine running this hub straight from the
+    browser. No pairing code — the login session is the authorization."""
+    body = f"""
+<div class="section-head"><h2>// Self-Register This Device</h2></div>
+<div class="card" style="max-width:620px">
+  <p style="margin-top:0;color:var(--muted);font-size:.85rem">
+    Register <strong>the machine running this hub</strong> to your
+    account. No pairing code needed — you’re already signed in. The
+    credentials are written to
+    <code style="color:var(--cyan)">{escape(agent_config)}</code>; a
+    <code>serve.sh</code>-launched agent picks them up and the device
+    comes online within seconds.
+  </p>
+  <form method="post" action="/self-register">
+    <label>Device name
+      <input name="device_name" value="{escape(default_name)}"
+             placeholder="e.g. Living-room Pixel" maxlength="80" required autofocus>
+    </label>
+    <label>Characteristics (free-form — auto-detected, edit freely)
+      <textarea name="characteristics" rows="6"
+                style="resize:vertical;min-height:6rem"
+                placeholder="OS, model, role, location, notes…">{escape(default_characteristics)}</textarea>
+    </label>
+    <button type="submit" class="btn btn-primary" style="align-self:flex-start;margin-top:.5rem">
+      Register this device
+    </button>
+  </form>
+</div>
+<p style="margin-top:1rem;color:var(--muted);font-size:.78rem;max-width:620px">
+  Wrong machine? This always registers the device the hub process runs
+  on — not the browser you’re viewing from. To enroll a separate phone,
+  use <a href="/pair">Pair remote device</a> instead.
+</p>"""
+    return page("Self-Register", body, user=user, active="/self-register")
 
 
 def pair_start_page(user: dict) -> str:

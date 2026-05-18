@@ -181,9 +181,11 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Termux:Boot autostart — only fires the agent (the typical case).
+# Termux:Boot autostart — runs serve.sh in its default mode (UI +
+# co-located self-register agent), so the device is reachable and can be
+# self-registered from the browser after a reboot.
 # ----------------------------------------------------------------------------
-echo "==> Installing Termux:Boot autostart hook (agent mode)"
+echo "==> Installing Termux:Boot autostart hook"
 mkdir -p "$HOME/.termux/boot"
 cat > "$HOME/.termux/boot/start-vortex-agent" <<BOOT
 #!/data/data/com.termux/files/usr/bin/sh
@@ -204,17 +206,20 @@ echo "  Agent code  : $APP_DIR/agent/"
 echo "  Hub code    : $APP_DIR/hub/   (only used if MODE=hub)"
 echo "  Logs        : $APP_DIR/logs/"
 echo
-echo "  To pair this device with a hub:"
-echo "    1. On your hub, log in and click 'Add Device' to get a code."
+echo "  Recommended — self-register from the browser:"
+echo "    1. Run:  bash $APP_DIR/serve.sh"
+echo "    2. Open the printed Public URL, log in to your account."
+echo "    3. Click '+ Self-Register this device', name it, submit."
+echo "       It comes online in a few seconds — no pairing code."
+echo
+echo "  Legacy — pair this phone with a SEPARATE hub via a code:"
+echo "    1. On your hub, log in and click 'Pair remote device'."
 echo "    2. On this phone, run:"
-echo "         PAIRING_CODE=123456 HUB_URL=https://your-hub bash $APP_DIR/serve.sh"
+echo "         MODE=agent PAIRING_CODE=123456 HUB_URL=https://your-hub bash $APP_DIR/serve.sh"
 echo "    3. After it pairs, future runs need no env vars:"
-echo "         bash $APP_DIR/serve.sh"
+echo "         MODE=agent bash $APP_DIR/serve.sh"
 echo
 echo "  Autostart on boot: install 'Termux:Boot' from F-Droid (NOT Play"
-echo "  Store), open it once, then reboot. It will start the agent and"
-echo "  keep it reconnected."
-echo
-echo "  To run THIS phone as a hub instead:"
-echo "    MODE=hub bash $APP_DIR/serve.sh"
+echo "  Store), open it once, then reboot. It starts serve.sh and keeps"
+echo "  it reconnected."
 echo

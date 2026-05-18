@@ -51,7 +51,8 @@ on the hub, typed into the agent's environment on first run.
    execution policy: `Set-ExecutionPolicy -Scope Process Bypass`.
 3. Open the public URL (e.g. `https://abc.trycloudflare.com`). The first
    visit redirects to a bootstrap form — create your admin account.
-4. Click **+ Add Device** to start pairing your first phone (see below).
+4. Click **+ Self-Register this device** to enroll this machine, or
+   **Pair remote device** for a separate phone (see below).
 
 To stop the hub: Ctrl+C in PowerShell.
 
@@ -63,37 +64,49 @@ To stop the hub: Ctrl+C in PowerShell.
    ```bash
    cd "$HOME/storage/downloads/VortexPortal"   # adjust if you renamed it
    bash setup.sh                                # one-time install
-   MODE=hub bash ~/server/serve.sh              # start the hub
+   bash ~/server/serve.sh                       # UI + selfreg agent (default)
    ```
 3. Note the public URL it prints. Open it in any browser, register the
-   admin account, then pair other devices into it.
+   admin account, click **+ Self-Register this device**, then enroll
+   other phones (self-register on each, or "Pair remote device").
 
-## Pairing a device
+## Enrolling a device
 
-On the **hub**:
+### Self-register (recommended, since V5.5)
 
-1. Sign in.
-2. Click **+ Add Device** in the top nav.
-3. (Optional) Give the device a display name, then click **Generate Code**.
-4. The page shows a 6-digit code and a one-line shell command.
+Any device that runs `serve.sh` serves the UI **and** a co-located
+agent waiting to be enrolled — no pairing code, no env vars.
 
-On the **device** (phone in Termux):
+1. On the device: `bash setup.sh` once (first time), then
+   `bash ~/server/serve.sh`.
+2. Open the printed **Public URL**, sign in to your account.
+3. Click **+ Self-Register this device**, edit the name +
+   auto-detected characteristics, submit.
+4. The hub writes `~/.vortex_agent/config.json`; the co-located agent
+   picks it up and the device is **online within seconds**.
 
-1. Run `bash setup.sh` once if you haven't already (installs Python,
-   websockets, httpx, copies the `agent/` code).
-2. Run the command shown on the hub:
+Authorization is your browser login session — nothing secret is copied
+between machines. Self-register always enrolls *the machine the hub
+process runs on*. Subsequent runs reconnect automatically.
+`NO_SELF_AGENT=1` runs a headless hub (no co-located agent).
+
+### Pair a remote device (legacy code flow)
+
+For a phone you control from a *separate* hub:
+
+1. On the hub: sign in → **Pair remote device** → (optional name) →
+   **Generate Code** (6 digits, single-use, 10-min expiry).
+2. On the phone (Termux), after `bash setup.sh`:
    ```bash
-   PAIRING_CODE=123456 HUB_URL=https://your-hub.trycloudflare.com bash ~/server/serve.sh
+   MODE=agent PAIRING_CODE=123456 HUB_URL=https://your-hub.trycloudflare.com bash ~/server/serve.sh
    ```
-   Or interactively: just `bash ~/server/serve.sh` — it will prompt you
-   for the hub URL and code if it doesn't find a saved config.
-3. The agent submits the code, receives a `device_id` + token, saves both
-   to `~/.vortex_agent/config.json`, opens the WebSocket, and stays
-   connected.
-4. Reload the dashboard — the device appears, online.
+   Or interactively: `MODE=agent bash ~/server/serve.sh` prompts for
+   the hub URL + code.
+3. The agent submits the code, receives a `device_id` + token, saves
+   both to `~/.vortex_agent/config.json`, and stays connected.
 
-After the first run, no env vars are needed. Subsequent runs of
-`bash ~/server/serve.sh` reconnect automatically using the saved config.
+After the first run, no env vars are needed — `MODE=agent bash
+~/server/serve.sh` reconnects from the saved config.
 
 For autostart on boot, install **Termux:Boot** from F-Droid and open it
 once; `setup.sh` already wrote `~/.termux/boot/start-vortex-agent`.
@@ -185,10 +198,10 @@ hub/
 agent/
   __init__.py
   agent.py          # Outbound WS client + op dispatch
-  pairing.py        # First-run pairing flow
+  pairing.py        # Enrollment: pairing-code + self-register-wait
 
-serve.ps1           # Windows hub launcher
-serve.sh            # Termux launcher (MODE=agent default, MODE=hub optional)
+serve.ps1           # Windows hub launcher (+ co-located selfreg agent)
+serve.sh            # Termux launcher (default: UI + selfreg agent; MODE=agent legacy)
 setup.sh            # Termux first-run setup
 app_v1.py           # V1.2 monolith, kept for fallback
 ```
@@ -226,9 +239,11 @@ override, lock/session TTL, registration mode) apply live.
 | `VORTEX_CONFIG_FILE`    | `~/vortex/config.json`        | Settings-tab config store path         |
 | `APP_PORT`              | `8000`                        | Local hub port                         |
 | `APP_DIR`               | `~/server` (Termux only)      | Where serve.sh / setup.sh install code |
-| `MODE`                  | `agent` (Termux serve.sh)     | `agent` or `hub`                       |
-| `PAIRING_CODE`          | *(prompted)*                  | Pairing code on agent first run        |
-| `HUB_URL`               | *(prompted)*                  | Hub URL on agent first run             |
+| `MODE`                  | `hub` (Termux serve.sh)       | `hub` (UI + selfreg agent) or `agent` (legacy code-pair) |
+| `NO_SELF_AGENT`         | *(unset)*                     | `1` = headless hub, skip co-located selfreg agent |
+| `VORTEX_SELFREG_WAIT`   | *(set by serve.sh)*           | `1` = agent waits for browser self-register instead of prompting |
+| `PAIRING_CODE`          | *(prompted)*                  | Pairing code (legacy `MODE=agent` enroll) |
+| `HUB_URL`               | *(prompted)*                  | Hub URL (legacy enroll / agent override) |
 | `DEVICE_NAME`           | *(optional)*                  | Display name override on agent pairing |
 | `STORAGE_ROOT`          | `~/storage/shared` if exists  | Agent's file browser root              |
 | `VORTEX_AGENT_CONFIG`   | `~/.vortex_agent/config.json` | Agent config path                      |

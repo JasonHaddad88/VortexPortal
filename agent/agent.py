@@ -1074,8 +1074,15 @@ def main() -> int:
             cp.unlink()
             print(f"== VORTEX_RESET=1 -- cleared {cp}")
 
+    # V5.5 self-register: serve.sh starts the agent unattended with
+    # VORTEX_SELFREG_WAIT=1, so instead of an interactive pairing-code
+    # prompt the agent waits for the hub's browser self-register flow to
+    # drop the config file. An explicit PAIRING_CODE still wins (lets you
+    # force the classic code path even under selfreg-wait).
+    selfreg_wait = (bool(os.environ.get("VORTEX_SELFREG_WAIT"))
+                    and not os.environ.get("PAIRING_CODE"))
     try:
-        cfg = ensure_paired()
+        cfg = ensure_paired(wait=selfreg_wait)
         cfg = _apply_env_overrides(cfg)
     except (KeyboardInterrupt, EOFError):
         print("\n== Pairing cancelled.", file=sys.stderr)

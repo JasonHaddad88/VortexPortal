@@ -1,3 +1,3 @@
 """Vortex Hub — control plane for paired agent devices."""
 
-__VORTEX_VERSION__ = "5.4"
+__VORTEX_VERSION__ = "5.5"
