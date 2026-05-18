@@ -32,15 +32,34 @@ from fastapi.responses import (
 )
 
 from . import __VORTEX_VERSION__, auth, db, templates, ws_router
+from .config import config
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — MUST boot before db.init(): it folds .env files into os.environ
+# and loads ~/vortex/config.json (the file the Settings tab writes), and
+# db.init() reads VORTEX_SYNC_URL/TOKEN.
 # ---------------------------------------------------------------------------
+_ENV_FILES = config.boot()
+
 _DEFAULT_DB = Path(os.path.expanduser("~/vortex/hub.db"))
-_DB_PATH = Path(os.environ.get("VORTEX_HUB_DB") or _DEFAULT_DB)
-_PUBLIC_URL = os.environ.get("VORTEX_HUB_PUBLIC_URL", "").rstrip("/")
+_DB_PATH = Path(config.get("VORTEX_HUB_DB") or _DEFAULT_DB)
+
+# Bootstrap-critical: read once here. The Settings tab persists changes to
+# config.json and tells the operator a restart is needed to apply them.
+for _k in ("VORTEX_SYNC_URL", "VORTEX_SYNC_TOKEN"):
+    _v = config.get(_k)
+    if _v and not os.environ.get(_k):
+        os.environ[_k] = _v   # db.init() reads these from os.environ
+
+print(f"==> Config: {len(_ENV_FILES)} .env file(s) + {config.path}")
 
 db.init(_DB_PATH)
+
+
+def _public_url_override() -> str:
+    """Live (re-read each call) so the Settings tab can change the URL
+    shown in pairing without a restart."""
+    return config.public_url_override()
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +107,9 @@ def health():
 # Helpers
 # ---------------------------------------------------------------------------
 def _hub_public_url(request: Request) -> str:
-    if _PUBLIC_URL:
-        return _PUBLIC_URL
+    override = _public_url_override()
+    if override:
+        return override
     fwd_proto = request.headers.get("x-forwarded-proto")
     fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     scheme = fwd_proto or request.url.scheme
@@ -179,8 +199,16 @@ def register_get(request: Request, invite: str = ""):
     if auth.current_user_optional(request) is not None:
         return RedirectResponse(url="/", status_code=303)
     if db.user_count() == 0:
+        # Bootstrap: first user always allowed regardless of mode.
         return HTMLResponse(templates.first_run_page())
-    return HTMLResponse(templates.register_page(invite=invite))
+    mode = config.registration_mode()
+    if mode == "closed":
+        return HTMLResponse(
+            templates.registration_closed_page(), status_code=403
+        )
+    return HTMLResponse(
+        templates.register_page(invite=invite, open_mode=(mode == "open"))
+    )
 
 
 @app.post("/register")
@@ -194,12 +222,22 @@ def register_post(
     is_bootstrap = (db.user_count() == 0)
     invite = invite.strip()
     username = username.strip()
+    # Bootstrap (first user) ignores the mode entirely.
+    mode = "invite" if is_bootstrap else config.registration_mode()
+
+    if mode == "closed":
+        return HTMLResponse(
+            templates.registration_closed_page(), status_code=403
+        )
 
     def err(msg: str) -> HTMLResponse:
         if is_bootstrap:
             return HTMLResponse(templates.first_run_page(error=msg), status_code=400)
         return HTMLResponse(
-            templates.register_page(error=msg, invite=invite, username=username),
+            templates.register_page(
+                error=msg, invite=invite, username=username,
+                open_mode=(mode == "open"),
+            ),
             status_code=400,
         )
 
@@ -217,7 +255,11 @@ def register_post(
     if is_bootstrap:
         # First user becomes admin; no invite required.
         user_id = db.create_user(username, password, is_admin=True)
+    elif mode == "open":
+        # Open registration: anyone may self-register, no invite needed.
+        user_id = db.create_user(username, password, is_admin=False)
     else:
+        # mode == "invite": a valid one-time code is mandatory.
         if not db.invite_is_valid(invite):
             return err("Invalid or already-used invite code")
         user_id = db.create_user(username, password, is_admin=False)
@@ -278,7 +320,7 @@ async def device_lock_acquire(device_id: str, request: Request,
         "mine": acquired,
         "label": lock.get("label") if lock else None,
         "expires_at": lock.get("expires_at") if lock else None,
-        "ttl": db.LOCK_TTL,
+        "ttl": db.lock_ttl(),
     }, status_code=200 if acquired else 409)
 
 
@@ -928,6 +970,84 @@ def admin_invites(request: Request,
 def admin_invites_create(user: dict = Depends(auth.require_admin)):
     db.create_invite(user["id"])
     return RedirectResponse(url="/admin/invites", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# V5.4: Settings tab (admin only). Tier A (restart-required: DB, port,
+# tunnel) + Tier B (live: public URL, lock/session TTL, registration mode).
+# Persists to ~/vortex/config.json via the config store; secrets are
+# write-only (blank submit = keep existing).
+# ---------------------------------------------------------------------------
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request,
+                  user: dict = Depends(auth.require_admin),
+                  saved: str = ""):
+    status = {
+        "backend": "libSQL replica" if config.get("VORTEX_SYNC_URL")
+                   else "local SQLite",
+        "db_path": str(_DB_PATH),
+        "version": __VORTEX_VERSION__,
+        "public_url": _hub_public_url(request),
+        "env_files": _ENV_FILES,
+        "config_path": str(config.path),
+        "users": db.user_count(),
+    }
+    return HTMLResponse(templates.settings_page(
+        user, config.public_view(), status, saved=bool(saved),
+    ))
+
+
+@app.post("/settings")
+async def settings_save(request: Request,
+                        user: dict = Depends(auth.require_admin)):
+    form = await request.form()
+    # Only persist keys the config spec knows about; the store itself
+    # also filters, but be explicit.
+    values = {k: str(v) for k, v in form.items() if k.startswith("VORTEX_")
+              or k in ("APP_PORT", "CLOUDFLARE_TUNNEL_TOKEN")}
+    config.set_many(values)
+    return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+
+@app.post("/api/settings/test-db")
+async def settings_test_db(request: Request,
+                           user: dict = Depends(auth.require_admin)):
+    """Validate a libSQL URL+token BEFORE saving, so the operator isn't
+    in a save→restart→fail→guess loop. If the token field is blank we
+    test against the currently-stored token (so 'just checking the URL'
+    works without re-pasting the secret)."""
+    body = await request.json()
+    url = str(body.get("url", "")).strip()
+    token = str(body.get("token", "")).strip() or config.get("VORTEX_SYNC_TOKEN")
+    if not url:
+        return JSONResponse({"ok": False, "error": "URL is required"})
+    try:
+        import libsql_experimental as libsql
+    except ImportError:
+        return JSONResponse({
+            "ok": False,
+            "error": "libsql-experimental isn't installed in this hub's "
+                     "venv, so the replica can't be used here even if the "
+                     "URL is valid. Run the hub where the wheel is "
+                     "available (Windows / Linux / cloud VM).",
+        })
+
+    def _probe():
+        import tempfile, os as _os
+        tmp = _os.path.join(tempfile.mkdtemp(), "probe.db")
+        conn = libsql.connect(tmp, sync_url=url, auth_token=token)
+        conn.sync()
+        conn.execute("SELECT 1")
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, _probe)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"})
+    return JSONResponse({"ok": True, "message": "Connected + synced OK."})
 
 
 # ---------------------------------------------------------------------------

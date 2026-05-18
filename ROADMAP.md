@@ -8,9 +8,37 @@ Complexity tags: 🟢 small (under 200 LOC), 🟡 medium (200–500), 🔴 large
 
 ---
 
-## V5.4 — find-my-device / fleet UX (candidate, not yet built)
+## V5.4 — Settings tab (admin config UI) — _shipped V5.4_
 
-User-requested. Ordered by value-per-effort.
+User-requested: configure the hub from the browser instead of editing
+env files, because the secret store is gitignored and not
+"human-accessible." Hub-only.
+
+- [x] **JSON-backed config store** 🟡 — _shipped_
+  `hub/config.py`: precedence real-env → `~/vortex/config.json` →
+  `.env` → default. `boot()` before `db.init()` (DB url/token can't
+  live in the DB — bootstrap paradox). Atomic write, `chmod 600`,
+  secrets never pushed back into `os.environ`.
+- [x] **Tier A — Connection & database (restart-required)** 🟡 —
+  _shipped_. `VORTEX_SYNC_URL`, `VORTEX_SYNC_TOKEN` (secret),
+  `VORTEX_HUB_DB`, `APP_PORT`, `CLOUDFLARE_TUNNEL_TOKEN` (secret) +
+  read-only status panel + pre-save **Test connection** probe.
+- [x] **Tier B — Behaviour (live, no restart)** 🟢 — _shipped_.
+  `VORTEX_HUB_PUBLIC_URL`, `VORTEX_LOCK_TTL`, `VORTEX_SESSION_TTL`
+  (both now resolve live everywhere), `VORTEX_REGISTRATION_MODE`
+  (open / invite / closed) with a registration gate on `/register`.
+- [x] **Secret masking** 🟢 — _shipped_. Write-only fields,
+  `set ✓ (…XXXX)` hint, blank-keeps-secret / blank-clears-non-secret;
+  env-overridden keys disabled with a notice.
+- [ ] **Tier C — user mgmt / backup / danger zone** 🟡 — _deferred_.
+  List/disable/delete accounts + promote admin; download a DB backup;
+  rotate-token / wipe-devices danger zone. Not started; revisit when
+  there's a multi-user fleet to manage.
+
+## V5.5 — find-my-device / fleet UX (candidate, deferred)
+
+User-requested. Ordered by value-per-effort. Recommended next after
+the Settings tab; not yet built.
 
 - [ ] **Device search bar** 🟢
   Client-only filter on the dashboard — substring match on device name

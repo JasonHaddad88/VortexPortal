@@ -529,7 +529,18 @@ def consume_pairing_code(code: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # Sessions
 # ---------------------------------------------------------------------------
+# Default; the live value comes from the config store (Settings tab,
+# V5.4). Kept as a module constant for back-compat with importers.
 SESSION_TTL = 30 * 24 * 3600  # 30 days
+
+
+def session_ttl() -> int:
+    """Live session lifetime (seconds). Settings-tab tunable."""
+    try:
+        from .config import config
+        return config.session_ttl()
+    except Exception:
+        return SESSION_TTL
 
 
 def create_session(user_id: int) -> str:
@@ -539,7 +550,7 @@ def create_session(user_id: int) -> str:
         con.execute(
             "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) "
             "VALUES (?, ?, ?, ?)",
-            (hash_token(token), user_id, now, now + SESSION_TTL),
+            (hash_token(token), user_id, now, now + session_ttl()),
         )
     return token
 
@@ -576,7 +587,17 @@ def delete_session(token: str) -> None:
 # user on two different browsers/devices gets two holders -> the second
 # one is blocked, which is exactly the "in use elsewhere" behaviour.
 # ---------------------------------------------------------------------------
+# Default; live value from the config store (Settings tab, V5.4).
 LOCK_TTL = 30  # seconds; the UI must heartbeat more often than this
+
+
+def lock_ttl() -> int:
+    """Live device-lock lease length (seconds). Settings-tab tunable."""
+    try:
+        from .config import config
+        return config.lock_ttl()
+    except Exception:
+        return LOCK_TTL
 
 
 def get_lock(device_id: str) -> Optional[dict]:
@@ -592,7 +613,7 @@ def get_lock(device_id: str) -> Optional[dict]:
 
 
 def acquire_lock(device_id: str, holder: str, label: str,
-                 *, force: bool = False, ttl: int = LOCK_TTL):
+                 *, force: bool = False, ttl: Optional[int] = None):
     """Try to acquire/refresh the lock.
 
     Returns (acquired: bool, lock: dict|None). acquired is True if
@@ -607,6 +628,8 @@ def acquire_lock(device_id: str, holder: str, label: str,
     converges within one poll. Kept transaction-free so it's identical
     on the sqlite3 and libSQL backends.
     """
+    if ttl is None:
+        ttl = lock_ttl()
     now = int(time.time())
     with _connect() as con:
         row = con.execute(
@@ -639,9 +662,12 @@ def acquire_lock(device_id: str, holder: str, label: str,
         }
 
 
-def refresh_lock(device_id: str, holder: str, ttl: int = LOCK_TTL) -> bool:
+def refresh_lock(device_id: str, holder: str,
+                 ttl: Optional[int] = None) -> bool:
     """Extend the lease. Returns False if the caller no longer holds it
     (someone force-stole it, or it expired and was retaken)."""
+    if ttl is None:
+        ttl = lock_ttl()
     now = int(time.time())
     with _connect() as con:
         cur = con.execute(

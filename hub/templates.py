@@ -8,6 +8,8 @@ Lifted from app_v1.py and extended with login/register/pair/admin pages.
 from html import escape
 from typing import Optional
 
+from . import __VORTEX_VERSION__
+
 
 def _qr_svg(text: str, *, box: int = 8, border: int = 2) -> str:
     """Render `text` as an SVG QR code suitable for inlining in HTML.
@@ -825,7 +827,8 @@ footer {
 
 
 def page(title: str, body: str, *, user: Optional[dict] = None,
-         active: str = "", chrome: bool = True, version: str = "5.3") -> str:
+         active: str = "", chrome: bool = True,
+         version: str = __VORTEX_VERSION__) -> str:
     """Wrap body in the standard page chrome (topbar + footer)."""
     if chrome:
         nav_items = [
@@ -834,6 +837,7 @@ def page(title: str, body: str, *, user: Optional[dict] = None,
         ]
         if user and user.get("is_admin"):
             nav_items.append(("/admin/invites", "Invites"))
+            nav_items.append(("/settings", "Settings"))
         links = "".join(
             f'<a class="{"active" if href == active else ""}" href="{href}">{escape(label)}</a>'
             for href, label in nav_items
@@ -887,8 +891,19 @@ def login_page(error: Optional[str] = None, next_url: str = "/") -> str:
 
 
 def register_page(error: Optional[str] = None,
-                  invite: str = "", username: str = "") -> str:
+                  invite: str = "", username: str = "",
+                  open_mode: bool = False) -> str:
     err = f'<div class="flash error">{escape(error)}</div>' if error else ""
+    if open_mode:
+        invite_field = (
+            f'<input type="hidden" name="invite" value="{escape(invite)}">'
+        )
+    else:
+        invite_field = (
+            '<label>Invite code '
+            f'<input name="invite" value="{escape(invite)}" required autofocus>'
+            '</label>'
+        )
     body = f"""<div class="center-wrap"><div class="auth-card">
   <div class="brand-large">
     <div class="logo"></div>
@@ -897,7 +912,7 @@ def register_page(error: Optional[str] = None,
   </div>
   {err}
   <form method="post" action="/register">
-    <label>Invite code <input name="invite" value="{escape(invite)}" required autofocus></label>
+    {invite_field}
     <label>Username <input name="username" value="{escape(username)}" autocomplete="username" required maxlength="40"></label>
     <label>Password <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
     <label>Confirm <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
@@ -908,6 +923,25 @@ def register_page(error: Optional[str] = None,
   </div>
 </div></div>"""
     return page("Register", body, chrome=False)
+
+
+def registration_closed_page() -> str:
+    """Shown when VORTEX_REGISTRATION_MODE=closed and a non-bootstrap visitor
+    hits /register. No form — just a dead end back to sign-in."""
+    body = """<div class="center-wrap"><div class="auth-card">
+  <div class="brand-large">
+    <div class="logo"></div>
+    <h1>Vortex<span class="accent">Hub</span></h1>
+    <p class="subtitle">Registration closed</p>
+  </div>
+  <div class="flash error">
+    New account registration is currently disabled by the administrator.
+  </div>
+  <div class="footer-link">
+    Already have an account? <a href="/login">Sign in</a>
+  </div>
+</div></div>"""
+    return page("Registration closed", body, chrome=False)
 
 
 def first_run_page(error: Optional[str] = None) -> str:
@@ -2147,6 +2181,194 @@ def admin_invites_page(user: dict, invites: list, hub_url: str) -> str:
   </form>
 </div>"""
     return page("Invites", body, user=user, active="/admin/invites")
+
+
+# ---------------------------------------------------------------------------
+# V5.4: Settings page (admin only)
+# ---------------------------------------------------------------------------
+_SETTINGS_META = {
+    "VORTEX_SYNC_URL": (
+        "Remote database URL",
+        "libsql://… Turso / libSQL replica endpoint. Blank = local SQLite only.",
+    ),
+    "VORTEX_SYNC_TOKEN": (
+        "Remote database token",
+        "libSQL auth token (JWT). Write-only — leave blank to keep the stored one.",
+    ),
+    "VORTEX_HUB_DB": (
+        "Local database path",
+        "Where the local SQLite / replica file lives. Blank = default (~/vortex/hub.db).",
+    ),
+    "APP_PORT": (
+        "Hub port",
+        "TCP port uvicorn binds to. Default 8000.",
+    ),
+    "CLOUDFLARE_TUNNEL_TOKEN": (
+        "Cloudflare tunnel token",
+        "Named-tunnel token for a stable public URL. Write-only — blank keeps it.",
+    ),
+    "VORTEX_HUB_PUBLIC_URL": (
+        "Public URL override",
+        "Forces the URL shown in pair links & invites (e.g. https://hub.example.com).",
+    ),
+    "VORTEX_LOCK_TTL": (
+        "Device lock TTL (seconds)",
+        "How long an in-use lock survives without a heartbeat. Minimum 5.",
+    ),
+    "VORTEX_SESSION_TTL": (
+        "Session TTL (seconds)",
+        "Login cookie lifetime. Minimum 300. Default = 30 days.",
+    ),
+    "VORTEX_REGISTRATION_MODE": (
+        "Registration mode",
+        "open = anyone may sign up · invite = code required · closed = no new accounts.",
+    ),
+}
+
+_TIER_A = ["VORTEX_SYNC_URL", "VORTEX_SYNC_TOKEN", "VORTEX_HUB_DB",
+           "APP_PORT", "CLOUDFLARE_TUNNEL_TOKEN"]
+_TIER_B = ["VORTEX_HUB_PUBLIC_URL", "VORTEX_LOCK_TTL",
+           "VORTEX_SESSION_TTL", "VORTEX_REGISTRATION_MODE"]
+
+_SETTINGS_TEST_JS = """
+<script>
+(function(){
+  var btn=document.getElementById('testdb');
+  if(!btn)return;
+  var out=document.getElementById('testdb-result');
+  btn.addEventListener('click',async function(){
+    var u=document.querySelector('[name=VORTEX_SYNC_URL]');
+    var t=document.querySelector('[name=VORTEX_SYNC_TOKEN]');
+    var url=(u?u.value:'').trim();
+    var token=(t?t.value:'').trim();
+    out.style.display='block';out.className='flash info';
+    out.textContent='Testing connection…';
+    btn.disabled=true;
+    try{
+      var r=await fetch('/api/settings/test-db',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({url:url,token:token})});
+      var j=await r.json();
+      if(j.ok){out.className='flash success';
+        out.textContent=j.message||'Connected OK.';}
+      else{out.className='flash error';out.textContent=j.error||'Failed.';}
+    }catch(e){out.className='flash error';out.textContent=String(e);}
+    btn.disabled=false;
+  });
+})();
+</script>"""
+
+
+def _settings_field(s: dict) -> str:
+    key = s["key"]
+    label, help_ = _SETTINGS_META.get(key, (key, ""))
+    overridden = s.get("source") == "env"
+    dis = " disabled" if overridden else ""
+    hs = "text-transform:none;letter-spacing:0;color:var(--muted);font-size:.72rem;line-height:1.4"
+
+    if key == "VORTEX_REGISTRATION_MODE":
+        cur = s["value"] or "invite"
+        opts = "".join(
+            f'<option value="{m}"{" selected" if m == cur else ""}>{m}</option>'
+            for m in ("open", "invite", "closed")
+        )
+        ctrl = f'<select name="{key}"{dis}>{opts}</select>'
+    elif s["secret"]:
+        ph = escape(s.get("secret_hint") or "not set")
+        ctrl = (f'<input type="password" name="{key}" value="" '
+                f'placeholder="{ph}" autocomplete="new-password"{dis}>')
+    else:
+        ctrl = (f'<input type="text" name="{key}" '
+                f'value="{escape(s["value"])}"{dis}>')
+
+    notes = f'<small style="{hs}">{escape(help_)}</small>'
+    if s["secret"]:
+        notes += (f'<small style="{hs}">Write-only — leave blank to keep '
+                  f'the current value.</small>')
+    if overridden:
+        notes += (f'<small style="{hs};color:var(--cyan)">Overridden by an '
+                  f'environment variable; edit the env to change this.</small>')
+    return f'<label>{escape(label)}{ctrl}{notes}</label>'
+
+
+def settings_page(user: dict, settings: list, status: dict,
+                  saved: bool = False) -> str:
+    by_key = {s["key"]: s for s in settings}
+
+    flash = ""
+    if saved:
+        flash = ('<div class="flash success">Settings saved. '
+                 'Restart-required changes apply after the next hub '
+                 'restart.</div>')
+
+    tier_a = "".join(_settings_field(by_key[k]) for k in _TIER_A
+                     if k in by_key)
+    tier_b = "".join(_settings_field(by_key[k]) for k in _TIER_B
+                     if k in by_key)
+
+    env_files = status.get("env_files") or []
+    env_files_txt = ", ".join(env_files) if env_files else "none"
+
+    status_rows = "".join(
+        f'<div class="row"><span class="k">{escape(k)}</span>'
+        f'<span class="v">{escape(str(v))}</span></div>'
+        for k, v in [
+            ("Version", f"V{status.get('version','')}"),
+            ("DB backend", status.get("backend", "")),
+            ("Local DB path", status.get("db_path", "")),
+            ("Public URL", status.get("public_url", "")),
+            ("Config file", status.get("config_path", "")),
+            (".env files read", env_files_txt),
+            ("User accounts", status.get("users", "")),
+        ]
+    )
+
+    body = f"""
+<div class="section-head"><h2>// Settings</h2></div>
+{flash}
+
+<div class="card" style="max-width:640px">
+  <h3 style="margin:0 0 .25rem;color:var(--cyan)">Hub status</h3>
+  <div class="kv">{status_rows}</div>
+</div>
+
+<form method="post" action="/settings" id="tierA">
+<div class="card" style="max-width:640px;margin-top:1.25rem">
+  <h3 style="margin:0 0 .25rem;color:var(--purple)">Connection &amp; database</h3>
+  <div class="flash info" style="margin:.5rem 0 1rem">
+    These are read once at boot — changes apply only after a hub restart.
+  </div>
+  {tier_a}
+  <div style="display:flex;gap:.6rem;align-items:center;margin-top:.5rem">
+    <button type="submit" class="btn btn-primary">Save</button>
+    <button type="button" class="btn" id="testdb">Test connection</button>
+  </div>
+  <div id="testdb-result" class="flash" style="display:none;margin-top:.75rem"></div>
+</div>
+</form>
+
+<form method="post" action="/settings">
+<div class="card" style="max-width:640px;margin-top:1.25rem">
+  <h3 style="margin:0 0 .25rem;color:var(--purple)">Behaviour</h3>
+  <div class="flash info" style="margin:.5rem 0 1rem">
+    These apply immediately — no restart needed.
+  </div>
+  {tier_b}
+  <div style="margin-top:.5rem">
+    <button type="submit" class="btn btn-primary">Save</button>
+  </div>
+</div>
+</form>
+{_SETTINGS_TEST_JS}
+<style>
+.kv .row {{ display:flex; justify-content:space-between; gap:1rem;
+  padding:.4rem 0; border-bottom:1px solid var(--border); font-size:.85rem; }}
+.kv .row:last-child {{ border-bottom:none; }}
+.kv .row .k {{ color:var(--muted); text-transform:uppercase;
+  letter-spacing:.08em; font-size:.7rem; }}
+.kv .row .v {{ color:var(--text); word-break:break-all; text-align:right; }}
+</style>"""
+    return page("Settings", body, user=user, active="/settings")
 
 
 # ---------------------------------------------------------------------------

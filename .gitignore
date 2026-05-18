@@ -17,3 +17,14 @@ logs/
 .claude/
 .vscode/
 .idea/
+
+# Secrets / local config — NEVER commit. The canonical store lives at
+# ~/vortex/config.json (outside the repo); these patterns just guard
+# against a copy ever landing inside the tree.
+.env
+.env.*
+!.env.example
+config.json
+vortex-config.json
+*.token
+mynotes.md.txt

@@ -3,6 +3,87 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.4] — 2026-05-18
+
+An admin-only **Settings tab** so the operator configures the hub from
+the browser instead of editing env files on the box. A JSON-backed
+config store (`~/vortex/config.json`) becomes the writable source of
+truth; a real environment variable still overrides it (per-invocation
+escape hatch). Hub-only; agent + Driver APK unchanged. Zero-config
+deployments are unaffected — every key has the old default.
+
+### Added
+- **`hub/config.py` — JSON-backed `Config` store.** Resolution
+  precedence (highest wins): real process env → `~/vortex/config.json`
+  → `.env` files (legacy `load_env_files`, folded into `os.environ` at
+  boot) → hard-coded default. `boot()` runs before `db.init()` so DB
+  url/token/path are resolvable at startup (bootstrap paradox: the DB
+  connection settings can't live in the DB). `config.json` is written
+  atomically and `chmod 600` where the OS supports it (it holds the
+  libSQL write token). Secrets are never mutated back into
+  `os.environ` from the UI, so an explicit env override stays
+  authoritative.
+- **Settings page (`GET/POST /settings`, admin-gated).**
+  - **Tier A — Connection & database (restart-required):**
+    `VORTEX_SYNC_URL`, `VORTEX_SYNC_TOKEN` (secret), `VORTEX_HUB_DB`,
+    `APP_PORT`, `CLOUDFLARE_TUNNEL_TOKEN` (secret). Read once at boot;
+    the form shows an "applies after restart" banner.
+  - **Tier B — Behaviour (live, no restart):**
+    `VORTEX_HUB_PUBLIC_URL`, `VORTEX_LOCK_TTL`, `VORTEX_SESSION_TTL`,
+    `VORTEX_REGISTRATION_MODE` (open / invite / closed). Read fresh on
+    every use — changes apply immediately.
+  - Read-only **Hub status** panel: version, DB backend, local DB
+    path, public URL, config-file path, `.env` files read, account
+    count.
+- **Secret masking.** Secret fields are write-only: never rendered
+  back, shown as a `set ✓ (…XXXX)` placeholder. Submitting blank for a
+  secret keeps the stored value (the masked UI can't accidentally wipe
+  a token); blank for a non-secret clears it. Verified no raw secret
+  reaches `public_view()` or the HTML.
+- **Pre-save "Test connection"** (`POST /api/settings/test-db`):
+  probes the libSQL URL+token in an executor (temp replica → `sync()`
+  → `SELECT 1`) before you commit to a save→restart→fail loop. Blank
+  token tests against the stored one. Clear message when
+  `libsql-experimental` isn't installed in the hub's venv.
+- **Live TTLs.** `db.lock_ttl()` / `db.session_ttl()` read the config
+  fresh; `acquire_lock`/`refresh_lock` default `ttl` to `lock_ttl()`,
+  `create_session` + the session cookie `max_age` use `session_ttl()`.
+  The two last static refs (`app.py` lock-`ttl` payload, `auth.py`
+  cookie `max_age`) now resolve live.
+- **Registration-mode gate.** `/register` (GET+POST) honour
+  `config.registration_mode()`: `closed` → 403 dead-end page (bootstrap
+  first-user always exempt); `open` → no invite needed (hidden field,
+  non-admin account); `invite` → existing one-time-code path. New
+  `templates.registration_closed_page()` + `register_page(open_mode=)`.
+- **Single-source version.** `templates.page()` now defaults its
+  footer version from `hub.__VORTEX_VERSION__` (bumped 5.3 → **5.4**)
+  so it can't drift again. Settings nav link is admin-only.
+- **`.gitignore` hardened.** `.env`, `.env.*` (keep `.env.example`),
+  `config.json`, `vortex-config.json`, `*.token` — the canonical
+  secret store lives at `~/vortex/config.json`, outside the tree.
+
+### Behaviour notes
+- **Env always wins.** If a key is set in the real environment the
+  Settings UI marks it "overridden by an environment variable" and
+  disables the input (a write to `config.json` wouldn't take effect).
+- **Tier C deferred** (per ROADMAP): user management, backup/restore,
+  danger zone. Find-my-device candidates (search bar, Play Sound, Find
+  Location, tags) remain recommended/deferred.
+
+### Smoke-tested
+- Config: defaults; persist + reload; live accessors read fresh;
+  blank-secret keeps / blank-non-secret clears; masking (`set ✓ (…9999)`,
+  no raw leak in `public_view` or HTML); env precedence
+  (`env` > `config` > `default`, `source_of` correct).
+- Templates: `settings_page` (saved flash, Test-connection wiring,
+  reg-mode `<select>` preselected, no raw secret, footer V5.4);
+  `register_page` invite vs `open_mode`; `registration_closed_page`.
+- App: imports clean on the SQLite fallback (no `libsql-experimental`
+  on Windows/3.14 — exercises the graceful path); `/settings`,
+  `/api/settings/test-db`, `/register` routes registered;
+  `lock_ttl=30`/`session_ttl=2592000` defaults; non-admin dashboard
+  hides Settings + Invites nav, admin shows both.
+
 ## [V5.3] — 2026-05-13
 
 A lease-based **"device in use" lock** so two sessions (or two hubs

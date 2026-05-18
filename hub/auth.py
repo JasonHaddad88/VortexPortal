@@ -87,7 +87,7 @@ def login(response: Response, user_id: int) -> str:
     response.set_cookie(
         SESSION_COOKIE, token,
         httponly=True, samesite="lax", secure=False,
-        max_age=db.SESSION_TTL,
+        max_age=db.session_ttl(),
     )
     return token
 

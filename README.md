@@ -195,12 +195,35 @@ app_v1.py           # V1.2 monolith, kept for fallback
 
 ## Customising
 
+### Settings tab (recommended for hub config)
+
+Since V5.4 the hub has an **admin-only Settings page** (`/settings` —
+the "Settings" nav link, shown to admins). It writes a JSON config
+store at `~/vortex/config.json` (mode 600), so you no longer need to
+edit env files to point at a remote DB, set the port, paste a
+Cloudflare token, or tweak lock/session TTL and registration mode.
+
+Precedence (highest wins): **real environment variable** →
+`~/vortex/config.json` → `.env` files → built-in default. So a real
+env var still overrides the UI (the Settings page marks such keys
+"overridden by an environment variable" and disables the field).
+**Tier A** keys (DB url/token, port, tunnel token) are read once at
+boot — changing them needs a hub restart; the page says so and offers
+a pre-save **Test connection** probe. **Tier B** keys (public-URL
+override, lock/session TTL, registration mode) apply live.
+`VORTEX_CONFIG_FILE` overrides the config-file path.
+
 | Env var                 | Default                       | What                                   |
 |-------------------------|-------------------------------|----------------------------------------|
 | `VORTEX_HUB_DB`         | `~/vortex/hub.db`             | Local DB file path (hub)               |
 | `VORTEX_SYNC_URL`       | *(unset → local-only)*        | libSQL remote primary URL (`libsql://…`) |
 | `VORTEX_SYNC_TOKEN`     | *(empty)*                     | Auth token for the libSQL remote       |
 | `VORTEX_HUB_PUBLIC_URL` | derived from request headers  | Override URL shown in pairing UI       |
+| `CLOUDFLARE_TUNNEL_TOKEN` | *(empty → quick tunnel)*    | Named-tunnel token for a stable URL    |
+| `VORTEX_LOCK_TTL`       | `30` (seconds, min 5)         | Device in-use lock lease TTL (live)    |
+| `VORTEX_SESSION_TTL`    | `2592000` (30 d, min 300)     | Login cookie lifetime (live)           |
+| `VORTEX_REGISTRATION_MODE` | `invite`                   | `open` / `invite` / `closed` (live)    |
+| `VORTEX_CONFIG_FILE`    | `~/vortex/config.json`        | Settings-tab config store path         |
 | `APP_PORT`              | `8000`                        | Local hub port                         |
 | `APP_DIR`               | `~/server` (Termux only)      | Where serve.sh / setup.sh install code |
 | `MODE`                  | `agent` (Termux serve.sh)     | `agent` or `hub`                       |
