@@ -202,7 +202,33 @@ hub, enrollment should be per-account, not per-hub.
 
 Future: drop dead db.device_locks; relay perf (connection reuse).
 
-## V5.16 — find-my-device / fleet UX (candidate, deferred)
+## V5.16 — direct-connect mode (Phase 1: input fast-path) — _shipped V5.16_
+
+Latency was structural: hub-relayed JPEG-over-WS through a quick
+tunnel. The cure is to get the hub out of the interactive path. Chosen
+architecture: agent serves the existing protocol on a local
+WebSocket; hub brokers address+ticket; browser races a direct
+connection on the LAN/mesh and falls back. Universal Python (no APK,
+no paid service), works on PC/SBC/IoT/phone.
+
+- [x] **Agent direct-WS server** 🟡 — _shipped_.
+  `websockets.serve` on `VORTEX_DIRECT_PORT` (default 8770); ticket
+  auth; reuses the existing op protocol via `_serve_ws`. `_local_hosts`
+  enumerates LAN + best-effort Tailscale IPs; pushed to the hub as
+  `direct_info` over the existing WS.
+- [x] **Hub `/devices/{id}/direct`** 🟢 — _shipped_. Owner-scoped
+  broker returns ws candidates + ticket; relay-safe so a different
+  node forwards the lookup to the holder.
+- [x] **Browser input fast-path** 🟢 — _shipped_. Screen page races
+  the direct WS, routes `op:"input"` over it, falls back to
+  `POST /input` on no route / timeout / error. Shows `(direct)` when
+  it took the direct path.
+
+### Phase 2 (next): move camera/screen frame streams onto the same
+direct socket → kills the video latency too. Likely needs a small
+browser-side frame renderer (binary WS → blob → `<img>`/canvas).
+
+## V5.17 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

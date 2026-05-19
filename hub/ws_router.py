@@ -52,6 +52,10 @@ class AgentConnection:
         # `rid`. We rely on the agent's send-lock keeping (header, binary)
         # atomic so this never gets confused across multiplexed streams.
         self._pending_binary_for_rid: Optional[str] = None
+        # V5.16: latest direct-connect advertisement from this agent
+        # ({port, hosts:[...], ticket}) so the hub can hand a browser the
+        # device's LAN/mesh address for a low-latency direct session.
+        self.direct_info: Optional[dict] = None
 
     async def _send(self, msg: dict) -> None:
         async with self._send_lock:
@@ -141,6 +145,13 @@ class AgentConnection:
         """Dispatch a TEXT message received from the agent to its waiter."""
         rid = msg.get("id")
         mtype = msg.get("type")
+        if mtype == "direct_info":
+            self.direct_info = {
+                "port": msg.get("port"),
+                "hosts": msg.get("hosts") or [],
+                "ticket": msg.get("ticket"),
+            }
+            return
         if mtype == "response":
             # Unary call waiting on this rid? Resolve it.
             fut = self._pending_unary.get(rid)

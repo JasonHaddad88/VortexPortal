@@ -70,6 +70,26 @@ To stop the hub: Ctrl+C in PowerShell.
    admin account, click **+ Self-Register this device**, then enroll
    other phones (self-register on each, or "Pair remote device").
 
+## Direct-connect mode (since V5.16)
+
+Latency-critical paths go **agent ↔ browser directly** when the
+browser is reachable to the device (same LAN or a WireGuard/Tailscale
+mesh) — the hub leaves the interactive path. The agent listens on
+`VORTEX_DIRECT_PORT` (default `8770`, set `0` to disable);
+`GET /devices/{id}/direct` hands the browser ws candidates + a ticket;
+the screen page races a direct WebSocket and routes input over it
+(shows `(direct)` when active). Falls back to the hub path
+automatically if no direct route works.
+
+**Universal:** pure-Python agent — works on PC, SBC, IoT, phone (no
+APK). **Free:** LAN or the free Tailscale tier. **Phase 1 covers
+input;** camera/screen frame streams move onto the same socket in the
+next phase.
+
+Trust: the direct WS is `ws://` (no TLS). Only expose `:8770` on
+networks you trust (LAN/mesh); on the public internet the hub path is
+the secure one.
+
 ## Multi-node control (since V5.15)
 
 Run as many nodes as you like against the shared DB. A device's live

@@ -22,6 +22,8 @@ import asyncio
 import json
 import mimetypes
 import os
+import secrets
+import socket
 import sys
 from pathlib import Path
 from typing import Optional
@@ -1088,6 +1090,118 @@ def _candidate_urls(cfg: dict) -> list:
     return out
 
 
+# ---------------------------------------------------------------------------
+# V5.16 Phase 1: direct-connect server. The agent already speaks the full
+# op protocol over `websockets`; here it ALSO listens, so a browser on
+# the same LAN / WireGuard-Tailscale mesh can drive this device WITHOUT
+# the hub in the path (kills relay/tunnel latency). Pure Python → works
+# on PC / SBC / IoT / phone, no APK. The hub only brokers the address +
+# a rotating ticket; everything falls back to the hub path if direct
+# isn't reachable.
+# ---------------------------------------------------------------------------
+try:
+    _DIRECT_PORT = int(os.environ.get("VORTEX_DIRECT_PORT", "8770") or "0")
+except ValueError:
+    _DIRECT_PORT = 0
+_DIRECT_TICKET = secrets.token_urlsafe(18)
+_direct_started = False
+
+
+async def _serve_ws(ws) -> None:
+    """The post-auth serve loop, shared by the hub client connection and
+    the direct-connect server (identical multiplexed op protocol)."""
+    session = Session(ws)
+    async for raw in ws:
+        if isinstance(raw, (bytes, bytearray)):
+            await session.route_binary_frame(raw)
+            continue
+        try:
+            msg = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if await session.route_text_frame(msg):
+            continue
+        if msg.get("type") == "request":
+            asyncio.create_task(_handle_request(session, msg))
+
+
+def _local_hosts() -> list:
+    """Reachable IPv4s a browser on the same LAN/mesh could dial."""
+    hosts = set()
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        hosts.add(s.getsockname()[0])
+        s.close()
+    except OSError:
+        pass
+    try:
+        for res in socket.getaddrinfo(socket.gethostname(), None,
+                                      socket.AF_INET):
+            hosts.add(res[4][0])
+    except OSError:
+        pass
+    try:
+        import shutil, subprocess
+        if shutil.which("tailscale"):
+            r = subprocess.run(["tailscale", "ip", "-4"],
+                               capture_output=True, text=True, timeout=4)
+            for ln in (r.stdout or "").splitlines():
+                ln = ln.strip()
+                if ln:
+                    hosts.add(ln)
+    except Exception:
+        pass
+    return sorted(h for h in hosts if h and not h.startswith("127.")
+                  and not h.startswith("169.254."))
+
+
+def _direct_info_msg() -> dict:
+    return {"type": "direct_info", "port": _DIRECT_PORT,
+            "hosts": _local_hosts(), "ticket": _DIRECT_TICKET}
+
+
+async def _direct_handler(ws, *args) -> None:
+    try:
+        first = await asyncio.wait_for(ws.recv(), timeout=10)
+        msg = json.loads(first)
+    except Exception:
+        try: await ws.close(code=1008)
+        except Exception: pass
+        return
+    if not (isinstance(msg, dict) and msg.get("type") == "hello"
+            and msg.get("ticket") == _DIRECT_TICKET):
+        try:
+            await ws.send(json.dumps({"type": "hello_fail"}))
+            await ws.close(code=1008)
+        except Exception:
+            pass
+        return
+    await ws.send(json.dumps({"type": "hello_ok"}))
+    await _serve_ws(ws)
+
+
+def _ensure_direct_server() -> None:
+    global _direct_started
+    if _direct_started or _DIRECT_PORT <= 0:
+        return
+    _direct_started = True
+
+    async def _boot():
+        try:
+            await websockets.serve(
+                _direct_handler, "0.0.0.0", _DIRECT_PORT,
+                ping_interval=PING_INTERVAL, ping_timeout=PING_TIMEOUT,
+                max_size=4 * 1024 * 1024)
+            print(f"==> Direct-connect server on :{_DIRECT_PORT} "
+                  f"(hosts: {', '.join(_local_hosts()) or 'none'})")
+        except Exception as e:
+            print(f"!! direct server failed on :{_DIRECT_PORT}: {e}",
+                  file=sys.stderr)
+
+    asyncio.ensure_future(_boot())
+
+
 async def _connect_once(cfg: dict, base_url: str) -> Optional[bool]:
     """Connect to one node, auth, serve until the WS closes. Returns:
         True  -> connection ended normally (try reconnect)
@@ -1155,27 +1269,15 @@ async def _connect_once(cfg: dict, base_url: str) -> Optional[bool]:
                     save_config(cfg)
             except Exception:
                 pass
-            session = Session(ws)
-
-            async for raw in ws:
-                if isinstance(raw, (bytes, bytearray)):
-                    # V3.0 uploads: hub sends raw chunks targeted at the rid
-                    # named in the most recent stream_chunk_header.
-                    await session.route_binary_frame(raw)
-                    continue
-                try:
-                    msg = json.loads(raw)
-                except (TypeError, ValueError):
-                    continue
-                # Stream control frames (chunk header / end) for inbound
-                # uploads route to whichever op opened a recv queue.
-                if await session.route_text_frame(msg):
-                    continue
-                if msg.get("type") == "request":
-                    # Each request runs concurrently — file streams shouldn't
-                    # block other ops. Session.send_lock keeps multiplexed
-                    # writes from tangling.
-                    asyncio.create_task(_handle_request(session, msg))
+            # V5.16: stand up the direct-connect server (once) and tell
+            # the hub our reachable addresses + ticket so a browser on
+            # the same LAN/mesh can bypass the hub for low latency.
+            _ensure_direct_server()
+            try:
+                await ws.send(json.dumps(_direct_info_msg()))
+            except Exception:
+                pass
+            await _serve_ws(ws)
             return True
     except ConnectionClosed as e:
         print(f"!! disconnected (code {e.code}): {e.reason or 'no reason'}")

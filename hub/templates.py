@@ -2476,7 +2476,72 @@ def device_screen_page(user: dict, device: dict) -> str:
     return [Math.round(xFrac * w), Math.round(yFrac * h)];
   }}
 
+  // V5.16: race a direct WebSocket to the agent (LAN / mesh) so input
+  // bypasses the hub. Falls back to the hub POST if no direct route.
+  let _directWS = null, _directNextId = 1;
+  const _directPending = new Map();
+  async function _connectDirect() {{
+    let info;
+    try {{
+      const r = await fetch(`/devices/${{encodeURIComponent(did)}}/direct`,
+                            {{cache:'no-store'}});
+      if (!r.ok) return; info = await r.json();
+    }} catch (e) {{ return; }}
+    if (!info || !info.ticket || !(info.ws || []).length) return;
+    const tries = info.ws.map(url => new Promise(resolve => {{
+      let s; try {{ s = new WebSocket(url); }} catch (e) {{ resolve(null); return; }}
+      const to = setTimeout(() => {{ try {{ s.close(); }} catch (_) {{}} resolve(null); }}, 1500);
+      s.onopen = () => s.send(JSON.stringify({{type:'hello', ticket: info.ticket}}));
+      s.onerror = () => {{ clearTimeout(to); resolve(null); }};
+      s.onmessage = ev => {{
+        let m; try {{ m = JSON.parse(ev.data); }} catch (_) {{ return; }}
+        if (m.type === 'hello_ok') {{ clearTimeout(to); resolve(s); }}
+        else if (m.type === 'hello_fail') {{ clearTimeout(to); try {{ s.close(); }} catch (_) {{}} resolve(null); }}
+      }};
+    }}));
+    const winner = (await Promise.all(tries)).find(s => s);
+    if (!winner) return;
+    _directWS = winner;
+    winner.onmessage = ev => {{
+      let m; try {{ m = JSON.parse(ev.data); }} catch (_) {{ return; }}
+      if (m.type === 'response' && m.id && _directPending.has(m.id)) {{
+        const {{resolve, timeout}} = _directPending.get(m.id);
+        clearTimeout(timeout); _directPending.delete(m.id);
+        resolve(m);
+      }}
+    }};
+    winner.onclose = () => {{ _directWS = null; _directPending.clear(); }};
+    setStatus('direct connect ok');
+  }}
+  _connectDirect();
+
+  function _directInput(cmd, timeoutMs) {{
+    return new Promise((resolve, reject) => {{
+      if (!_directWS || _directWS.readyState !== 1) return reject('no-direct');
+      const id = String(_directNextId++);
+      const timeout = setTimeout(() => {{
+        _directPending.delete(id); reject('timeout');
+      }}, timeoutMs);
+      _directPending.set(id, {{resolve, timeout}});
+      try {{
+        _directWS.send(JSON.stringify({{type:'request', id, op:'input',
+                                        args:{{command: cmd}}}}));
+      }} catch (e) {{
+        clearTimeout(timeout); _directPending.delete(id); reject(e);
+      }}
+    }});
+  }}
+
   async function postInput(cmd) {{
+    // Try direct first (lowest latency); fall back to hub POST.
+    try {{
+      const m = await _directInput(cmd, 1500);
+      if (m && m.ok) {{ setStatus(`${{cmd.type}} ok (direct)`); return; }}
+      if (m && !m.ok) {{
+        setStatus('input error: ' + String(m.error || '').slice(0,120));
+        return;
+      }}
+    }} catch (e) {{ /* fall through to hub path */ }}
     try {{
       const r = await fetch(`/devices/${{encodeURIComponent(did)}}/input`, {{
         method: 'POST',
@@ -2488,16 +2553,8 @@ def device_screen_page(user: dict, device: dict) -> str:
         const detail = (() => {{
           try {{ return JSON.parse(text).detail; }} catch (_) {{ return text; }}
         }})();
-        // 409 = another session holds the write-lock. Viewing the live
-        // mirror keeps working; only control is refused. Make it clear.
-        if (r.status === 409) {{
-          setStatus('🔒 ' + (detail || 'Another session is controlling this device') +
-                    ' (you can still watch live)');
-        }} else {{
-          setStatus('input error: ' + detail.slice(0, 120));
-        }}
+        setStatus('input error: ' + detail.slice(0, 120));
       }} else {{
-        // brief confirm flash so the user knows the click registered
         setStatus(`${{cmd.type}} ok`);
       }}
     }} catch (e) {{

@@ -3,6 +3,65 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.16] — 2026-05-20
+
+**Phase 1 of "AnyDesk-style" direct-connect: the hub leaves the
+interactive path.** The latency you hit was structural — every frame
+and click was hopping through the hub (and a relay on top, with V5.15).
+The agent now *also* listens, so a browser on the same LAN or
+WireGuard/Tailscale mesh talks **directly to it** for the
+latency-critical path. Pure Python → covers PC / SBC / IoT / phone, no
+APK, no paid service. Falls back to the hub path transparently when no
+direct route is available.
+
+### Added — agent direct-WebSocket server
+- `agent.agent` (`__VORTEX_AGENT_VERSION__` 5.9 → 5.16). The post-auth
+  serve loop is factored into `_serve_ws(ws)` and reused by the new
+  `_direct_handler`. `websockets.serve()` runs on
+  `VORTEX_DIRECT_PORT` (default **8770**, 0 = off) bound to
+  `0.0.0.0`. Handshake: client sends `{type:"hello", ticket}` →
+  `{type:"hello_ok"}` → identical multiplexed op protocol the hub
+  uses. Ticket is per-process random; rotated when the agent restarts.
+- `_local_hosts()` enumerates the agent's reachable IPv4s (default-
+  route IP, all hostname A-records, and — best-effort — `tailscale
+  ip -4`) so a browser on the LAN/mesh knows where to dial.
+- After authenticating with the hub the agent now also pushes
+  `{type:"direct_info", port, hosts:[...], ticket}` on the existing WS.
+
+### Added — hub /direct broker + browser fast-path
+- `ws_router.AgentConnection.direct_info` stashes the latest
+  advertisement; `handle_incoming` recognises the new frame type.
+- **`GET /devices/{id}/direct`** (auth, owner-scoped) returns
+  `{ws:[ws://host:port/, …], ticket}` for the device's current direct
+  candidates; empty when the agent isn't here or didn't advertise.
+  The V5.15 cross-node relay regex now also covers `/direct`, so this
+  lookup is forwarded transparently to whichever node holds the
+  socket.
+- **Screen page (`device_screen_page`)** — on load, races a direct
+  WebSocket to each candidate, authenticates with the ticket, and
+  routes input over that WS (`type:"request", op:"input"`). Input
+  shows `"<type> ok (direct)"` when it took the direct path. If no
+  direct route works it falls back to the existing `POST /input`
+  unchanged — control never silently breaks.
+
+### Behaviour notes
+- Phase 1 covers **input** end-to-end. Phase 2 will move camera/screen
+  frames onto the same direct socket; for now those stay MJPEG via the
+  hub.
+- Direct WS is `ws://` (no TLS). Trust model: ticket auth + you should
+  only expose `:8770` on networks you trust (LAN / mesh). On the
+  public internet, the hub path remains the secure one.
+- Hub + agent; no schema change. Versions 5.15 → 5.16 (agent too).
+
+### Smoke-tested
+- `_local_hosts` discovers real IPv4s; `_direct_info_msg` shape;
+  `AgentConnection.handle_incoming` captures `direct_info`;
+  `/devices/{id}/direct` returns ws candidates + ticket when online &
+  advertised, empty otherwise, 404 for non-owned; relay regex includes
+  `/direct`; agent uses the factored `_serve_ws` + announces;
+  screen-page JS has the direct ticket flow + the POST fallback;
+  footer 5.16.
+
 ## [V5.15] — 2026-05-19
 
 Three things: **kill the bogus "Controlled" lock** (it was 409-blocking

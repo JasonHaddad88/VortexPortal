@@ -115,7 +115,7 @@ app = FastAPI(title="Vortex Hub", version=__VORTEX_VERSION__)
 # ---------------------------------------------------------------------------
 _RELAY_RE = re.compile(
     r"^/devices/(?P<did>[^/]+)/"
-    r"(?:files(?:/|$)|camera/|screen/|input$|theft/capture$)"
+    r"(?:files(?:/|$)|camera/|screen/|input$|theft/capture$|direct$)"
     r"|^/api/devices/(?P<did2>[^/]+)/(?:info$|screen-size$)"
 )
 
@@ -1052,6 +1052,25 @@ _MJPEG_BOUNDARY = "vortexframe"
 # `input` to the agent, which talks to the Driver's :5097 socket. Coords
 # are in REAL phone-screen pixels -- the browser asks /screen-size on
 # page load to know what to scale to.
+
+@app.get("/devices/{device_id}/direct")
+def device_direct(device_id: str, request: Request,
+                  user: dict = Depends(auth.require_user)):
+    """V5.16: hand the browser the device's own LAN/mesh address + a
+    short ticket so it can open a DIRECT WebSocket to the agent and skip
+    the hub for the latency-critical path. Only the node holding the
+    agent's socket has direct_info; the relay middleware forwards this
+    lookup there transparently. Empty `ws` → just use the hub path."""
+    if db.get_device_for_user(device_id, user["id"]) is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    conn = ws_router.registry.get(device_id)
+    di = getattr(conn, "direct_info", None) if conn else None
+    if not di or not di.get("port") or not di.get("hosts"):
+        return JSONResponse({"ws": [], "ticket": None})
+    port = di["port"]
+    cands = [f"ws://{h}:{port}/" for h in di["hosts"]]
+    return JSONResponse({"ws": cands, "ticket": di.get("ticket")})
+
 
 @app.post("/devices/{device_id}/input")
 async def device_input(device_id: str, request: Request,
