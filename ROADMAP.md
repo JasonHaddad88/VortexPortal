@@ -174,7 +174,17 @@ hub, enrollment should be per-account, not per-hub.
   code → Sign In info banner (configured vs local-account, with the
   env-var unblock for the latter). Security gate unchanged.
 
-## V5.14 — find-my-device / fleet UX (candidate, deferred)
+## V5.14 — cross-node device presence (fix "in DB, can't control") — _shipped V5.14_
+
+- [x] **device_presence + "On its node" deep-link** 🟡 — _shipped_.
+  The node holding an agent's socket heartbeats presence into the
+  shared DB; other nodes show "On its node" + a one-click deep link
+  and grey out local control instead of a misleading "Offline"; 503s
+  point at the holding node. IMEI idea rejected (Android-blocked;
+  identity wasn't the issue, connection locality was). Future:
+  transparent cross-node relay (incl. stream proxying) — deferred.
+
+## V5.15 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

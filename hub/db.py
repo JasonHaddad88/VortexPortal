@@ -131,6 +131,12 @@ CREATE TABLE IF NOT EXISTS node_endpoints (
     label     TEXT,
     last_seen INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS device_presence (
+    device_id TEXT    PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    node_url  TEXT    NOT NULL,
+    last_seen INTEGER NOT NULL
+);
 """
 
 
@@ -1226,13 +1232,70 @@ def list_node_endpoints(max_age: int = 120) -> list:
         return [dict(r) for r in rows]
 
 
+# --- V5.14: device->node presence ------------------------------------------
+# A device's live WebSocket lives in ONE node's in-memory registry. This
+# table records which node currently holds it, so other nodes (sharing
+# the replicated DB) can say "Online @ <node>" + deep-link control there
+# instead of a misleading bare "Offline".
+def publish_device_presence(device_id: str, node_url: str) -> None:
+    node_url = (node_url or "").strip().rstrip("/")
+    if not device_id or not node_url:
+        return
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO device_presence (device_id, node_url, last_seen) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(device_id) DO UPDATE SET "
+            "node_url=excluded.node_url, last_seen=excluded.last_seen",
+            (device_id, node_url, int(time.time())),
+        )
+
+
+def clear_device_presence(device_id: str, node_url: str) -> None:
+    """Best-effort: only clear if WE were the recorded holder (don't
+    stomp a presence row a newer connection on another node just set)."""
+    node_url = (node_url or "").strip().rstrip("/")
+    with _connect() as con:
+        con.execute(
+            "DELETE FROM device_presence WHERE device_id = ? AND node_url = ?",
+            (device_id, node_url),
+        )
+
+
+def presence_for_user(owner_id: int, max_age: int = 90) -> dict:
+    """{device_id: node_url} for this account's devices with a fresh
+    presence heartbeat (live on some node)."""
+    cutoff = int(time.time()) - max(45, int(max_age))
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT p.device_id, p.node_url FROM device_presence p "
+            "JOIN devices d ON d.id = p.device_id "
+            "WHERE d.owner_id = ? AND p.last_seen >= ?",
+            (owner_id, cutoff),
+        ).fetchall()
+        return {r["device_id"]: r["node_url"] for r in rows}
+
+
+def get_device_presence(device_id: str, max_age: int = 90) -> Optional[str]:
+    cutoff = int(time.time()) - max(45, int(max_age))
+    with _connect() as con:
+        row = con.execute(
+            "SELECT node_url FROM device_presence "
+            "WHERE device_id = ? AND last_seen >= ?",
+            (device_id, cutoff),
+        ).fetchone()
+        return row["node_url"] if row else None
+
+
 def purge_expired() -> None:
     """Housekeeping: drop expired sessions, pairing codes, device locks,
-    and stale node endpoints (unseen for > 1 h)."""
+    stale node endpoints and stale device presence (unseen for > 1 h)."""
     now = int(time.time())
     with _connect() as con:
         con.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
         con.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (now,))
         con.execute("DELETE FROM device_locks WHERE expires_at < ?", (now,))
         con.execute("DELETE FROM node_endpoints WHERE last_seen < ?",
+                    (now - 3600,))
+        con.execute("DELETE FROM device_presence WHERE last_seen < ?",
                     (now - 3600,))

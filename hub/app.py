@@ -136,6 +136,14 @@ async def _node_heartbeat_loop():
             url = _resolve_public_url()
             if url:
                 db.publish_node_endpoint(url, label=f"v{__VORTEX_VERSION__}")
+                # V5.14: refresh device->node presence for every agent
+                # whose live socket THIS node currently holds, so other
+                # nodes can point control at us instead of saying Offline.
+                for _did in list(ws_router.registry.online_ids()):
+                    try:
+                        db.publish_device_presence(_did, url)
+                    except Exception:
+                        pass
         except Exception:
             pass
         await asyncio.sleep(30)
@@ -178,6 +186,36 @@ def _resolve_public_url() -> str:
     return (_public_url_override()
             or _PUBLIC_URL_CACHE
             or os.environ.get("VORTEX_DETECTED_PUBLIC_URL", "").strip().rstrip("/"))
+
+
+def _other_node_for(device_id: str) -> Optional[str]:
+    """V5.14. If this device's live socket is NOT on this node but a
+    fresh presence row says it's on a *different* node, return that
+    node's URL — so the UI can deep-link control there instead of
+    lying 'Offline'. Returns None when it's controllable here, genuinely
+    offline, or only reachable via this same node."""
+    if device_id in ws_router.registry.online_ids():
+        return None
+    try:
+        node = db.get_device_presence(device_id)
+    except Exception:
+        return None
+    if not node:
+        return None
+    here = (_resolve_public_url() or "").rstrip("/")
+    if here and node.rstrip("/") == here:
+        return None  # presence points at us but our registry lost it
+    return node.rstrip("/")
+
+
+def _offline_detail(device_id: str) -> str:
+    """Detail for the 503 when an agent isn't connected to THIS node."""
+    other = _other_node_for(device_id)
+    if other:
+        return (f"This device's live connection is on another node. "
+                f"Control it there: {other}/devices/{device_id}")
+    return ("Device offline (no agent connected to any node — start "
+            "serve.sh on the device).")
 
 
 # --- V5.5: self-register helpers -------------------------------------------
@@ -416,19 +454,41 @@ def register_post(
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
+def _elsewhere_map(owner_id: int, online_set: set) -> dict:
+    """{device_id: node_url} for this account's devices that are NOT
+    live on THIS node but have a fresh presence row on a different one.
+    Drives the 'On its node' badge + deep-link instead of bare Offline."""
+    here = (_resolve_public_url() or "").rstrip("/")
+    out = {}
+    try:
+        for did, url in db.presence_for_user(owner_id).items():
+            if did in online_set:
+                continue
+            u = (url or "").rstrip("/")
+            if u and u != here:
+                out[did] = u
+    except Exception:
+        pass
+    return out
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, user: dict = Depends(auth.require_user),
               selfreg: str = ""):
     devices = db.list_devices(user["id"])
     online = ws_router.registry.online_ids()
+    elsewhere = _elsewhere_map(user["id"], online)
     return HTMLResponse(templates.dashboard_page(
-        user, devices, online, selfreg=bool(selfreg)))
+        user, devices, online, selfreg=bool(selfreg),
+        elsewhere=elsewhere))
 
 
 @app.get("/api/online")
 def api_online(request: Request, user: dict = Depends(auth.require_user)):
     user_devices = {d["id"] for d in db.list_devices(user["id"])}
-    online = list(user_devices & ws_router.registry.online_ids())
+    online_set = ws_router.registry.online_ids()
+    online = list(user_devices & online_set)
+    elsewhere = _elsewhere_map(user["id"], online_set)
     # V5.3: fold lock state into the existing 5s dashboard poll so a
     # device freeing up reflects quickly without a separate request.
     holder = _lock_holder(request, user)
@@ -438,7 +498,7 @@ def api_online(request: Request, user: dict = Depends(auth.require_user)):
             "label": lk.get("label"),
             "mine": lk.get("holder") == holder,
         }
-    return {"online": online, "locks": locks}
+    return {"online": online, "locks": locks, "elsewhere": elsewhere}
 
 
 # --- V5.3: device-lock acquire / refresh / release -------------------------
@@ -502,7 +562,7 @@ async def api_device_info(device_id: str,
     conn = ws_router.registry.get(device_id)
     if conn is None:
         return JSONResponse(
-            {"ok": False, "error": "Device offline"}, status_code=200,
+            {"ok": False, "error": _offline_detail(device_id)}, status_code=200,
         )
     try:
         result = await conn.request("device_info", timeout=15.0)
@@ -771,7 +831,7 @@ async def device_thumb(device_id: str, rel: str,
         raise HTTPException(status_code=404, detail="Device not found")
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
     try:
         result = await conn.request("thumbnail",
                                     {"path": rel, "size": size},
@@ -825,7 +885,7 @@ async def device_upload(device_id: str, rel: str, request: Request,
     _guard_write_lock(device_id, request, user, "upload")
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
 
     if not rel or rel.endswith("/"):
         raise HTTPException(status_code=400,
@@ -873,7 +933,7 @@ async def _browse_or_download(device_id: str, rel: str, user: dict,
     conn = ws_router.registry.get(device_id)
     if conn is None:
         return HTMLResponse(
-            templates.files_error_page(user, d, "Device is offline."),
+            templates.files_error_page(user, d, _offline_detail(device_id)),
             status_code=503,
         )
 
@@ -971,7 +1031,7 @@ async def api_device_cameras(device_id: str,
         raise HTTPException(status_code=404, detail="Device not found")
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
     try:
         result = await conn.request("camera_info", timeout=10)
     except ws_router.AgentError as e:
@@ -1002,7 +1062,7 @@ async def device_input(device_id: str, request: Request,
     _guard_write_lock(device_id, request, user, "control")
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
     try:
         cmd = await request.json()
     except ValueError:
@@ -1032,7 +1092,7 @@ async def api_device_screen_size(device_id: str,
         raise HTTPException(status_code=404, detail="Device not found")
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
     try:
         result = await conn.request(
             "input", {"command": {"type": "screen_size"}}, timeout=5.0,
@@ -1061,7 +1121,7 @@ async def device_screen_live(device_id: str, request: Request,
     # READ (V5.6): live view / snapshot never locks — freely concurrent.
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
 
     stream = conn.stream("screen_stream", {}, start_timeout=10)
     try:
@@ -1124,7 +1184,7 @@ async def device_camera_live(device_id: str, request: Request,
     # READ (V5.6): live view / snapshot never locks — freely concurrent.
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
 
     # Open the stream eagerly so a precondition failure (Driver APK not
     # installed, no camera permission, etc.) surfaces as a clean 502 with
@@ -1195,7 +1255,7 @@ async def device_camera_capture(device_id: str, request: Request,
     # READ (V5.6): live view / snapshot never locks — freely concurrent.
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
 
     # Open the stream eagerly so we can fail with a clean HTTP error before
     # we've sent any response bytes if the agent rejects the op.
@@ -1585,6 +1645,7 @@ def _theft_dashboard_data(user: dict) -> dict:
     uid = user["id"]
     devices = db.list_devices(uid)
     online = ws_router.registry.online_ids()
+    elsewhere = _elsewhere_map(uid, online)
     states = db.theft_states_for_user(uid)
     last_loc = db.latest_location_per_device(uid)
     last_cap = db.last_capture_per_device(uid)
@@ -1615,6 +1676,7 @@ def _theft_dashboard_data(user: dict) -> dict:
         rows.append({
             "id": did, "name": d["name"],
             "online": did in online,
+            "elsewhere": elsewhere.get(did),
             "armed": bool(st.get("armed")),
             "interval_s": st.get("interval_s"),
             "opts": opts,
@@ -1761,7 +1823,7 @@ async def theft_capture(device_id: str, request: Request,
         raise HTTPException(status_code=400, detail="Unknown capture kind")
     conn = ws_router.registry.get(device_id)
     if conn is None:
-        raise HTTPException(status_code=503, detail="Device is offline")
+        raise HTTPException(status_code=503, detail=_offline_detail(device_id))
     try:
         mid = await _capture_to_store(
             device_id, user["id"], kind, "manual", conn=conn,
@@ -1925,6 +1987,15 @@ async def ws_agent(ws: WebSocket):
     conn = ws_router.AgentConnection(ws, device_id, device["owner_id"], device["name"])
     await ws_router.registry.register(conn)
     db.touch_device(device_id)
+    # V5.14: record that THIS node now holds the live socket, so other
+    # nodes show "Online @ here" + deep-link control instead of Offline.
+    _node_url = ""
+    try:
+        _node_url = _resolve_public_url()
+        if _node_url:
+            db.publish_device_presence(device_id, _node_url)
+    except Exception:
+        pass
     try:
         # V5.9: hand the agent the current live node list on every connect
         # (cheap, always fresh) so it can fail over without a hand-set URL.
@@ -1961,3 +2032,8 @@ async def ws_agent(ws: WebSocket):
         pass
     finally:
         await ws_router.registry.unregister(conn)
+        try:
+            if _node_url:
+                db.clear_device_presence(device_id, _node_url)
+        except Exception:
+            pass

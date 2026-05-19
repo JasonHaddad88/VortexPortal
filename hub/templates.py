@@ -963,19 +963,42 @@ def first_run_page(error: Optional[str] = None) -> str:
 
 
 def dashboard_page(user: dict, devices: list, online: set,
-                   selfreg: bool = False) -> str:
+                   selfreg: bool = False, elsewhere: dict = None) -> str:
+    elsewhere = elsewhere or {}
     cards = []
     for d in devices:
         did = escape(d["id"])
         name = escape(d["name"])
         is_online = d["id"] in online
-        badge_cls = "online" if is_online else "offline"
-        badge_lbl = "Online" if is_online else "Offline"
+        other_node = elsewhere.get(d["id"])  # live on a DIFFERENT node
+        if is_online:
+            badge_cls, badge_lbl = "online", "Online"
+        elif other_node:
+            badge_cls, badge_lbl = "online", "On its node"
+        else:
+            badge_cls, badge_lbl = "offline", "Offline"
         last_seen = "never" if not d.get("last_seen") else f"Δ {_ago(d['last_seen'])}"
         # V5.1 layout: status-col on the right has the online/offline badge
         # stacked over a trashcan icon-button. Info circle sits in the meta
         # row and pops a modal on click. Action row is exactly 4 buttons.
-        cards.append(f"""<div class="card" data-device-id="{did}" data-device-name="{name}">
+        _elsewhere_attr = escape(other_node) if other_node else ""
+        if other_node:
+            _actions = (
+                f'<div class="actions compact" data-actions>'
+                f'<a class="btn btn-primary" style="flex:1" '
+                f'href="{escape(other_node)}/devices/{did}">'
+                f'Control on its node →</a>'
+                f'<a class="btn" href="/devices/{did}">Edit</a></div>'
+            )
+        else:
+            _actions = (
+                f'<div class="actions compact" data-actions>'
+                f'<a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>'
+                f'<a class="btn" href="/devices/{did}/camera">Camera</a>'
+                f'<a class="btn" href="/devices/{did}/screen">Screen</a>'
+                f'<a class="btn" href="/devices/{did}">Edit</a></div>'
+            )
+        cards.append(f"""<div class="card" data-device-id="{did}" data-device-name="{name}" data-elsewhere="{_elsewhere_attr}">
   <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:.5rem;gap:.6rem">
     <h3 style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">{name}</h3>
     <div class="status-col">
@@ -1011,12 +1034,7 @@ def dashboard_page(user: dict, devices: list, online: set,
     <span data-lock-label>Being controlled</span>
     <button class="btn btn-small" type="button" data-take-control>Take control</button>
   </div>
-  <div class="actions compact" data-actions>
-    <a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>
-    <a class="btn" href="/devices/{did}/camera">Camera</a>
-    <a class="btn" href="/devices/{did}/screen">Screen</a>
-    <a class="btn" href="/devices/{did}">Edit</a>
-  </div>
+  {_actions}
 </div>""")
 
     if cards:
@@ -1153,12 +1171,19 @@ async function pollOnline() {{
     if (!r.ok) return;
     const data = await r.json();
     const online = new Set(data.online || []);
+    const elsewhere = data.elsewhere || {{}};
     const locks = data.locks || {{}};
     document.querySelectorAll('[data-device-id]').forEach(card => {{
       const id = card.dataset.deviceId;
       const badge = card.querySelector('[data-status]');
       if (!badge) return;
       if (online.has(id)) {{ badge.className = 'badge online'; badge.textContent = 'Online'; }}
+      else if (elsewhere[id]) {{
+        // Live on another node — don't lie 'Offline' and don't flip the
+        // deep-link actions the server rendered.
+        badge.className = 'badge online'; badge.textContent = 'On its node';
+        return;
+      }}
       else {{
         badge.className = 'badge offline'; badge.textContent = 'Offline';
         renderStats(card, null);
@@ -1726,8 +1751,19 @@ def theft_dashboard_page(user: dict, rows: list, media: list,
         did = escape(r["id"])
         nm = escape(r["name"])
         on = r["online"]
-        onb = (f'<span class="badge {"online" if on else "offline"}">'
-               f'{"Online" if on else "Offline"}</span>')
+        other = r.get("elsewhere")
+        if on:
+            onb = '<span class="badge online">Online</span>'
+        elif other:
+            onb = (f'<span class="badge online" '
+                   f'title="{escape(other)}">On its node</span>')
+        else:
+            onb = '<span class="badge offline">Offline</span>'
+        # Live capture only works on the node holding the socket; point
+        # the device + Manage links there when it's elsewhere. Arm/disarm
+        # is a DB write so it's effective from any node.
+        theft_href = (f'{escape(other)}/devices/{did}/theft' if other
+                      else f'/devices/{did}/theft')
         if r["armed"]:
             o = r["opts"]
             kinds = "".join(k for k, on_ in (
@@ -1757,11 +1793,11 @@ def theft_dashboard_page(user: dict, rows: list, media: list,
         else:
             loc = "—"
         tr.append(f"""<tr>
-  <td><a href="/devices/{did}/theft">{nm}</a></td>
+  <td><a href="{theft_href}">{nm}</a></td>
   <td>{onb}</td><td>{armb}</td>
   <td>{cap}</td><td>{loc}</td>
   <td style="text-align:right">{act}
-    <a class="btn btn-small" href="/devices/{did}/theft">Manage</a></td>
+    <a class="btn btn-small" href="{theft_href}">Manage</a></td>
 </tr>""")
     table = ("".join(tr) if tr else
              '<tr><td colspan="6" style="color:var(--muted)">'

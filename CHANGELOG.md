@@ -3,6 +3,57 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.14] — 2026-05-19
+
+**Fix: "in the DB but can't be controlled" across multiple nodes.** A
+device's live WebSocket lives in exactly one node's in-memory
+registry. With the shared/replicated DB, every node *lists* the device
+but only the node its agent attached to can control it — other nodes
+showed a misleading bare "Offline". Now they say **"On its node"** and
+deep-link control to the node that actually holds the socket
+(device→node presence + grey-out, the chosen scope).
+
+### Added
+- **`device_presence` table + helpers** (`publish_device_presence`,
+  `clear_device_presence` (holder-scoped), `presence_for_user`,
+  `get_device_presence`; stale rows pruned in `purge_expired`). The
+  node holding an agent's socket records "device X is live here" on
+  connect and refreshes it every 30 s via the existing node heartbeat
+  loop; cleared on disconnect.
+- **`_elsewhere_map` / `_other_node_for` / `_offline_detail`** — a
+  device not live on *this* node but with a fresh presence row on a
+  *different* node is "elsewhere". Control 503s (camera/screen/files/
+  input/theft capture/device-info) now say *"This device's live
+  connection is on another node. Control it there:
+  &lt;node&gt;/devices/&lt;id&gt;"* instead of bare "Device offline";
+  genuinely-offline devices get a clearer "start serve.sh" message.
+- **Dashboard**: an elsewhere device shows an **"On its node"** badge,
+  its action row is replaced by a single **"Control on its node →"**
+  deep link (+ Edit), and the 5 s `/api/online` poll (now returning an
+  `elsewhere` map) keeps that state instead of flipping it to Offline.
+- **Theft Dashboard**: overview rows show "On its node" and the
+  device/Manage links deep-link to the holding node (arm/disarm stay
+  local — they're DB writes effective from any node; only live capture
+  needs the holding node).
+
+### Notes
+- This is the *presence + deep-link* scope (per your choice), not a
+  transparent cross-node relay — control fully works, just on the node
+  the agent is attached to, one click away. Why IMEI was rejected:
+  Android 10+ blocks it for non-system apps and Termux can't read it;
+  the agent already persists a stable `device_id`, so identity wasn't
+  the issue — connection locality was. Hub-only; agent unchanged;
+  5.13 → 5.14.
+
+### Smoke-tested
+- presence publish/list/owner-scope/staleness/purge/holder-scoped
+  clear; `_elsewhere_map` skips locally-online / same-node / stale;
+  `_other_node_for`/`_offline_detail` pointer vs genuine-offline;
+  dashboard elsewhere badge + deep-link + grey-out (no local
+  camera/screen for elsewhere device) while normal devices keep
+  actions; `/api/online` returns `elsewhere`; Theft Dashboard rollup +
+  deep-links.
+
 ## [V5.13] — 2026-05-19
 
 **Fix: "Set up remote database" silently bounced back to Sign In.**
