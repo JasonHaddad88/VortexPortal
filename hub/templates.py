@@ -2938,7 +2938,8 @@ def settings_page(user: dict, settings: list, status: dict,
     return page("Settings", body, user=user, active="/settings")
 
 
-def setup_page(settings: list, status: dict, *, saved: bool = False) -> str:
+def setup_page(settings: list, status: dict, *, saved: bool = False,
+               error: str = "") -> str:
     """V5.7 pre-auth bootstrap. Same fields as the admin Settings tab,
     but reachable WITHOUT logging in — only while the node has no
     accounts (fresh device / remote not yet configured). Saving applies
@@ -2947,7 +2948,9 @@ def setup_page(settings: list, status: dict, *, saved: bool = False) -> str:
     by_key = {s["key"]: s for s in settings}
 
     flash = ""
-    if saved:
+    if error:
+        flash = f'<div class="flash error">{escape(error)}</div>'
+    elif saved:
         flash = ('<div class="flash success">Saved &amp; reconnected. '
                  'If your account lives in the remote database you can '
                  'sign in now.</div>')
@@ -3003,7 +3006,20 @@ def setup_page(settings: list, status: dict, *, saved: bool = False) -> str:
   </div>
 </div>
 </div>
-{_db_test_js("/api/setup/test-db")}"""
+{_db_test_js("/api/setup/test-db")}
+<script>
+(function() {{
+  // Immediate feedback: connecting to a remote DB can take a few
+  // seconds over mobile data — show it instead of looking dead.
+  document.querySelectorAll('form[action="/setup"]').forEach(function(f) {{
+    f.addEventListener('submit', function() {{
+      var b = f.querySelector('button[type=submit]');
+      if (b) {{ b.disabled = true;
+               b.textContent = 'Connecting… (up to ~30s)'; }}
+    }});
+  }});
+}})();
+</script>"""
     return page("Setup", body, chrome=False)
 
 

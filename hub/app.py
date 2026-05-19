@@ -1381,7 +1381,13 @@ def setup_get(request: Request, saved: str = ""):
 
 @app.post("/setup")
 async def setup_post(request: Request):
-    if not _setup_open():
+    loop = asyncio.get_event_loop()
+    # _setup_open / _reinit_db / user_count all hit the DB, which under
+    # the V5.11 Turso-HTTP backend is blocking network I/O. This handler
+    # is async, so doing them inline would freeze the WHOLE event loop
+    # for the duration (on Termux/mobile that looked like a dead button).
+    # Run every blocking DB touch in the threadpool, bounded by a timeout.
+    if not await loop.run_in_executor(None, _setup_open):
         raise HTTPException(
             status_code=403,
             detail="Setup is locked — an account already exists. "
@@ -1390,13 +1396,32 @@ async def setup_post(request: Request):
     form = await request.form()
     values = {k: str(v) for k, v in form.items() if k.startswith("VORTEX_")
               or k in ("APP_PORT", "CLOUDFLARE_TUNNEL_TOKEN")}
-    config.set_many(values)
-    # Apply immediately: re-resolve the DB backend from the new config so
-    # a correct remote URL/token connects right now — before any login.
-    _reinit_db()
-    # If the (now-connected) DB has accounts, go sign in; otherwise this
-    # is still a blank DB → create the first admin (replicates to remote).
-    dest = "/login?ready=1" if db.user_count() > 0 else "/register"
+    config.set_many(values)  # local file write — fast, safe on the loop
+
+    def _apply_and_route() -> str:
+        # Re-resolve the backend from the new config, then decide where
+        # to send them. db.init() never raises (falls back to SQLite).
+        _reinit_db()
+        return "/login?ready=1" if db.user_count() > 0 else "/register"
+
+    try:
+        dest = await asyncio.wait_for(
+            loop.run_in_executor(None, _apply_and_route), timeout=35)
+    except Exception:
+        # The config IS persisted — it will take effect on the next hub
+        # restart even though we couldn't connect live just now. Show a
+        # real message instead of a silent hang.
+        return HTMLResponse(
+            templates.setup_page(
+                config.public_view(),
+                {"backend": "(unreachable — settings saved; "
+                            "restart the hub to apply)",
+                 "config_path": str(config.path)},
+                error="Saved, but couldn't reach the database in time. "
+                      "Verify the URL/token with “Test connection”, then "
+                      "retry — or just restart the hub (your settings are "
+                      "stored)."),
+            status_code=200)
     return RedirectResponse(url=dest, status_code=303)
 
 

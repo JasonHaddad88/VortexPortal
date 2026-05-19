@@ -378,7 +378,11 @@ class _TursoHttpBackend(_Backend):
         if auth_token:
             self._headers["Authorization"] = f"Bearer {auth_token}"
         self._lock = Lock()
-        self._client = httpx.Client(timeout=20.0)
+        # Snappy timeout: a slow mobile link shouldn't make the caller
+        # wait ~20 s per round-trip (init does several). Fail fast and
+        # let init() fall back / the UI report it.
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(8.0, connect=6.0))
         # Probe immediately so init() can fall back cleanly on failure.
         self._pipeline([("SELECT 1", ())])
 

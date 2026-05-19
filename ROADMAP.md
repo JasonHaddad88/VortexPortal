@@ -161,7 +161,14 @@ hub, enrollment should be per-account, not per-hub.
   Rust build. Remote-only (no offline reads) — the accepted CAP
   trade-off for hosts without the embedded-replica wheel.
 
-## V5.12 — find-my-device / fleet UX (candidate, deferred)
+## V5.12 — fix: /setup button froze the event loop on Termux — _shipped V5.12_
+
+- [x] **`setup_post` async-blocking fix** 🟢 — _shipped_. Offload
+  `_setup_open`/`_reinit_db`/`user_count` to the threadpool +
+  `wait_for` timeout; error flash + submit-feedback instead of a
+  silent hang; `_TursoHttpBackend` httpx timeout 20s→8s.
+
+## V5.13 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

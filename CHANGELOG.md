@@ -3,6 +3,45 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.12] — 2026-05-19
+
+**Fix: the `/setup` "Save & connect" button looked dead on Termux.**
+`setup_post` is an async handler but called `_reinit_db()` and
+`db.user_count()` **inline on the event loop**. Under the V5.11
+Turso-HTTP backend those are blocking network round-trips (probe + full
+schema + migrate), so on Termux/mobile the *entire* server froze for
+tens of seconds with zero feedback — the button appeared to do
+nothing.
+
+### Fixed
+- `setup_post` now offloads every blocking DB touch (`_setup_open`,
+  `_reinit_db`, `user_count`) to the threadpool via
+  `run_in_executor`, bounded by `asyncio.wait_for` (~35 s). The event
+  loop is never frozen; other requests / agent WS keep flowing.
+- On timeout/failure it re-renders the setup page with a real **error
+  flash** ("Saved, but couldn't reach the database in time… restart
+  the hub — settings are stored") instead of hanging. The config is
+  already persisted, so a restart applies it regardless.
+- `setup_page` gained an `error=` param + a tiny submit-feedback
+  script (button → "Connecting… (up to ~30s)") so a slow-but-working
+  reconnect doesn't look dead either.
+- `_TursoHttpBackend` httpx timeout cut 20 s → 8 s (connect 6 s) so a
+  bad URL/token / offline remote fails fast instead of stacking ~20 s
+  per round-trip.
+
+### Notes
+- Login/Settings were unaffected (`login_post`/`settings_save` are sync
+  `def` handlers → already run in the threadpool). This was specific
+  to the one `async def` handler doing heavy inline DB work. Hub-only;
+  no schema change; version 5.11 → 5.12.
+
+### Smoke-tested
+- `setup_post` source proves executor+timeout offload; failing reinit
+  → setup page + error flash (200, no hang); a hanging reinit is
+  bounded → error page (loop not frozen); success path still redirects
+  (`/login?ready=1` or `/register`); `setup_page` error flash +
+  submit-feedback JS; httpx timeout lowered.
+
 ## [V5.11] — 2026-05-19
 
 **Pure-Python Turso backend so Termux hubs can use the remote DB.**
