@@ -340,9 +340,19 @@ machine at — turn on libSQL embedded-replica mode.
   This is unavoidable (CAP) — "both always in sync" and "writeable while
   offline" can't both be true. `last_seen` updates are best-effort so a
   blip never drops live agent connections.
-- If `libsql-experimental` isn't installed or the remote can't be
-  reached at startup, the hub **logs loudly and falls back to local-only
-  SQLite** — it never refuses to boot.
+- **Two remote transports (V5.11).** The *embedded replica* (local
+  file + sync, offline reads) needs `libsql-experimental`, a Rust
+  extension with no usable Termux/Android wheel. When it's absent the
+  hub automatically uses a **pure-Python Turso HTTP backend** (httpx,
+  already installed) — so **Termux hubs work with your Turso URL too**.
+  Trade-off: HTTP mode is *remote-only* — network-required, no offline
+  reads, every query a round-trip (fine for this low-traffic hub).
+  `init()` order: embedded replica → Turso HTTP → local SQLite. The
+  Settings/Setup **Test connection** probes whichever transport this
+  host will actually use.
+- If neither the remote (any transport) nor a local file is usable at
+  startup, the hub **logs loudly and falls back to local-only SQLite**
+  — it never refuses to boot.
 
 ### Setup with Turso (free tier)
 
@@ -366,12 +376,13 @@ machine at — turn on libSQL embedded-replica mode.
    $env:VORTEX_SYNC_TOKEN = "<token>"
    .\serve.ps1
    ```
-4. On first start with `VORTEX_SYNC_URL` set, the launcher attempts
-   `pip install libsql-experimental`. Windows has prebuilt wheels so it
-   just works; on Termux/aarch64 there's no reliable wheel and a source
-   build needs Rust, so it may fall back to local-only (you'll see a
-   loud log line). Run the hub on a Linux box / Windows / cloud VM if
-   you want the replica on a platform where the wheel exists.
+4. On Windows/glibc-Linux, install `libsql-experimental`
+   (`pip install libsql-experimental`; Windows has prebuilt wheels) for
+   the **embedded replica** (offline reads). On **Termux/Android** you
+   don't need it — the hub uses the **pure-Python Turso HTTP backend**
+   automatically (remote-only). Either way, set the two env vars (or
+   the Settings/Setup tab) and the hub connects; "Test connection"
+   tells you which transport is active.
 
 Any libSQL-compatible server works, not just Turso — point
 `VORTEX_SYNC_URL` at a self-hosted `sqld` if you'd rather not use their

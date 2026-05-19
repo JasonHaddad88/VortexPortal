@@ -25,7 +25,9 @@ are 32 bytes of os.urandom, so SHA-256 is safe without a KDF. Session
 tokens are likewise stored as hashes.
 """
 
+import base64
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
@@ -199,6 +201,106 @@ class _LibsqlConn:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Turso / libSQL **remote HTTP** backend (V5.11) — pure Python, httpx only.
+# This is the path that works on Termux/Android, where the embedded
+# replica's Rust extension (libsql-experimental) has no usable wheel.
+# Speaks Hrana-over-HTTP (`POST {base}/v2/pipeline`). Remote-only: every
+# query is a network round-trip, no local replica / offline reads — the
+# CAP trade-off the operator accepted by choosing this transport.
+# ---------------------------------------------------------------------------
+def _turso_http_url(sync_url: str) -> str:
+    """libsql://host  ->  https://host  (Hrana-over-HTTP base)."""
+    u = (sync_url or "").strip()
+    if u.startswith("libsql://"):
+        u = "https://" + u[len("libsql://"):]
+    elif u.startswith("wss://"):
+        u = "https://" + u[len("wss://"):]
+    elif u.startswith("ws://"):
+        u = "http://" + u[len("ws://"):]
+    return u.rstrip("/")
+
+
+def _hrana_arg(v: Any) -> dict:
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": str(int(v))}
+    if isinstance(v, int):
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    if isinstance(v, (bytes, bytearray)):
+        return {"type": "blob",
+                "base64": base64.b64encode(bytes(v)).decode("ascii")}
+    return {"type": "text", "value": str(v)}
+
+
+def _hrana_val(c: Any) -> Any:
+    if not isinstance(c, dict):
+        return c
+    t = c.get("type")
+    if t in (None, "null"):
+        return None
+    if t == "integer":
+        try:
+            return int(c.get("value"))
+        except (TypeError, ValueError):
+            return c.get("value")
+    if t == "float":
+        try:
+            return float(c.get("value"))
+        except (TypeError, ValueError):
+            return c.get("value")
+    if t == "blob":
+        try:
+            return base64.b64decode(c.get("base64", ""))
+        except Exception:
+            return b""
+    return c.get("value")
+
+
+class _TursoHttpCur:
+    """Mirrors _LibsqlCur: dict rows, .lastrowid, .rowcount."""
+
+    def __init__(self, result: Optional[dict]):
+        r = result or {}
+        self._cols = [c.get("name") for c in (r.get("cols") or [])]
+        self._rows = [
+            {self._cols[i]: _hrana_val(cell) for i, cell in enumerate(row)}
+            for row in (r.get("rows") or [])
+        ]
+        lir = r.get("last_insert_rowid")
+        try:
+            self.lastrowid = int(lir) if lir is not None else None
+        except (TypeError, ValueError):
+            self.lastrowid = None
+        self.rowcount = int(r.get("affected_row_count") or 0)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _TursoHttpConn:
+    def __init__(self, backend: "_TursoHttpBackend"):
+        self._b = backend
+
+    def execute(self, sql: str, params: tuple = ()):
+        res = self._b._pipeline([(sql, tuple(params))])
+        return _TursoHttpCur(res[0])
+
+    def executescript(self, script: str):
+        stmts = [(s, ()) for s in _split_sql(script)]
+        if stmts:
+            self._b._pipeline(stmts)
+
+    def commit(self):
+        pass  # each _pipeline() auto-commits server-side
+
+
 class _Backend:
     @contextmanager
     def connect(self) -> Iterator[Any]:
@@ -264,6 +366,69 @@ class _LibsqlBackend(_Backend):
                 pass
 
 
+class _TursoHttpBackend(_Backend):
+    """Remote-only Turso over Hrana-HTTP. Pure Python (httpx). One
+    lock-guarded httpx.Client; every _connect() call round-trips. No
+    local file, so sync() is a no-op (reads are always canonical)."""
+
+    def __init__(self, base_url: str, auth_token: str):
+        import httpx  # hub dependency; lazy so SQLite-only needs nothing
+        self._endpoint = _turso_http_url(base_url) + "/v2/pipeline"
+        self._headers = {"Content-Type": "application/json"}
+        if auth_token:
+            self._headers["Authorization"] = f"Bearer {auth_token}"
+        self._lock = Lock()
+        self._client = httpx.Client(timeout=20.0)
+        # Probe immediately so init() can fall back cleanly on failure.
+        self._pipeline([("SELECT 1", ())])
+
+    def _pipeline(self, stmts):
+        body = {"requests": [
+            {"type": "execute",
+             "stmt": {"sql": sql,
+                      "args": [_hrana_arg(p) for p in params],
+                      "want_rows": True}}
+            for sql, params in stmts
+        ] + [{"type": "close"}]}
+        with self._lock:
+            r = self._client.post(self._endpoint, headers=self._headers,
+                                  content=json.dumps(body))
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"Turso HTTP {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        out = []
+        for item in data.get("results", []):
+            if item.get("type") == "error":
+                err = item.get("error") or {}
+                raise RuntimeError(
+                    f"Turso error: {err.get('message') or err}")
+            resp = item.get("response") or {}
+            if resp.get("type") == "execute":
+                out.append(resp.get("result") or {})
+        return out
+
+    @contextmanager
+    def connect(self) -> Iterator[Any]:
+        yield _TursoHttpConn(self)
+
+    def sync(self) -> bool:
+        return False  # remote-only: every read is already canonical
+
+    def close(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
+
+def http_probe(sync_url: str, auth_token: str) -> None:
+    """Validate a Turso URL+token over plain HTTP (no Rust). Raises on
+    failure. Used by the Settings/Setup 'Test connection' so it works on
+    Termux too."""
+    _TursoHttpBackend(sync_url, auth_token).close()
+
+
 def init(db_path: Path, sync_url: Optional[str] = None,
          sync_token: Optional[str] = None) -> None:
     """Select the backend and create the schema if missing. Re-callable
@@ -298,14 +463,29 @@ def init(db_path: Path, sync_url: Optional[str] = None,
                 print(f"==> DB: libSQL embedded replica "
                       f"(local {db_path}, remote {sync_url})")
             except Exception as e:
+                # No embedded-replica wheel here (typically Termux/Android).
+                # Try the pure-Python remote HTTP backend before giving up
+                # on the remote entirely.
                 print(
-                    f"!! libSQL replica unavailable ({e!r}); falling back "
-                    f"to local-only SQLite at {db_path}. Pairing / login / "
-                    f"user-create will work locally but won't replicate "
-                    f"until the remote is reachable and the hub restarts.",
+                    f"!! libSQL embedded replica unavailable ({e!r}); "
+                    f"trying pure-Python Turso HTTP backend…",
                     file=sys.stderr,
                 )
-                _backend = _SqliteBackend(db_path)
+                try:
+                    _backend = _TursoHttpBackend(sync_url, sync_token)
+                    print(f"==> DB: Turso remote HTTP "
+                          f"({_turso_http_url(sync_url)}) — remote-only, "
+                          f"no local replica / offline reads on this host.")
+                except Exception as e2:
+                    print(
+                        f"!! Turso HTTP backend also unavailable ({e2!r}); "
+                        f"falling back to local-only SQLite at {db_path}. "
+                        f"Login / pairing work locally but won't replicate "
+                        f"until the remote is reachable and the hub "
+                        f"restarts.",
+                        file=sys.stderr,
+                    )
+                    _backend = _SqliteBackend(db_path)
         else:
             _backend = _SqliteBackend(db_path)
 

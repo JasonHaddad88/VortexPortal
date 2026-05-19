@@ -1289,30 +1289,43 @@ async def _run_db_probe(url: str, token: str):
     (ok: bool, message: str)."""
     if not url:
         return False, "URL is required"
+    loop = asyncio.get_event_loop()
+
+    # Prefer the embedded-replica probe (matches what Windows/Linux hubs
+    # will actually run). If its Rust extension isn't available here
+    # (Termux/Android), fall back to the pure-Python HTTP probe — that's
+    # exactly the backend such a hub will use, so a green result is
+    # truthful.
     try:
         import libsql_experimental as libsql
-    except ImportError:
-        return False, ("libsql-experimental isn't installed in this hub's "
-                       "venv, so the replica can't be used here even if "
-                       "the URL is valid. Run the hub where the wheel is "
-                       "available (Windows / Linux / cloud VM).")
 
-    def _probe():
-        import tempfile, os as _os
-        tmp = _os.path.join(tempfile.mkdtemp(), "probe.db")
-        conn = libsql.connect(tmp, sync_url=url, auth_token=token)
-        conn.sync()
-        conn.execute("SELECT 1")
+        def _probe():
+            import tempfile, os as _os
+            tmp = _os.path.join(tempfile.mkdtemp(), "probe.db")
+            conn = libsql.connect(tmp, sync_url=url, auth_token=token)
+            conn.sync()
+            conn.execute("SELECT 1")
+            try:
+                conn.close()
+            except Exception:
+                pass
+
         try:
-            conn.close()
-        except Exception:
-            pass
+            await loop.run_in_executor(None, _probe)
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
+        return True, "Connected + synced OK (embedded replica)."
+    except ImportError:
+        pass
 
     try:
-        await asyncio.get_event_loop().run_in_executor(None, _probe)
+        await loop.run_in_executor(None, db.http_probe, url, token)
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
-    return True, "Connected + synced OK."
+        return False, (f"{type(e).__name__}: {e} "
+                       "(tried pure-Python Turso HTTP — check URL/token)")
+    return True, ("Connected OK over Turso HTTP. Note: this host has no "
+                  "embedded-replica wheel, so it runs remote-only — "
+                  "network-required, no offline reads.")
 
 
 @app.post("/api/settings/test-db")

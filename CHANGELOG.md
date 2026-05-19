@@ -3,6 +3,56 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.11] — 2026-05-19
+
+**Pure-Python Turso backend so Termux hubs can use the remote DB.**
+The embedded replica needs `libsql-experimental` (a Rust extension with
+no usable Termux/Android wheel), so a Termux hub previously fell back
+to local-only SQLite and "Test connection" said the replica was
+unavailable. Added a remote-only HTTP backend that speaks
+Hrana-over-HTTP via **httpx** (already a dependency) — no Rust.
+
+### Added
+- **`_TursoHttpBackend`** in `hub/db.py` — `POST {base}/v2/pipeline`
+  with `_TursoHttpConn`/`_TursoHttpCur` adapters mirroring the existing
+  libSQL adapter surface (dict rows, `lastrowid`, `rowcount`,
+  `executescript`, `commit` no-op). Typed Hrana arg/value
+  encode+decode (`_hrana_arg`/`_hrana_val`), `libsql://`→`https://`
+  URL mapping, one lock-guarded `httpx.Client`, a `SELECT 1` probe in
+  `__init__` so init can fall back cleanly. `sync()` is a no-op
+  (remote-only — every read is already canonical).
+- **`db.http_probe(url, token)`** + `_run_db_probe` now falls back to
+  it when `libsql_experimental` is absent, so the Settings/Setup
+  **Test connection** succeeds on Termux (and clearly says it's
+  remote-only).
+- **`init()` backend order**: embedded replica → **Turso HTTP** →
+  local SQLite. Windows/Linux are unchanged (still prefer the embedded
+  replica if the wheel is present); Termux automatically gets the HTTP
+  backend; total isolation only if both the remote and a local file
+  are unusable.
+- `serve.sh` (v10) no longer wastes a doomed Rust pip-build on Termux;
+  it just reports which transport is active.
+
+### Behaviour notes
+- The HTTP backend is **remote-only**: network-required, **no offline
+  reads**, every query is a round-trip (fine for this low-traffic
+  hub). This is the CAP trade-off implied by choosing this transport
+  on a host without the embedded-replica wheel. On glibc Linux you can
+  still `pip install libsql-experimental` yourself for the offline
+  replica — the hub prefers it when present.
+- Version 5.10 → 5.11 (hub only; agent unchanged). No schema change.
+
+### Smoke-tested
+- An in-process Hrana-over-HTTP server backed by real `sqlite3` drove
+  the **entire `hub/db.py` query layer** through `_TursoHttpBackend`:
+  `_SCHEMA` create via `executescript`, `create_user`/`get`/`list`,
+  `update_device` (`rowcount`), `set_theft_armed` `ON CONFLICT`
+  upsert, account tokens (`UNIQUE` + hashed), `node_endpoints`
+  `ON CONFLICT`, theft media `MAX`/`GROUP BY` + `LIMIT -1 OFFSET`
+  prune, `purge_expired` multi-DELETE; `_turso_http_url` +
+  arg/val round-trip; `http_probe` ok/fail; `init()` HTTP-select and
+  SQLite fallback when the remote is down.
+
 ## [V5.10] — 2026-05-19
 
 **Theft Dashboard** — an account-wide command view on top of V5.8's

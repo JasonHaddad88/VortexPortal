@@ -153,7 +153,15 @@ hub, enrollment should be per-account, not per-hub.
   `list_theft_media_all`, `latest_location_per_device`,
   `last_capture_per_device` (owner-scoped). Hub-only.
 
-## V5.11 — find-my-device / fleet UX (candidate, deferred)
+## V5.11 — pure-Python Turso backend (Termux) — _shipped V5.11_
+
+- [x] **`_TursoHttpBackend`** 🟡 — _shipped_. Hrana-over-HTTP via
+  httpx (no Rust); `init()` order embedded→HTTP→SQLite; `http_probe`
+  + Test-connection fallback; serve.sh v10 stops the doomed Termux
+  Rust build. Remote-only (no offline reads) — the accepted CAP
+  trade-off for hosts without the embedded-replica wheel.
+
+## V5.12 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

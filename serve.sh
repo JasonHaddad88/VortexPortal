@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VORTEX_SERVE_VERSION=9
+# VORTEX_SERVE_VERSION=10
 # Vortex Termux launcher.
 #
 #   MODE=hub (default)  Runs the UI (uvicorn + cloudflared quick tunnel)
@@ -101,17 +101,21 @@ if [ "$MODE" = "hub" ]; then
         "$VPY" -m pip install --quiet --upgrade pip setuptools wheel
         "$VPY" -m pip install --quiet "fastapi<0.100" "pydantic<2" uvicorn websockets httpx python-multipart qrcode
     fi
-    # Optional: libsql-experimental enables the local+remote replica DB
-    # (set VORTEX_SYNC_URL to use it). It's a Rust extension with no
-    # reliable Termux/aarch64 wheel and a source build needs the Rust
-    # toolchain, so this is strictly best-effort. If it doesn't install,
-    # the hub silently runs local-only SQLite -- exactly the pre-V6
-    # behaviour. Only attempt it if the operator actually configured a
-    # remote, so we don't waste a long Rust build nobody asked for.
-    if [ -n "${VORTEX_SYNC_URL:-}" ] && ! "$VPY" -c 'import libsql_experimental' 2>/dev/null; then
-        echo "==> VORTEX_SYNC_URL set; attempting libsql-experimental (optional)"
-        "$VPY" -m pip install --quiet libsql-experimental 2>/dev/null \
-            || echo "    libsql-experimental unavailable; hub will run local-only SQLite"
+    # Remote DB (VORTEX_SYNC_URL): two transports. libsql-experimental
+    # gives the local+remote *embedded replica* (offline reads) but is a
+    # Rust extension with no usable Termux/Android wheel -- so we DON'T
+    # try to pip-build it here (it just wastes a long failing compile on
+    # a phone). When it's absent the hub automatically uses the V5.11
+    # pure-Python Turso HTTP backend (httpx, already installed) -- remote
+    # -only, no offline reads, but fully works on Termux. On a glibc
+    # Linux box you can `pip install libsql-experimental` yourself for
+    # the embedded replica; the hub prefers it if present.
+    if [ -n "${VORTEX_SYNC_URL:-}" ]; then
+        if "$VPY" -c 'import libsql_experimental' 2>/dev/null; then
+            echo "==> Remote DB: embedded replica (libsql-experimental present)"
+        else
+            echo "==> Remote DB: pure-Python Turso HTTP backend (no Rust needed)"
+        fi
     fi
 else
     if ! "$VPY" -c 'import websockets, httpx' 2>/dev/null; then
