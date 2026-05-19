@@ -135,6 +135,51 @@ nav .user {
   border-left: 1px solid var(--border);
 }
 
+/* ---- V5.15: mobile hamburger nav ---- */
+.hamburger { display: none; flex-direction: column; gap: 4px;
+  cursor: pointer; padding: .45rem; border-radius: 6px; }
+.hamburger span { width: 22px; height: 2px; background: var(--text);
+  border-radius: 2px; }
+@media (max-width: 640px) {
+  .topbar { padding: .8rem 1rem; flex-wrap: wrap; }
+  .hamburger { display: flex; }
+  .topbar nav {
+    display: none; flex-direction: column; align-items: flex-start;
+    gap: .35rem; width: 100%; order: 3; margin-top: .6rem;
+    padding-top: .6rem; border-top: 1px solid var(--border);
+  }
+  #navtoggle:checked ~ nav { display: flex; }
+  nav a { padding: .55rem 0; width: 100%; }
+  nav .user { padding-left: 0; border-left: 0; }
+  main { padding: 1rem; }
+}
+
+/* ---- V5.15: per-device ⋮ menu ---- */
+.kebab { position: relative; }
+.kebab > summary {
+  list-style: none; cursor: pointer; padding: .15rem .5rem;
+  color: var(--muted); font-size: 1.15rem; line-height: 1;
+  border-radius: 6px;
+}
+.kebab > summary::-webkit-details-marker { display: none; }
+.kebab > summary:hover { color: var(--text); background: var(--surface-2); }
+.kebab[open] > summary { color: var(--cyan); }
+.kebab .menu {
+  position: absolute; right: 0; top: 100%; z-index: 20;
+  min-width: 168px; margin-top: .25rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: .35rem;
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 28px rgba(0,0,0,.5);
+}
+.kebab .menu a, .kebab .menu button {
+  text-align: left; background: none; border: none; color: var(--text);
+  font: inherit; font-size: .82rem; padding: .5rem .6rem;
+  border-radius: 6px; cursor: pointer; text-decoration: none; width: 100%;
+}
+.kebab .menu a:hover, .kebab .menu button:hover { background: var(--surface-2); }
+.kebab .menu .danger { color: var(--danger); }
+
 main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
 .center-wrap {
   min-height: calc(100vh - 80px);
@@ -780,27 +825,8 @@ select.cam-pick {
   font-size: 0.8rem;
 }
 
-/* ---------- V5.3 device-lock UI ---------- */
-.lock-banner {
-  display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.6rem 0.8rem;
-  margin-top: 0.25rem;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.4);
-  border-radius: 8px;
-  font-size: 0.78rem;
-  color: #f59e0b;
-}
-.lock-banner .lock-icon { font-size: 0.9rem; }
-.lock-banner span[data-lock-label] {
-  flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--text);
-}
-/* V5.6: viewing never blocks. The old full-viewport lock-overlay was
-   removed — "in use" is now a soft dashboard badge driven by an active
-   write-lock (control/upload), and the screen page surfaces a 409 from
-   /input inline without hiding the live mirror. */
+/* V5.15: the device-lock / "Being controlled" UI was removed entirely
+   (it false-positived and its 409 guard blocked legitimate control). */
 
 footer {
   text-align: center;
@@ -841,6 +867,10 @@ def page(title: str, body: str, *, user: Optional[dict] = None,
     <span class="logo"></span>
     <h1>Vortex<span class="accent">Hub</span></h1>
   </div>
+  <input type="checkbox" id="navtoggle" class="navtoggle" hidden>
+  <label for="navtoggle" class="hamburger" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </label>
   <nav>{links}{user_chunk}</nav>
 </header>
 <main>{body}</main>
@@ -987,34 +1017,33 @@ def dashboard_page(user: dict, devices: list, online: set,
                 f'<div class="actions compact" data-actions>'
                 f'<a class="btn btn-primary" style="flex:1" '
                 f'href="{escape(other_node)}/devices/{did}">'
-                f'Control on its node →</a>'
-                f'<a class="btn" href="/devices/{did}">Edit</a></div>'
+                f'Control on its node →</a></div>'
             )
         else:
             _actions = (
                 f'<div class="actions compact" data-actions>'
                 f'<a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>'
                 f'<a class="btn" href="/devices/{did}/camera">Camera</a>'
-                f'<a class="btn" href="/devices/{did}/screen">Screen</a>'
-                f'<a class="btn" href="/devices/{did}">Edit</a></div>'
+                f'<a class="btn" href="/devices/{did}/screen">Screen</a></div>'
             )
+        _kebab = (
+            f'<details class="kebab"><summary title="More">⋮</summary>'
+            f'<div class="menu">'
+            f'<a href="/devices/{did}/theft">🛡 Theft Mode</a>'
+            f'<a href="/devices/{did}">⚙ Manage / Rename</a>'
+            f'<form method="post" action="/devices/{did}/delete" style="margin:0">'
+            f'<button class="danger" type="submit" '
+            f'onclick="return confirm(\'Unpair {name}? This cannot be undone '
+            f'— you will need to re-pair to control it again.\')">'
+            f'Unpair</button></form>'
+            f'</div></details>'
+        )
         cards.append(f"""<div class="card" data-device-id="{did}" data-device-name="{name}" data-elsewhere="{_elsewhere_attr}">
   <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:.5rem;gap:.6rem">
     <h3 style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">{name}</h3>
     <div class="status-col">
       <span class="badge {badge_cls}" data-status>{badge_lbl}</span>
-      <form method="post" action="/devices/{did}/delete" style="margin:0">
-        <button class="icon-btn danger" type="submit" title="Delete this device"
-                onclick="return confirm('Unpair {name}? This cannot be undone — you will need to re-pair to control it again.')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6"/><path d="M14 11v6"/>
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-          </svg>
-        </button>
-      </form>
+      {_kebab}
     </div>
   </div>
   <p class="meta">id: {did}
@@ -1029,11 +1058,6 @@ def dashboard_page(user: dict, devices: list, online: set,
   </p>
   <p class="meta" data-last-seen>last seen: {escape(last_seen)}</p>
   <div class="stats" data-stats hidden></div>
-  <div class="lock-banner" data-lock-banner hidden>
-    <span class="lock-icon">🔒</span>
-    <span data-lock-label>Being controlled</span>
-    <button class="btn btn-small" type="button" data-take-control>Take control</button>
-  </div>
   {_actions}
 </div>""")
 
@@ -1130,41 +1154,6 @@ function renderStats(card, s) {{
   el.hidden = parts.length === 0;
 }}
 
-async function takeControl(deviceId) {{
-  // V5.6: force-steal the WRITE lock and HOLD it (don't release). The
-  // dashboard, the Screen page and any other tab in this browser share
-  // one lock-holder id (derived from the session cookie), so grabbing
-  // it here means our next write — opening Screen and controlling, or
-  // an upload — wins immediately, while the previous controller's next
-  // write gets a 409. If we never write, the lease just lapses (~TTL).
-  try {{
-    await fetch(`/devices/${{encodeURIComponent(deviceId)}}/lock`, {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify({{context: 'override', force: true}}),
-    }});
-  }} catch (e) {{}}
-  pollOnline();
-}}
-
-function applyLock(card, lock) {{
-  // V5.6: a lock now means "another session is actively writing
-  // (controlling / uploading)". Viewing is never blocked, so the
-  // action buttons STAY visible — we only show a soft banner so you
-  // know a write is in progress and can force "Take control".
-  const banner = card.querySelector('[data-lock-banner]');
-  if (!banner) return;
-  const actions = card.querySelector('[data-actions]');
-  if (actions) actions.hidden = false;  // never hide: reads are free
-  if (lock && !lock.mine) {{
-    banner.querySelector('[data-lock-label]').textContent =
-      'Being controlled — ' + (lock.label || 'another session');
-    banner.hidden = false;
-  }} else {{
-    banner.hidden = true;
-  }}
-}}
-
 async function pollOnline() {{
   try {{
     const r = await fetch('/api/online', {{cache: 'no-store'}});
@@ -1172,33 +1161,23 @@ async function pollOnline() {{
     const data = await r.json();
     const online = new Set(data.online || []);
     const elsewhere = data.elsewhere || {{}};
-    const locks = data.locks || {{}};
     document.querySelectorAll('[data-device-id]').forEach(card => {{
       const id = card.dataset.deviceId;
       const badge = card.querySelector('[data-status]');
       if (!badge) return;
       if (online.has(id)) {{ badge.className = 'badge online'; badge.textContent = 'Online'; }}
       else if (elsewhere[id]) {{
-        // Live on another node — don't lie 'Offline' and don't flip the
-        // deep-link actions the server rendered.
+        // Live on another node — relay handles control; don't lie 'Offline'.
         badge.className = 'badge online'; badge.textContent = 'On its node';
-        return;
       }}
       else {{
         badge.className = 'badge offline'; badge.textContent = 'Offline';
         renderStats(card, null);
       }}
-      applyLock(card, locks[id]);
     }});
   }} catch (e) {{}}
 }}
 
-document.addEventListener('click', (e) => {{
-  const btn = e.target.closest('[data-take-control]');
-  if (!btn) return;
-  const card = btn.closest('[data-device-id]');
-  if (card) takeControl(card.dataset.deviceId);
-}});
 async function pollStats() {{
   try {{
     const r = await fetch('/api/devices/stats', {{cache: 'no-store'}});

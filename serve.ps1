@@ -227,6 +227,13 @@ for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
 }
 
+# V5.15: tell the hub where it's reachable (presence + cross-node relay).
+$PublicUrlFile = if ($env:VORTEX_PUBLIC_URL_FILE) { $env:VORTEX_PUBLIC_URL_FILE } `
+    else { Join-Path $env:USERPROFILE ".vortex_public_url" }
+if ($publicUrl) {
+    try { Set-Content -Path $PublicUrlFile -Value $publicUrl -NoNewline -Encoding utf8 } catch {}
+}
+
 # Try to detect a usable LAN IP (best effort)
 $lanIp = $null
 try {
@@ -280,6 +287,7 @@ try {
 } finally {
     Write-Host ""
     Write-Host "==> Shutting down"
+    try { if (Test-Path $PublicUrlFile) { Remove-Item $PublicUrlFile -Force } } catch {}
     Stop-Process -Id $uvProc.Id -Force -ErrorAction SilentlyContinue
     Stop-Process -Id $cfProc.Id -Force -ErrorAction SilentlyContinue
     if ($agentProc) { Stop-Process -Id $agentProc.Id -Force -ErrorAction SilentlyContinue }

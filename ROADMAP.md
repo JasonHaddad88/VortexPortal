@@ -184,7 +184,25 @@ hub, enrollment should be per-account, not per-hub.
   identity wasn't the issue, connection locality was). Future:
   transparent cross-node relay (incl. stream proxying) — deferred.
 
-## V5.15 — find-my-device / fleet UX (candidate, deferred)
+## V5.15 — remove lock + cross-node relay + mobile QOL — _shipped V5.15_
+
+- [x] **Delete device-lock/"Controlled"** 🟢 — _shipped_. It 409'd
+  real control + false-positived. Gone (helpers, /lock routes,
+  /api/online locks, dashboard banner/Take-control/CSS).
+- [x] **Transparent cross-node relay** 🔴 — _shipped_. Middleware
+  reverse-proxies agent-dependent endpoints (incl. streaming MJPEG /
+  uploads) to the node holding the socket, via device_presence;
+  shared-DB cookie re-auth; X-Vortex-Relay hop guard. Control works
+  from any node.
+- [x] **Reliable node URL** 🟢 — _shipped_. serve.sh v11 / serve.ps1
+  write ~/.vortex_public_url; _resolve_public_url reads it (fixes the
+  quick-tunnel gap that no-op'd V5.14).
+- [x] **Mobile QOL** 🟢 — _shipped_. CSS hamburger nav; per-device ⋮
+  menu (Theft/Manage/Unpair); removed Edit + trashcan.
+
+Future: drop dead db.device_locks; relay perf (connection reuse).
+
+## V5.16 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

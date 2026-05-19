@@ -70,6 +70,18 @@ To stop the hub: Ctrl+C in PowerShell.
    admin account, click **+ Self-Register this device**, then enroll
    other phones (self-register on each, or "Pair remote device").
 
+## Multi-node control (since V5.15)
+
+Run as many nodes as you like against the shared DB. A device's live
+socket lives on whichever node its agent connected to, but you can
+**control it from any node** — requests for a device that's "On its
+node" are transparently reverse-proxied to that node (camera/screen
+streams and file transfers included). There's no "Controlled" lock
+anymore (it was removed — it blocked legitimate control). On phones
+the UI is responsive (hamburger nav); per-device actions beyond
+Browse/Camera/Screen live in the card's **⋮ menu**
+(Theft Mode / Manage / Unpair).
+
 ## Enrolling a device
 
 ### Self-register (recommended, since V5.5)

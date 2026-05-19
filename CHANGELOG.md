@@ -3,6 +3,60 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.15] — 2026-05-19
+
+Three things: **kill the bogus "Controlled" lock** (it was 409-blocking
+real control), **transparent cross-node relay** (control any device
+from any node), and **mobile QOL**.
+
+### Fixed / Removed
+- **Device-lock / "Being controlled" feature deleted entirely.** Its
+  write-lock guard 409'd legitimate control on stale/foreign lock rows
+  (and showed "controlled" when nothing was) — a prime cause of "can't
+  control". Removed: `_guard_write_lock`/`_lock_holder`,
+  `/devices/{id}/lock{,/refresh,/release}`, `locks` in `/api/online`,
+  the dashboard lock banner / Take-control / `applyLock`, lock CSS.
+  Control is no longer gated.
+
+### Added — transparent cross-node relay
+- An HTTP middleware: for agent-dependent endpoints
+  (`/devices/{id}/{files…,camera/…,screen/…,input,theft/capture}`,
+  `/api/devices/{id}/{info,screen-size}`) — if the device's socket
+  isn't on this node but `device_presence` says another node has it,
+  the request is **reverse-proxied (streaming) to that node** and the
+  response streamed back (MJPEG camera/screen and file up/downloads
+  pass straight through). The target re-authenticates via the
+  shared-DB session cookie we forward; an `X-Vortex-Relay` header is a
+  one-hop loop guard. HTML pages still render locally; only data
+  endpoints relay. **You can now control a device from any node.**
+- **Reliable node URL**: `serve.sh` (v11) / `serve.ps1` write the
+  detected (quick-)tunnel URL to `~/.vortex_public_url`;
+  `_resolve_public_url()` reads it, so presence + relay work on Termux
+  quick tunnels even before any browser hits the public URL (the gap
+  that made V5.14's deep-link silently no-op).
+
+### QOL
+- **Mobile hamburger nav** (pure CSS checkbox toggle, no JS/deps;
+  topbar collapses < 640 px; tighter mobile padding).
+- Dashboard cards: **removed the standalone Edit button and the
+  trashcan**; added a per-device **⋮ menu** with **Theft Mode**,
+  **Manage / Rename**, **Unpair**. Primary actions stay
+  Browse / Camera / Screen (or "Control on its node →").
+
+### Notes
+- Relay adds a hop (browser→nodeB→nodeA→agent) — fine for this use,
+  and it's the path you chose over single-node. db.device_locks table
+  + helpers are now dead code (left in place; no migration). Hub +
+  launchers; agent unchanged. Version 5.14 → 5.15.
+
+### Smoke-tested
+- Relay: proxied to the holding node with the hop header; hop-guard
+  blocks re-relay; local device never relayed; no-presence not
+  relayed; `/health` & HTML pages untouched. Lock fully gone (no
+  helpers / `/lock` routes / `locks` in `/api/online`). Templates:
+  no lock UI, hamburger + kebab(Theft/Manage/Unpair), no Edit.
+  `_public_url_file` reads the launcher-written URL.
+
 ## [V5.14] — 2026-05-19
 
 **Fix: "in the DB but can't be controlled" across multiple nodes.** A

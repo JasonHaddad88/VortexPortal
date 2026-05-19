@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VORTEX_SERVE_VERSION=10
+# VORTEX_SERVE_VERSION=11
 # Vortex Termux launcher.
 #
 #   MODE=hub (default)  Runs the UI (uvicorn + cloudflared quick tunnel)
@@ -41,8 +41,11 @@ SERVE_VERSION=$(grep -m1 '^# VORTEX_SERVE_VERSION=' "${BASH_SOURCE[0]}" 2>/dev/n
     | sed 's/.*=//' || echo '?')
 echo "==> serve.sh v$SERVE_VERSION ($(realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}"))"
 
+PUBLIC_URL_FILE="${VORTEX_PUBLIC_URL_FILE:-$HOME/.vortex_public_url}"
+
 cleanup() {
     echo "==> Shutting down"
+    rm -f "$PUBLIC_URL_FILE" 2>/dev/null || true
     pkill -P $$ 2>/dev/null || true
     pkill -f "uvicorn hub.app:app" 2>/dev/null || true
     pkill -f "agent.agent" 2>/dev/null || true
@@ -187,6 +190,11 @@ if [ "$MODE" = "hub" ]; then
         [ -n "$PUBLIC_URL" ] && break
         sleep 1
     done
+    # Tell the hub where it's reachable (V5.15): presence + cross-node
+    # relay need this, and a quick tunnel's URL is only knowable now.
+    if [ -n "$PUBLIC_URL" ]; then
+        printf '%s' "$PUBLIC_URL" > "$PUBLIC_URL_FILE" 2>/dev/null || true
+    fi
 
     LAN_IP=$(ip route get 1.1.1.1 2>/dev/null \
         | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)

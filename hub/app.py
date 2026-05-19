@@ -19,6 +19,7 @@ import base64
 import json
 import os
 import platform
+import re
 import secrets
 import time
 import uuid
@@ -93,6 +94,92 @@ def _public_url_override() -> str:
 # App + lifecycle
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Vortex Hub", version=__VORTEX_VERSION__)
+
+
+# ---------------------------------------------------------------------------
+# V5.15: transparent cross-node relay.
+#
+# A device's live agent socket lives in exactly ONE node's in-memory
+# registry. With the shared DB every node *lists* the device, but only
+# the node holding the socket can talk to the agent. This middleware
+# makes control work from ANY node: if an agent-dependent request lands
+# on a node that doesn't hold the socket, but device_presence says
+# another node does, we reverse-proxy the request there (streaming, so
+# MJPEG/camera/screen and file up/downloads pass straight through) and
+# stream the response back. The target node re-authenticates the user
+# via the shared-DB session cookie we forward. An X-Vortex-Relay header
+# is a one-hop loop guard.
+#
+# Only agent-dependent data endpoints are relayed; HTML pages and
+# DB-only ops (rename/unpair/theft arm) render/run locally fine.
+# ---------------------------------------------------------------------------
+_RELAY_RE = re.compile(
+    r"^/devices/(?P<did>[^/]+)/"
+    r"(?:files(?:/|$)|camera/|screen/|input$|theft/capture$)"
+    r"|^/api/devices/(?P<did2>[^/]+)/(?:info$|screen-size$)"
+)
+
+
+@app.middleware("http")
+async def _cross_node_relay(request: Request, call_next):
+    path = request.url.path
+    m = _RELAY_RE.match(path)
+    if m is None or request.headers.get("x-vortex-relay"):
+        return await call_next(request)            # not relayable / hop guard
+    device_id = m.group("did") or m.group("did2")
+    if not device_id or device_id in ws_router.registry.online_ids():
+        return await call_next(request)            # we hold the socket
+    try:
+        node = db.get_device_presence(device_id)
+    except Exception:
+        node = None
+    here = (_resolve_public_url() or "").rstrip("/")
+    if not node or node.rstrip("/") == here:
+        return await call_next(request)            # nobody else has it → local 503
+
+    target = node.rstrip("/") + path
+    if request.url.query:
+        target += "?" + request.url.query
+    import httpx
+    fwd = {k: v for k, v in request.headers.items()
+           if k.lower() not in ("host", "content-length", "connection",
+                                 "keep-alive", "transfer-encoding")}
+    fwd["x-vortex-relay"] = "1"
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=None,
+                              write=None, pool=None),
+        follow_redirects=False)
+    # Only forward a request body for methods that have one — sending a
+    # (chunked) body on GET breaks plain HTTP servers and is never needed
+    # for the relayed read endpoints.
+    _content = (request.stream()
+                if request.method.upper() in ("POST", "PUT", "PATCH")
+                else None)
+    try:
+        rq = client.build_request(request.method, target, headers=fwd,
+                                  content=_content)
+        rp = await client.send(rq, stream=True)
+    except Exception as e:
+        await client.aclose()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach the node holding this device "
+                   f"({node}): {type(e).__name__}. It may have just "
+                   f"gone offline — retry shortly.")
+
+    async def _body():
+        try:
+            async for chunk in rp.aiter_raw():
+                yield chunk
+        finally:
+            await rp.aclose()
+            await client.aclose()
+
+    keep = {"content-type", "cache-control", "content-disposition",
+            "pragma", "expires"}
+    hdrs = {k: v for k, v in rp.headers.items() if k.lower() in keep}
+    return StreamingResponse(_body(), status_code=rp.status_code,
+                             headers=hdrs)
 
 
 @app.on_event("startup")
@@ -179,13 +266,27 @@ def _hub_public_url(request: Request) -> str:
     return url
 
 
+def _public_url_file() -> str:
+    """URL the launcher wrote after the (quick) tunnel came up. This is
+    the reliable source on Termux: serve.sh greps cloudflared's URL and
+    drops it here, so presence/relay work even before any browser hits
+    the public URL (which is what _PUBLIC_URL_CACHE depends on)."""
+    p = (os.environ.get("VORTEX_PUBLIC_URL_FILE")
+         or os.path.expanduser("~/.vortex_public_url"))
+    try:
+        return Path(p).read_text(encoding="utf-8").strip().rstrip("/")
+    except OSError:
+        return ""
+
+
 def _resolve_public_url() -> str:
-    """Best-effort 'where am I reachable' for the node heartbeat:
-    config override > URL learned from a real request > launcher-detected
-    env. Empty => we don't publish (nothing reliable to advertise)."""
+    """Best-effort 'where am I reachable' for the node heartbeat / relay:
+    config override > URL from a real request > launcher-detected env >
+    launcher-written file. Empty => nothing reliable to advertise."""
     return (_public_url_override()
             or _PUBLIC_URL_CACHE
-            or os.environ.get("VORTEX_DETECTED_PUBLIC_URL", "").strip().rstrip("/"))
+            or os.environ.get("VORTEX_DETECTED_PUBLIC_URL", "").strip().rstrip("/")
+            or _public_url_file())
 
 
 def _other_node_for(device_id: str) -> Optional[str]:
@@ -269,46 +370,10 @@ def _write_local_agent_config(device_id: str, token: str,
         pass  # no-op on Windows / restricted FS
 
 
-# --- V5.3: device-lock helpers ---------------------------------------------
-def _lock_holder(request: Request, user: dict) -> str:
-    """Opaque, stable per (user, browser-session) lock-holder id.
-
-    Derived from the session cookie hash so: the same browser navigating
-    between pages keeps one holder (never blocks itself), while a
-    different browser / laptop / phone gets a different holder (so it
-    sees the device as in-use). The user can never spoof another holder
-    because it's computed server-side from their own cookie.
-    """
-    cookie = request.cookies.get(auth.SESSION_COOKIE) or ""
-    return f"u{user['id']}:" + db.hash_token(cookie)[:12]
-
-
-def _guard_write_lock(device_id: str, request: Request, user: dict,
-                      context: str) -> None:
-    """Write-lock guard (V5.6). "Device in use" == a write/mutation is
-    being performed on the device. Only the genuine device-side WRITES
-    call this: remote control (`/input`) and file upload (`write_file`).
-
-    Reads — camera/screen live view, snapshot, file browse/download,
-    device info — never call this and are freely concurrent.
-
-    The act of writing *is* the lock: each write (re-)acquires the lease
-    for this holder. Same holder writing again just extends it (acts as
-    a heartbeat); a *different* holder writing while it's held → 409.
-    When writes stop the lease lapses (TTL, ~30 s) and the device is no
-    longer "in use" — no explicit release needed. 'Take control' on the
-    dashboard force-steals so the new holder's next write wins.
-    """
-    holder = _lock_holder(request, user)
-    label = f"{user['username']} ({context})"
-    acquired, lk = db.acquire_lock(device_id, holder, label, force=False)
-    if not acquired:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Device is being controlled by "
-                   f"{(lk or {}).get('label') or 'another session'}. "
-                   f"Use “Take control” on the dashboard to override.",
-        )
+# V5.15: the device-lock / "Being controlled" feature was removed — it
+# false-positived (stale/foreign lock rows) and its 409 guard was itself
+# blocking legitimate control. Concurrent control is now allowed; the
+# cross-node relay handles "which node owns the socket".
 
 
 # ---------------------------------------------------------------------------
@@ -489,60 +554,11 @@ def api_online(request: Request, user: dict = Depends(auth.require_user)):
     online_set = ws_router.registry.online_ids()
     online = list(user_devices & online_set)
     elsewhere = _elsewhere_map(user["id"], online_set)
-    # V5.3: fold lock state into the existing 5s dashboard poll so a
-    # device freeing up reflects quickly without a separate request.
-    holder = _lock_holder(request, user)
-    locks = {}
-    for did, lk in db.get_locks_for_user(user["id"]).items():
-        locks[did] = {
-            "label": lk.get("label"),
-            "mine": lk.get("holder") == holder,
-        }
-    return {"online": online, "locks": locks, "elsewhere": elsewhere}
+    return {"online": online, "elsewhere": elsewhere}
 
 
-# --- V5.3: device-lock acquire / refresh / release -------------------------
-@app.post("/devices/{device_id}/lock")
-async def device_lock_acquire(device_id: str, request: Request,
-                              user: dict = Depends(auth.require_user)):
-    d = db.get_device_for_user(device_id, user["id"])
-    if d is None:
-        raise HTTPException(status_code=404, detail="Device not found")
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
-    context = str(body.get("context") or "session")[:24]
-    force = bool(body.get("force"))
-    holder = _lock_holder(request, user)
-    label = f"{user['username']} ({context})"
-    acquired, lock = db.acquire_lock(device_id, holder, label, force=force)
-    return JSONResponse({
-        "acquired": acquired,
-        "mine": acquired,
-        "label": lock.get("label") if lock else None,
-        "expires_at": lock.get("expires_at") if lock else None,
-        "ttl": db.lock_ttl(),
-    }, status_code=200 if acquired else 409)
-
-
-@app.post("/devices/{device_id}/lock/refresh")
-async def device_lock_refresh(device_id: str, request: Request,
-                              user: dict = Depends(auth.require_user)):
-    if db.get_device_for_user(device_id, user["id"]) is None:
-        raise HTTPException(status_code=404, detail="Device not found")
-    holder = _lock_holder(request, user)
-    ok = db.refresh_lock(device_id, holder)
-    return JSONResponse({"ok": ok}, status_code=200 if ok else 409)
-
-
-@app.post("/devices/{device_id}/lock/release")
-async def device_lock_release(device_id: str, request: Request,
-                              user: dict = Depends(auth.require_user)):
-    if db.get_device_for_user(device_id, user["id"]) is None:
-        raise HTTPException(status_code=404, detail="Device not found")
-    db.release_lock(device_id, _lock_holder(request, user))
-    return JSONResponse({"ok": True})
+# V5.15: /devices/{id}/lock{,/refresh,/release} endpoints removed with the
+# lock feature. Old clients POSTing them get a normal 404 (harmless).
 
 
 @app.get("/api/devices/{device_id}/info")
@@ -879,10 +895,6 @@ async def device_upload(device_id: str, rel: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    # WRITE: an upload mutates the device filesystem → take/refresh the
-    # lock (409 if a different holder is mid-control/upload). Browsing /
-    # downloading (GET) is a read and stays unguarded.
-    _guard_write_lock(device_id, request, user, "upload")
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail=_offline_detail(device_id))
@@ -897,20 +909,9 @@ async def device_upload(device_id: str, rel: str, request: Request,
     except ValueError:
         size = None
 
-    # Keep the write-lock alive across a long transfer: re-acquire (as
-    # this holder, non-forced) roughly every half-TTL while bytes flow,
-    # so a multi-minute upload doesn't let the lease lapse mid-write.
-    holder = _lock_holder(request, user)
-    refresh_every = max(5, db.lock_ttl() // 2)
-
     async def chunks():
-        last = time.monotonic()
         async for chunk in request.stream():
             if chunk:
-                now = time.monotonic()
-                if now - last >= refresh_every:
-                    db.refresh_lock(device_id, holder)
-                    last = now
                 yield chunk
 
     try:
@@ -1058,8 +1059,6 @@ async def device_input(device_id: str, request: Request,
     d = db.get_device_for_user(device_id, user["id"])
     if d is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    # WRITE: remote control mutates the device → take/refresh the lock.
-    _guard_write_lock(device_id, request, user, "control")
     conn = ws_router.registry.get(device_id)
     if conn is None:
         raise HTTPException(status_code=503, detail=_offline_detail(device_id))
