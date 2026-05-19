@@ -1388,22 +1388,162 @@ def self_register_page(user: dict, *, default_name: str,
 
 def pair_start_page(user: dict) -> str:
     body = f"""
-<div class="section-head"><h2>// Pair a New Device</h2></div>
-<div class="card" style="max-width:560px">
-  <p style="margin-top:0;color:var(--muted);font-size:.85rem">
-    Generate a one-time pairing code. The agent on your phone will use it to
-    enroll itself with this hub.
+<div class="section-head"><h2>// Add a Device</h2></div>
+<p style="color:var(--muted);font-size:.85rem;max-width:620px;margin-top:0">
+  Devices enrol into <strong>your account</strong>, not a specific hub.
+  Pick whichever fits — no per-hub pairing code needed.
+</p>
+
+<div class="card" style="max-width:620px">
+  <h3 style="margin:0 0 .35rem;color:var(--cyan)">① Self-register (simplest)</h3>
+  <p style="margin:0 0 .75rem;color:var(--muted);font-size:.82rem">
+    On the device itself: run <code>serve.sh</code>, open the UI, sign
+    in, click the button. No code, no token, no URL.
   </p>
-  <form method="post" action="/pair">
-    <label>Device name (optional)
-      <input name="device_name" placeholder="e.g. Pixel 8 Pro" maxlength="80">
+  <a class="btn btn-primary" href="/self-register" style="align-self:flex-start">
+    + Self-Register this device
+  </a>
+</div>
+
+<div class="card" style="max-width:620px;margin-top:1.25rem">
+  <h3 style="margin:0 0 .35rem;color:var(--cyan)">② Reusable account token (headless / many devices)</h3>
+  <p style="margin:0 0 .75rem;color:var(--muted);font-size:.82rem">
+    Mint one token, reuse it for <em>every</em> device. It enrols
+    against any node and the agent discovers where to connect by
+    itself. Revoke anytime.
+  </p>
+  <a class="btn btn-primary" href="/enroll-tokens" style="align-self:flex-start">
+    Manage enrollment tokens →
+  </a>
+</div>
+
+<details style="max-width:620px;margin-top:1.25rem">
+  <summary style="cursor:pointer;color:var(--muted);font-size:.82rem">
+    ③ Legacy: one-time 6-digit code (enrol a remote phone from here)
+  </summary>
+  <div class="card" style="margin-top:.75rem">
+    <p style="margin:0 0 .5rem;color:var(--muted);font-size:.82rem">
+      Single-use, expires in 10 min. Superseded by the reusable token —
+      kept for back-compat.
+    </p>
+    <form method="post" action="/pair">
+      <label>Device name (optional)
+        <input name="device_name" placeholder="e.g. Pixel 8 Pro" maxlength="80">
+      </label>
+      <button type="submit" class="btn" style="align-self:flex-start;margin-top:.5rem">
+        Generate Code
+      </button>
+    </form>
+  </div>
+</details>"""
+    return page("Add Device", body, user=user, active="/pair")
+
+
+def enroll_tokens_page(user: dict, tokens: list, hub_url: str) -> str:
+    rows = []
+    for t in tokens:
+        label = escape(t.get("label") or "—")
+        created = escape(_ago(t["created_at"]) + " ago")
+        used = ("never" if not t.get("last_used")
+                else _ago(t["last_used"]) + " ago")
+        rows.append(f"""<div class="row">
+  <span class="invite-code">#{t['id']} · {label}</span>
+  <span class="status">created {created} · used {escape(used)}</span>
+  <form method="post" action="/enroll-tokens/{t['id']}/delete"
+        style="margin-left:auto">
+    <button class="btn btn-small btn-danger" type="submit"
+            onclick="return confirm('Revoke token #{t['id']}? Devices already enrolled keep working; new enrollments with it stop.')">
+      Revoke
+    </button>
+  </form>
+</div>""")
+    rows_html = "".join(rows) if rows else (
+        '<div class="empty"><p>No enrollment tokens yet. '
+        'Create one below.</p></div>'
+    )
+    body = f"""
+<div class="section-head"><h2>// Enrollment Tokens</h2></div>
+<p style="color:var(--muted);font-size:.85rem;max-width:620px;margin-top:0">
+  A reusable, revocable <strong>account</strong> credential. One token
+  enrols any number of devices into your account against any node —
+  there's no per-hub code and the agent finds a node on its own.
+  Revoking a token does not unpair devices already enrolled with it.
+</p>
+<div class="invites-list" style="max-width:620px">{rows_html}</div>
+
+<div class="card" style="max-width:480px;margin-top:1rem">
+  <form method="post" action="/enroll-tokens">
+    <label>Label (optional)
+      <input name="label" placeholder="e.g. my phones" maxlength="60">
     </label>
     <button type="submit" class="btn btn-primary" style="align-self:flex-start;margin-top:.5rem">
-      Generate Code
+      Create token
     </button>
   </form>
 </div>"""
-    return page("Add Device", body, user=user, active="/pair")
+    return page("Enrollment Tokens", body, user=user, active="/pair")
+
+
+def enroll_token_created_page(user: dict, token: str, hub_url: str,
+                              label: Optional[str]) -> str:
+    """Shown ONCE right after minting — the plaintext token is never
+    retrievable again (stored hashed)."""
+    one_liner = (f"VORTEX_ACCOUNT_TOKEN={token} "
+                 f"HUB_URL={_shell_quote(hub_url)} bash ~/server/serve.sh")
+    qr_svg = _qr_svg(one_liner, box=7, border=2)
+    cmd_js = _json_dumps_for_html(one_liner)
+    tok_e = escape(token)
+    body = f"""
+<div class="section-head"><h2>// Token Created</h2></div>
+<div style="max-width:760px">
+  <div class="flash error" style="margin-bottom:1rem">
+    Copy this now — it’s shown <strong>once</strong> and stored hashed.
+    It’s reusable for <em>all</em> your devices; revoke it anytime on
+    the Enrollment Tokens page.
+  </div>
+  <div class="card" style="padding:1rem">
+    <code style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9rem;color:var(--cyan);word-break:break-all;user-select:all;display:block">{tok_e}</code>
+  </div>
+
+  <div class="qr-row" style="margin-top:1.5rem">
+    <div class="qr-card">{qr_svg}</div>
+    <div class="qr-side">
+      <h4>// One-liner (Termux)</h4>
+      <ol>
+        <li>On the new device, scan the QR (or copy below).</li>
+        <li>Paste into Termux, hit enter. That’s it — reuse the same
+            token/QR for every other device too.</li>
+      </ol>
+      <p style="margin:0;color:var(--muted);font-size:.7rem">
+        No per-device code. The agent enrols into your account and
+        auto-discovers a node to connect to.
+      </p>
+    </div>
+  </div>
+
+  <h3 style="margin-top:1.5rem;font-size:.85rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)">
+    Or paste this manually:
+    <button class="copy-btn" id="copy-cmd">Copy command</button>
+  </h3>
+  <div class="card" style="padding:1rem">
+    <code id="pair-cmd" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;color:var(--cyan);word-break:break-all;user-select:all;display:block">{escape(one_liner)}</code>
+  </div>
+  <p style="margin-top:1.25rem">
+    <a class="btn" href="/enroll-tokens">← Back to tokens</a>
+  </p>
+</div>
+<script>
+(function() {{
+  const cmd = {cmd_js};
+  const b = document.getElementById('copy-cmd');
+  if (b) b.addEventListener('click', async () => {{
+    try {{ await navigator.clipboard.writeText(cmd);
+           b.textContent = 'Copied ✓'; b.classList.add('ok'); }}
+    catch (e) {{ b.textContent = 'Copy failed'; }}
+  }});
+}})();
+</script>"""
+    return page("Token Created", body, user=user, active="/pair")
 
 
 def pair_code_page(user: dict, code: str, hub_url: str,

@@ -1075,20 +1075,35 @@ async def _handle_request(session: "Session", msg: dict) -> None:
 # ---------------------------------------------------------------------------
 # Connection loop
 # ---------------------------------------------------------------------------
-async def _connect_once(cfg: dict) -> Optional[bool]:
-    """Connect, auth, serve until the WS closes. Returns:
+def _candidate_urls(cfg: dict) -> list:
+    """Ordered, de-duped list of base URLs to try this round:
+    HUB_URL override → last-good hub_url → discovered nodes."""
+    seen, out = set(), []
+    for u in ([os.environ.get("HUB_URL", "").rstrip("/"),
+               (cfg.get("hub_url") or "").rstrip("/")]
+              + [str(n).rstrip("/") for n in (cfg.get("nodes") or [])]):
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+async def _connect_once(cfg: dict, base_url: str) -> Optional[bool]:
+    """Connect to one node, auth, serve until the WS closes. Returns:
         True  -> connection ended normally (try reconnect)
         False -> auth fatally failed (don't reconnect)
-        None  -> transport-level failure (reconnect with backoff)
+        None  -> transport-level failure (try next node / backoff)
+    On auth_ok the hub hands us the live node list; we merge + persist
+    it so failover survives restarts and the user never sets a URL.
     """
-    hub = cfg["hub_url"]
+    hub = base_url
     if hub.startswith("https://"):
         ws_url = "wss://" + hub[len("https://"):] + "/ws/agent"
     elif hub.startswith("http://"):
         ws_url = "ws://" + hub[len("http://"):] + "/ws/agent"
     else:
-        print(f"!! invalid hub url: {hub}", file=sys.stderr)
-        return False
+        print(f"!! invalid node url: {hub}", file=sys.stderr)
+        return None
 
     print(f"==> Connecting to {ws_url}")
     try:
@@ -1122,6 +1137,24 @@ async def _connect_once(cfg: dict) -> Optional[bool]:
                 return None
 
             print(f"==> Connected as '{ack_msg.get('name', cfg.get('name'))}'")
+            # V5.9: remember the node we reached + the fresh node list the
+            # hub just gave us, so failover/restarts need no hand-set URL.
+            try:
+                merged, seen = [], set()
+                for u in ([base_url]
+                          + [str(n).rstrip("/")
+                             for n in (ack_msg.get("nodes") or [])]
+                          + [str(n).rstrip("/")
+                             for n in (cfg.get("nodes") or [])]):
+                    if u and u not in seen:
+                        seen.add(u)
+                        merged.append(u)
+                if cfg.get("hub_url") != base_url or cfg.get("nodes") != merged:
+                    cfg["hub_url"] = base_url
+                    cfg["nodes"] = merged
+                    save_config(cfg)
+            except Exception:
+                pass
             session = Session(ws)
 
             async for raw in ws:
@@ -1158,16 +1191,30 @@ async def _connect_once(cfg: dict) -> Optional[bool]:
 async def run_forever(cfg: dict) -> int:
     backoff = 1.0
     while True:
-        result = await _connect_once(cfg)
-        if result is False:
-            print("!! fatal auth failure; exiting. "
-                  "Re-pair the device on the hub and rerun.", file=sys.stderr)
-            return 2
-        if result is True:
-            backoff = 1.0  # reset after a clean session
-        else:
+        candidates = _candidate_urls(cfg)
+        if not candidates:
+            print("!! no node URL known yet; waiting…", file=sys.stderr)
+            await asyncio.sleep(min(backoff * 1.7, 60.0))
             backoff = min(backoff * 1.7, 60.0)
-        print(f"==> Reconnecting in {backoff:.1f}s")
+            continue
+        served = False
+        for url in candidates:
+            result = await _connect_once(cfg, url)
+            if result is False:
+                print("!! fatal auth failure; exiting. Re-enrol the "
+                      "device and rerun.", file=sys.stderr)
+                return 2
+            if result is True:
+                backoff = 1.0  # clean session ended — restart the round
+                served = True
+                break
+            # result is None: transport failure — try the next node.
+            print(f"!! node unreachable: {url}", file=sys.stderr)
+        if served:
+            continue
+        backoff = min(backoff * 1.7, 60.0)
+        print(f"==> All {len(candidates)} node(s) unreachable; "
+              f"retrying in {backoff:.1f}s")
         await asyncio.sleep(backoff)
 
 

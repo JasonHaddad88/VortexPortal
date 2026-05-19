@@ -112,6 +112,23 @@ CREATE TABLE IF NOT EXISTS theft_media (
 );
 CREATE INDEX IF NOT EXISTS idx_theft_media_dev
     ON theft_media(device_id, created_at);
+
+CREATE TABLE IF NOT EXISTS account_tokens (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT    NOT NULL UNIQUE,
+    label      TEXT,
+    created_at INTEGER NOT NULL,
+    last_used  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_account_tokens_user
+    ON account_tokens(user_id);
+
+CREATE TABLE IF NOT EXISTS node_endpoints (
+    url       TEXT    PRIMARY KEY,
+    label     TEXT,
+    last_seen INTEGER NOT NULL
+);
 """
 
 
@@ -879,10 +896,103 @@ def prune_theft_media(device_id: str, keep: int) -> list:
         return paths
 
 
+# ---------------------------------------------------------------------------
+# Account enrollment tokens (V5.9) — reusable, revocable, per-account.
+# Replace per-hub pairing codes for headless/remote enrollment: one token
+# enrolls any number of devices into the account, against any node.
+# ---------------------------------------------------------------------------
+def create_account_token(user_id: int, label: Optional[str] = None) -> str:
+    """Mint a reusable enrollment token. Returns the plaintext ONCE
+    (stored hashed, like device tokens)."""
+    tok = secrets.token_urlsafe(32)
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO account_tokens (user_id, token_hash, label, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, hash_token(tok), (label or "").strip()[:60] or None,
+             int(time.time())),
+        )
+    return tok
+
+
+def list_account_tokens(user_id: int) -> list:
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT id, label, created_at, last_used FROM account_tokens "
+            "WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def revoke_account_token(token_id: int, user_id: int) -> bool:
+    with _connect() as con:
+        cur = con.execute(
+            "DELETE FROM account_tokens WHERE id = ? AND user_id = ?",
+            (token_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def account_token_user(token: str) -> Optional[int]:
+    """Return the owning user_id for a valid enrollment token, else None.
+    Bumps last_used (best-effort)."""
+    if not token:
+        return None
+    th = hash_token(token)
+    with _connect() as con:
+        row = con.execute(
+            "SELECT id, user_id FROM account_tokens WHERE token_hash = ?",
+            (th,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            con.execute("UPDATE account_tokens SET last_used = ? WHERE id = ?",
+                        (int(time.time()), row["id"]))
+        except Exception:
+            pass
+        return row["user_id"]
+
+
+# ---------------------------------------------------------------------------
+# Node endpoints (V5.9) — running servers heartbeat their reachable URL
+# into the shared/replicated DB so agents discover where to connect
+# instead of being handed a HUB_URL. "Hub" is just whichever node is up.
+# ---------------------------------------------------------------------------
+def publish_node_endpoint(url: str, label: Optional[str] = None) -> None:
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO node_endpoints (url, label, last_seen) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(url) DO UPDATE SET "
+            "label=excluded.label, last_seen=excluded.last_seen",
+            (url, (label or "").strip()[:60] or None, int(time.time())),
+        )
+
+
+def list_node_endpoints(max_age: int = 120) -> list:
+    """Fresh (heartbeated within max_age s) node URLs, newest first."""
+    cutoff = int(time.time()) - max(30, int(max_age))
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT url, label, last_seen FROM node_endpoints "
+            "WHERE last_seen >= ? ORDER BY last_seen DESC",
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def purge_expired() -> None:
-    """Housekeeping: drop expired sessions, pairing codes, device locks."""
+    """Housekeeping: drop expired sessions, pairing codes, device locks,
+    and stale node endpoints (unseen for > 1 h)."""
     now = int(time.time())
     with _connect() as con:
         con.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
         con.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (now,))
         con.execute("DELETE FROM device_locks WHERE expires_at < ?", (now,))
+        con.execute("DELETE FROM node_endpoints WHERE last_seen < ?",
+                    (now - 3600,))

@@ -42,7 +42,12 @@ def load_config() -> Optional[dict]:
         data = json.loads(p.read_text())
     except (OSError, ValueError):
         return None
-    if not all(k in data for k in ("device_id", "token", "hub_url")):
+    # V5.9: hub_url is no longer mandatory — a `nodes` list (discovered
+    # at enrollment / pushed on connect) is enough. Require identity +
+    # at least one place to dial.
+    if not data.get("device_id") or not data.get("token"):
+        return None
+    if not data.get("hub_url") and not data.get("nodes"):
         return None
     return data
 
@@ -212,16 +217,100 @@ def wait_for_config(poll: float = 2.0) -> dict:
         waited += poll
 
 
+def enroll_now(*, hub_url: Optional[str] = None,
+               account_token: Optional[str] = None,
+               device_name: Optional[str] = None) -> dict:
+    """V5.9 per-account enrollment with a REUSABLE account token.
+
+    Unlike pair_now() (single-use 6-digit per-hub code), this posts a
+    reusable account token to {bootstrap}/api/enroll. The bootstrap URL
+    is just any reachable node; the response carries the live `nodes`
+    list so the agent never needs a hand-set hub URL again — it
+    discovers/fails over on its own.
+    """
+    draft = load_draft()
+    hub_url = (hub_url or os.environ.get("HUB_URL")
+               or draft.get("hub_url") or "").rstrip("/")
+    account_token = (account_token or os.environ.get("VORTEX_ACCOUNT_TOKEN")
+                     or draft.get("account_token") or "").strip()
+    device_name = (device_name or os.environ.get("DEVICE_NAME")
+                   or draft.get("device_name") or "").strip()
+
+    if not hub_url:
+        hub_url = _prompt("Hub URL (any node, e.g. https://abc.trycloudflare.com)").rstrip("/")
+    save_draft({"hub_url": hub_url})
+    if not account_token:
+        account_token = _prompt("Account enrollment token", secret=True)
+    if not hub_url.startswith(("http://", "https://")):
+        raise ValueError("HUB_URL must be http:// or https://")
+    if not account_token:
+        raise ValueError("An account enrollment token is required")
+
+    payload = {"account_token": account_token}
+    if device_name:
+        payload["device_name"] = device_name
+
+    print(f"==> Enrolling into account at {hub_url}/api/enroll")
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            r = client.post(f"{hub_url}/api/enroll", json=payload)
+    except httpx.ConnectError as e:
+        raise RuntimeError(
+            f"Could not reach a node at {hub_url} ({e}).\n"
+            f"  - Is a hub/node running and reachable?\n"
+            f"  - Quick-tunnel URLs rotate on restart.\n"
+            f"  - Test: curl -v {hub_url}/health\n"
+            f"  - The token is reusable — just rerun once a node is up."
+        ) from None
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Network error talking to {hub_url}: {e}") from None
+
+    if r.status_code != 200:
+        try:
+            detail = r.json().get("detail", r.text)
+        except ValueError:
+            detail = r.text
+        raise RuntimeError(f"Enrollment failed ({r.status_code}): {detail}")
+
+    data = r.json()
+    nodes = data.get("nodes") or []
+    if hub_url not in nodes:
+        nodes = [hub_url] + nodes
+    cfg = {
+        "device_id": data["device_id"],
+        "token": data["token"],
+        "hub_url": hub_url,
+        "nodes": nodes,
+        "name": data.get("name", device_name or "Unnamed"),
+        # Persist the account token so a wiped device DB / re-enroll can
+        # recover unattended (it's reusable + revocable by design).
+        "account_token": account_token,
+    }
+    save_config(cfg)
+    clear_draft()
+    print(f"==> Enrolled as '{cfg['name']}' (id: {cfg['device_id']})")
+    print(f"==> {len(nodes)} node(s) known; config saved to {config_path()}")
+    return cfg
+
+
 def ensure_paired(*, wait: bool = False) -> dict:
     """Load existing config or enroll. Returns the config dict.
 
-    wait=False (default): run the interactive/code pairing handshake.
-    wait=True: block until the hub's self-register flow writes the
-    config (no prompts) — for unattended serve.sh launches.
+    Priority when there's no saved config:
+      1. PAIRING_CODE env set        -> legacy single-use code (pair_now)
+      2. VORTEX_ACCOUNT_TOKEN env    -> reusable account enroll (enroll_now)
+      3. wait=True                   -> wait for browser self-register
+      4. otherwise                   -> interactive prompt (enroll_now)
     """
     cfg = load_config()
     if cfg is not None:
         return cfg
+    if os.environ.get("PAIRING_CODE"):
+        return pair_now()
+    if os.environ.get("VORTEX_ACCOUNT_TOKEN"):
+        return enroll_now()
     if wait:
         return wait_for_config()
-    return pair_now()
+    # No code, no token, not waiting: prefer the modern token flow's
+    # interactive prompt over the legacy code prompt.
+    return enroll_now()

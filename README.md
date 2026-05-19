@@ -90,23 +90,39 @@ between machines. Self-register always enrolls *the machine the hub
 process runs on*. Subsequent runs reconnect automatically.
 `NO_SELF_AGENT=1` runs a headless hub (no co-located agent).
 
-### Pair a remote device (legacy code flow)
+### Reusable account token (headless / many devices, since V5.9)
 
-For a phone you control from a *separate* hub:
+Enrollment is **per-account, not per-hub**. Mint one token, reuse it
+for every device; the agent then discovers which node to connect to on
+its own.
 
-1. On the hub: sign in → **Pair remote device** → (optional name) →
-   **Generate Code** (6 digits, single-use, 10-min expiry).
-2. On the phone (Termux), after `bash setup.sh`:
+1. On any node: sign in → **Add a Device → Manage enrollment tokens →
+   Create token**. The token is shown **once** (stored hashed),
+   reusable, revocable.
+2. On each phone (Termux), after `bash setup.sh`:
    ```bash
-   MODE=agent PAIRING_CODE=123456 HUB_URL=https://your-hub.trycloudflare.com bash ~/server/serve.sh
+   MODE=agent VORTEX_ACCOUNT_TOKEN=<token> HUB_URL=https://any-node bash ~/server/serve.sh
    ```
-   Or interactively: `MODE=agent bash ~/server/serve.sh` prompts for
-   the hub URL + code.
-3. The agent submits the code, receives a `device_id` + token, saves
-   both to `~/.vortex_agent/config.json`, and stays connected.
+   `HUB_URL` here is just *a* reachable node for the first contact;
+   afterwards the agent auto-discovers nodes from the shared DB and
+   fails over by itself — you never hand-set a URL again.
+3. The agent enrolls into your account, saves
+   `{device_id, token, nodes[]}` to `~/.vortex_agent/config.json`, and
+   stays connected. Revoking the token does **not** unpair devices
+   already enrolled with it.
 
-After the first run, no env vars are needed — `MODE=agent bash
-~/server/serve.sh` reconnects from the saved config.
+### Pair a remote device (legacy 6-digit code)
+
+Superseded by the reusable token; kept for back-compat. On the hub:
+**Add a Device → ③ legacy code → Generate Code** (single-use, 10-min),
+then on the phone:
+```bash
+MODE=agent PAIRING_CODE=123456 HUB_URL=https://your-hub bash ~/server/serve.sh
+```
+
+After the first run none of these env vars are needed — `MODE=agent
+bash ~/server/serve.sh` reconnects (and re-discovers nodes) from the
+saved config.
 
 For autostart on boot, install **Termux:Boot** from F-Droid and open it
 once; `setup.sh` already wrote `~/.termux/boot/start-vortex-agent`.
@@ -283,8 +299,10 @@ It self-locks the moment any account is visible.
 | `MODE`                  | `hub` (Termux serve.sh)       | `hub` (UI + selfreg agent) or `agent` (legacy code-pair) |
 | `NO_SELF_AGENT`         | *(unset)*                     | `1` = headless hub, skip co-located selfreg agent |
 | `VORTEX_SELFREG_WAIT`   | *(set by serve.sh)*           | `1` = agent waits for browser self-register instead of prompting |
-| `PAIRING_CODE`          | *(prompted)*                  | Pairing code (legacy `MODE=agent` enroll) |
-| `HUB_URL`               | *(prompted)*                  | Hub URL (legacy enroll / agent override) |
+| `VORTEX_ACCOUNT_TOKEN`  | *(prompted)*                  | Reusable per-account enrollment token (V5.9, recommended) |
+| `PAIRING_CODE`          | *(prompted)*                  | Legacy single-use 6-digit enroll code |
+| `HUB_URL`               | *(prompted)*                  | A bootstrap node for first contact / override; auto-discovered after |
+| `VORTEX_DETECTED_PUBLIC_URL` | *(unset)*                | Fallback public URL for the node-discovery heartbeat |
 | `DEVICE_NAME`           | *(optional)*                  | Display name override on agent pairing |
 | `STORAGE_ROOT`          | `~/storage/shared` if exists  | Agent's file browser root              |
 | `VORTEX_AGENT_CONFIG`   | `~/.vortex_agent/config.json` | Agent config path                      |

@@ -126,7 +126,24 @@ stronger anti-lock (foreground service / device-admin), capture-while-
 offline buffering. Blocked on the Knox-flagged unsigned APK (no clean
 bypass — documented).
 
-## V5.9 — find-my-device / fleet UX (candidate, deferred)
+## V5.9 — per-account enrollment + node discovery — _shipped V5.9_
+
+User insight: with the shared/replicated DB and any device able to be a
+hub, enrollment should be per-account, not per-hub.
+
+- [x] **Reusable account token** 🟡 — _shipped_. `account_tokens`
+  table, `/enroll-tokens` mgmt UI, `POST /api/enroll`. Replaces
+  single-use per-hub codes; revocable.
+- [x] **Node discovery** 🟡 — _shipped_. `node_endpoints` heartbeat +
+  `GET /api/nodes` + `auth_ok` node list; agent `_candidate_urls` /
+  multi-node `run_forever` failover; no hand-set `HUB_URL` after first
+  contact.
+- [x] **Honest residual** — live control still needs a running node
+  (DB ≠ transport); libSQL is primary+replica, not P2P; one account
+  credential + one bootstrap URL is the irreducible minimum. Legacy
+  paths kept.
+
+## V5.10 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**
 and a ring/record are now delivered by Theft Mode (V5.8); what remains

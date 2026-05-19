@@ -1,20 +1,24 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VORTEX_SERVE_VERSION=8
+# VORTEX_SERVE_VERSION=9
 # Vortex Termux launcher.
 #
 #   MODE=hub (default)  Runs the UI (uvicorn + cloudflared quick tunnel)
 #                       AND a co-located agent in self-register-wait mode:
 #                       open the public URL, log in, click "Self-Register"
 #                       and THIS device comes online — no pairing code.
-#   MODE=agent          Legacy: run only the outbound agent and enroll
-#                       with a pairing code (for a phone you control from
-#                       a separate hub). Still fully supported.
+#   MODE=agent          Outbound agent only (a phone you control from a
+#                       separate node). Enrol with a REUSABLE account
+#                       token (V5.9, recommended) or a legacy 1-time code.
 #
 # First-run, default mode: just `bash serve.sh`, then self-register in
-# the browser. Legacy code pairing:
+# the browser.
+# Headless enrol with a reusable account token (mint it on any node at
+# /enroll-tokens — works for every device, revocable):
+#   MODE=agent VORTEX_ACCOUNT_TOKEN=<tok> HUB_URL=https://any-node bash serve.sh
+# Legacy single-use code:
 #   MODE=agent PAIRING_CODE=123456 HUB_URL=https://abc.trycloudflare.com bash serve.sh
-# Either way the device_id + token land in ~/.vortex_agent/config.json
-# and subsequent runs reconnect automatically.
+# Either way device_id + token land in ~/.vortex_agent/config.json; the
+# agent then auto-discovers nodes (no fixed HUB_URL needed afterwards).
 #
 #   NO_SELF_AGENT=1  (default mode) skip the co-located self-register
 #                    agent — run a headless hub only.

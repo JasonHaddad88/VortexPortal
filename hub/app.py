@@ -100,6 +100,7 @@ async def _startup():
     asyncio.create_task(_purge_loop())
     asyncio.create_task(_db_sync_loop())
     asyncio.create_task(_theft_loop())
+    asyncio.create_task(_node_heartbeat_loop())
 
 
 async def _purge_loop():
@@ -126,6 +127,20 @@ async def _db_sync_loop():
         await asyncio.sleep(10)
 
 
+async def _node_heartbeat_loop():
+    """V5.9: publish this node's reachable URL into the shared DB every
+    30 s so agents can discover where to connect (no hand-set HUB_URL).
+    Skips silently until we know our public URL."""
+    while True:
+        try:
+            url = _resolve_public_url()
+            if url:
+                db.publish_node_endpoint(url, label=f"v{__VORTEX_VERSION__}")
+        except Exception:
+            pass
+        await asyncio.sleep(30)
+
+
 @app.get("/health")
 def health():
     return {"status": "up", "version": __VORTEX_VERSION__}
@@ -134,6 +149,9 @@ def health():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+_PUBLIC_URL_CACHE = ""  # last URL derived from a real request (V5.9 heartbeat)
+
+
 def _hub_public_url(request: Request) -> str:
     override = _public_url_override()
     if override:
@@ -142,7 +160,24 @@ def _hub_public_url(request: Request) -> str:
     fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     scheme = fwd_proto or request.url.scheme
     host = fwd_host or request.url.netloc
-    return f"{scheme}://{host}"
+    url = f"{scheme}://{host}"
+    # Cache the externally-derived URL so the node-endpoint heartbeat (no
+    # Request in hand) can publish where this node is actually reachable —
+    # covers quick tunnels whose URL we can't know until traffic arrives.
+    global _PUBLIC_URL_CACHE
+    if host and "://" in url and not host.startswith("127.0.0.1") \
+            and not host.startswith("localhost"):
+        _PUBLIC_URL_CACHE = url
+    return url
+
+
+def _resolve_public_url() -> str:
+    """Best-effort 'where am I reachable' for the node heartbeat:
+    config override > URL learned from a real request > launcher-detected
+    env. Empty => we don't publish (nothing reliable to advertise)."""
+    return (_public_url_override()
+            or _PUBLIC_URL_CACHE
+            or os.environ.get("VORTEX_DETECTED_PUBLIC_URL", "").strip().rstrip("/"))
 
 
 # --- V5.5: self-register helpers -------------------------------------------
@@ -512,6 +547,32 @@ def pair_post(
     ))
 
 
+@app.get("/enroll-tokens", response_class=HTMLResponse)
+def enroll_tokens_get(request: Request,
+                      user: dict = Depends(auth.require_user)):
+    return HTMLResponse(templates.enroll_tokens_page(
+        user, db.list_account_tokens(user["id"]), _hub_public_url(request),
+    ))
+
+
+@app.post("/enroll-tokens", response_class=HTMLResponse)
+def enroll_tokens_create(request: Request,
+                         user: dict = Depends(auth.require_user),
+                         label: str = Form("")):
+    tok = db.create_account_token(user["id"], (label or "").strip()[:60] or None)
+    # Shown once — never retrievable again (hashed at rest).
+    return HTMLResponse(templates.enroll_token_created_page(
+        user, tok, _hub_public_url(request), (label or "").strip() or None,
+    ))
+
+
+@app.post("/enroll-tokens/{token_id}/delete")
+def enroll_tokens_delete(token_id: int, request: Request,
+                         user: dict = Depends(auth.require_user)):
+    db.revoke_account_token(token_id, user["id"])
+    return RedirectResponse(url="/enroll-tokens", status_code=303)
+
+
 @app.post("/api/pair")
 async def api_pair(request: Request):
     """Agent-side enrollment endpoint.
@@ -539,6 +600,68 @@ async def api_pair(request: Request):
     token = secrets.token_urlsafe(32)
     db.create_device(device_id, consumed["user_id"], name, token)
     return {"device_id": device_id, "token": token, "name": name}
+
+
+# ---------------------------------------------------------------------------
+# V5.9: per-account enrollment + node discovery. A reusable, revocable
+# account token (not a per-hub code) enrolls any device into the account
+# against ANY node. The response carries the live node list so the agent
+# never needs a hand-set HUB_URL — it discovers/fails over on its own.
+# ---------------------------------------------------------------------------
+def _live_node_urls(request: Optional[Request] = None) -> list:
+    """Live node URLs (DB heartbeats), with this node guaranteed first so
+    a just-enrolled agent can always connect back to whoever it reached."""
+    urls = [n["url"] for n in db.list_node_endpoints(max_age=180)]
+    here = ""
+    if request is not None:
+        here = _hub_public_url(request).rstrip("/")
+    if here and here not in urls:
+        urls.insert(0, here)
+    elif here:
+        urls.remove(here)
+        urls.insert(0, here)
+    return urls
+
+
+@app.post("/api/enroll")
+async def api_enroll(request: Request):
+    """Headless/remote enrollment with a reusable ACCOUNT token.
+
+    Body: {"account_token": "...", "device_name": "..."}
+    Returns: {device_id, token, name, nodes:[url,...]}
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    acct = str(body.get("account_token", "")).strip()
+    uid = db.account_token_user(acct)
+    if uid is None:
+        raise HTTPException(status_code=403,
+                            detail="Invalid or revoked account token")
+    name = (body.get("device_name") or "").strip()[:80] or "Unnamed Device"
+    device_id = uuid.uuid4().hex
+    token = secrets.token_urlsafe(32)
+    db.create_device(device_id, uid, name, token)
+    return {"device_id": device_id, "token": token, "name": name,
+            "nodes": _live_node_urls(request)}
+
+
+@app.get("/api/nodes")
+async def api_nodes(request: Request):
+    """Live node URLs for an already-enrolled agent to (re)discover where
+    to connect. Authenticated by the device's own credentials so it's not
+    an open relay-list endpoint.
+
+    Header: X-Vortex-Device / X-Vortex-Token (or ?device_id=&token=).
+    """
+    did = (request.headers.get("x-vortex-device")
+           or request.query_params.get("device_id") or "").strip()
+    tok = (request.headers.get("x-vortex-token")
+           or request.query_params.get("token") or "")
+    if not did or db.authenticate_device(did, tok) is None:
+        raise HTTPException(status_code=403, detail="Invalid device credentials")
+    return {"nodes": _live_node_urls(request)}
 
 
 # ---------------------------------------------------------------------------
@@ -1631,7 +1754,11 @@ async def ws_agent(ws: WebSocket):
     await ws_router.registry.register(conn)
     db.touch_device(device_id)
     try:
-        await ws.send_json({"type": "auth_ok", "name": device["name"]})
+        # V5.9: hand the agent the current live node list on every connect
+        # (cheap, always fresh) so it can fail over without a hand-set URL.
+        nodes = [n["url"] for n in db.list_node_endpoints(max_age=180)]
+        await ws.send_json({"type": "auth_ok", "name": device["name"],
+                            "nodes": nodes})
     except Exception:
         await ws_router.registry.unregister(conn)
         return

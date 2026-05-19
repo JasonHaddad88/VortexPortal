@@ -3,6 +3,75 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.9] — 2026-05-19
+
+**Per-account enrollment + node discovery.** Enrolling a device is now
+an account operation, not a per-hub one: a reusable, revocable account
+token replaces single-use 6-digit codes, and the agent discovers which
+node to connect to from the shared DB instead of needing a hand-set
+`HUB_URL`. "Hub" becomes "whichever node is up."
+
+### Added
+- **`account_tokens` table + helpers** — `create_account_token`
+  (reusable; plaintext shown once, stored hashed like device tokens),
+  `list_account_tokens`, `revoke_account_token`, `account_token_user`
+  (auth, bumps `last_used`). One token enrolls any number of devices
+  into the account against any node; revoke stops new enrollments
+  (already-enrolled devices keep their own device token).
+- **`node_endpoints` table + helpers** — running servers heartbeat
+  their reachable URL every 30 s (`_node_heartbeat_loop`);
+  `list_node_endpoints(max_age)` returns fresh ones; stale rows
+  (>1 h) purged. `_resolve_public_url()` precedence:
+  `VORTEX_HUB_PUBLIC_URL` > URL learned from a real request (cached) >
+  `VORTEX_DETECTED_PUBLIC_URL` env.
+- **`POST /api/enroll`** — account-token → mints a device, returns
+  `{device_id, token, name, nodes:[…]}` (live node list, this node
+  first). **`GET /api/nodes`** — device-credential-authed live node
+  list for failover. `auth_ok` on the agent WS now also carries the
+  fresh `nodes` list (no extra round-trip).
+- **UI** — `/enroll-tokens` page (mint with optional label / list /
+  revoke), a "shown once" token+QR+one-liner page, and a reworked
+  **Add a Device** page presenting three clear paths: ① self-register,
+  ② reusable account token, ③ legacy 6-digit code (collapsed).
+- **Agent** — `pairing.enroll_now()` (POST account token to any node's
+  `/api/enroll`; persists `nodes` + the reusable `account_token` for
+  unattended recovery). `ensure_paired()` priority:
+  `PAIRING_CODE` → `VORTEX_ACCOUNT_TOKEN` → self-register-wait →
+  interactive enroll. `load_config()` no longer requires `hub_url`
+  (a `nodes` list suffices). New `_candidate_urls()` +
+  multi-node `run_forever()`: tries `HUB_URL` env → last-good →
+  discovered nodes, merges/persists the hub-pushed node list on every
+  connect, fails over automatically. `serve.sh` v9 documents the
+  `VORTEX_ACCOUNT_TOKEN` flow. Versions 5.8→5.9 (agent too).
+
+### Behaviour notes (honest about the irreducible bits)
+- A DB — even the replicated one — **cannot transport a live stream**.
+  Camera/screen/input/theft still need a live socket to a *running*
+  node; the `node_endpoints` table only makes *which* node automatic,
+  not optional. "Registered" works via the DB; "controllable now"
+  needs ≥1 node up.
+- libSQL is **one remote primary (Turso) + local read-replicas**, not
+  a P2P mesh — enrollment is a write, so it needs the primary
+  reachable. The local replica gives fast/offline *reads*, not offline
+  enroll.
+- The minimum a headless device must carry is **one account
+  credential** (the reusable token, or a browser login for
+  self-register) plus *one* bootstrap node URL the first time; after
+  first contact, node discovery/failover is automatic and no URL is
+  ever hand-set again.
+- Fully back-compat: legacy `/api/pair` + 6-digit codes + self-register
+  + `MODE=agent` all unchanged.
+
+### Smoke-tested
+- account-token create/list/revoke/auth (valid/invalid/revoked);
+  node-endpoint publish/fresh-filter/purge; routes; public-URL
+  precedence; `/api/enroll` mints under the right account + 403 on bad
+  token; `/api/nodes` device-auth; templates (3-path page, token mgmt,
+  shown-once page, V5.9 footer); agent nodes-only `load_config`,
+  `_candidate_urls` ordering/dedup, `ensure_paired` env gating;
+  regression: legacy `/api/pair` intact, schema idempotent on a
+  pre-existing DB.
+
 ## [V5.8] — 2026-05-19
 
 **Theft Mode** (Phase 1, Termux:API). Owner anti-theft for paired
