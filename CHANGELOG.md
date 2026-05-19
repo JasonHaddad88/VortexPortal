@@ -3,6 +3,42 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.13] — 2026-05-19
+
+**Fix: "Set up remote database" silently bounced back to Sign In.**
+`/setup` deliberately locks once any account exists in the active DB
+(no unauthenticated config endpoint on a live system). But it
+redirected to `/login` with **no explanation**, so clicking the link
+just looked like a broken button.
+
+### Fixed
+- The locked `/setup` redirect now carries a reason and the Sign In
+  page shows an **info banner** explaining the state and what to do:
+  - *remote configured* (`VORTEX_SYNC_URL` set, DB has an account) →
+    "already connected & has an account — just sign in; change DB
+    settings in Settings."
+  - *local account only* (no remote set, but a local account exists) →
+    "first-run setup is locked; sign in and use Settings, **or set
+    `VORTEX_SYNC_URL` + `VORTEX_SYNC_TOKEN` before launching
+    serve.sh**" (env wins → the Termux HTTP backend connects to your
+    remote at next start and you sign in with that account).
+- `login_page` gained an optional, escaped `notice` info flash;
+  `login_get` maps a small set of known notice codes (unknown codes
+  ignored — no injection).
+
+### Why it was happening
+The Termux hub's active DB already had an account
+(`db.user_count() > 0`), which is exactly the lock condition. The
+redirect was correct; only the missing explanation made it feel like a
+bug. Security gate unchanged. Hub-only; no schema change; 5.12 → 5.13.
+
+### Smoke-tested
+- Locked + no remote → `/login?notice=local_account`; locked + remote
+  set → `?notice=configured`; `login_get` code mapping
+  (configured / local_account / none / unknown); `login_page` notice
+  flash escaped + absent by default; open setup (0 users) still
+  renders the form (no regression).
+
 ## [V5.12] — 2026-05-19
 
 **Fix: the `/setup` "Save & connect" button looked dead on Termux.**

@@ -276,11 +276,25 @@ def _guard_write_lock(device_id: str, request: Request, user: dict,
 # ---------------------------------------------------------------------------
 # Auth: login / register / logout
 # ---------------------------------------------------------------------------
+_LOGIN_NOTICES = {
+    "configured":
+        "This hub is already connected to a database that has an "
+        "account, so first-run setup is locked — just sign in. To "
+        "change database settings, sign in and open Settings.",
+    "local_account":
+        "This hub already has an account, so first-run setup is "
+        "locked. To point it at your remote database: sign in and use "
+        "Settings, or set VORTEX_SYNC_URL + VORTEX_SYNC_TOKEN before "
+        "launching serve.sh (env wins; it connects on next start).",
+}
+
+
 @app.get("/login", response_class=HTMLResponse)
-def login_get(request: Request, next: str = "/"):
+def login_get(request: Request, next: str = "/", notice: str = ""):
     if auth.current_user_optional(request) is not None:
         return RedirectResponse(url=next or "/", status_code=303)
-    return HTMLResponse(templates.login_page(next_url=next or "/"))
+    return HTMLResponse(templates.login_page(
+        next_url=next or "/", notice=_LOGIN_NOTICES.get(notice)))
 
 
 @app.post("/login")
@@ -1372,8 +1386,11 @@ def setup_get(request: Request, saved: str = ""):
         # Logged in already → the real Settings tab (admin-gated).
         return RedirectResponse(url="/settings", status_code=303)
     if not _setup_open():
-        # Accounts exist (remote resolved) → setup is locked.
-        return RedirectResponse(url="/login", status_code=303)
+        # Accounts exist → setup is locked. Don't bounce silently (that
+        # looked like a broken button); tell them WHY on the login page,
+        # and which case they're in so they know what to do next.
+        why = "configured" if config.get("VORTEX_SYNC_URL") else "local_account"
+        return RedirectResponse(url=f"/login?notice={why}", status_code=303)
     return HTMLResponse(templates.setup_page(
         config.public_view(), _hub_status(request), saved=bool(saved),
     ))

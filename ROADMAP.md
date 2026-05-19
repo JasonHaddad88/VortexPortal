@@ -168,7 +168,13 @@ hub, enrollment should be per-account, not per-hub.
   `wait_for` timeout; error flash + submit-feedback instead of a
   silent hang; `_TursoHttpBackend` httpx timeout 20s→8s.
 
-## V5.13 — find-my-device / fleet UX (candidate, deferred)
+## V5.13 — fix: /setup silent bounce to Sign In — _shipped V5.13_
+
+- [x] **Explain the locked-`/setup` redirect** 🟢 — _shipped_. Reason
+  code → Sign In info banner (configured vs local-account, with the
+  env-var unblock for the latter). Security gate unchanged.
+
+## V5.14 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

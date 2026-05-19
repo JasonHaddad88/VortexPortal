@@ -856,15 +856,18 @@ def page(title: str, body: str, *, user: Optional[dict] = None,
 </head><body>{chrome_html}</body></html>"""
 
 
-def login_page(error: Optional[str] = None, next_url: str = "/") -> str:
+def login_page(error: Optional[str] = None, next_url: str = "/",
+                notice: Optional[str] = None) -> str:
     err = f'<div class="flash error">{escape(error)}</div>' if error else ""
+    note = (f'<div class="flash info">{escape(notice)}</div>'
+            if notice else "")
     body = f"""<div class="center-wrap"><div class="auth-card">
   <div class="brand-large">
     <div class="logo"></div>
     <h1>Vortex<span class="accent">Hub</span></h1>
     <p class="subtitle">Sign in</p>
   </div>
-  {err}
+  {note}{err}
   <form method="post" action="/login">
     <input type="hidden" name="next" value="{escape(next_url)}">
     <label>Username <input name="username" autocomplete="username" required autofocus></label>
