@@ -857,6 +857,62 @@ def list_theft_media(device_id: str, owner_id: int, limit: int = 200) -> list:
         return [dict(r) for r in rows]
 
 
+# --- V5.10: account-wide rollups for the Theft Dashboard --------------------
+def theft_states_for_user(owner_id: int) -> dict:
+    """{device_id: {armed, armed_at, interval_s, opts, last_run}} for every
+    device of this account that has a theft_state row."""
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT t.device_id, t.armed, t.armed_at, t.interval_s, "
+            "t.opts, t.last_run FROM theft_state t "
+            "JOIN devices d ON d.id = t.device_id WHERE d.owner_id = ?",
+            (owner_id,),
+        ).fetchall()
+        return {r["device_id"]: dict(r) for r in rows}
+
+
+def list_theft_media_all(owner_id: int, limit: int = 60,
+                         kind: Optional[str] = None) -> list:
+    """Newest captures across ALL the account's devices (feed)."""
+    q = ("SELECT id, device_id, kind, created_at, path, mime, size, "
+         "meta, trigger FROM theft_media WHERE owner_id = ?")
+    params = [owner_id]
+    if kind:
+        q += " AND kind = ?"
+        params.append(kind)
+    q += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(int(limit))
+    with _connect() as con:
+        return [dict(r) for r in con.execute(q, tuple(params)).fetchall()]
+
+
+def latest_location_per_device(owner_id: int) -> dict:
+    """{device_id: media-row} = the newest kind='location' per device."""
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT id, device_id, created_at, meta FROM theft_media "
+            "WHERE owner_id = ? AND kind = 'location' "
+            "ORDER BY created_at DESC, id DESC",
+            (owner_id,),
+        ).fetchall()
+    out: dict = {}
+    for r in rows:
+        if r["device_id"] not in out:
+            out[r["device_id"]] = dict(r)
+    return out
+
+
+def last_capture_per_device(owner_id: int) -> dict:
+    """{device_id: latest created_at} across all capture kinds."""
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT device_id, MAX(created_at) AS ts FROM theft_media "
+            "WHERE owner_id = ? GROUP BY device_id",
+            (owner_id,),
+        ).fetchall()
+        return {r["device_id"]: r["ts"] for r in rows}
+
+
 def get_theft_media(media_id: int, owner_id: int) -> Optional[dict]:
     with _connect() as con:
         row = con.execute(

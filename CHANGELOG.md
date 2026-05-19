@@ -3,6 +3,54 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.10] — 2026-05-19
+
+**Theft Dashboard** — an account-wide command view on top of V5.8's
+per-device Theft Mode. One screen for the whole fleet: status, a map,
+recent captures, and bulk arm/disarm.
+
+### Added
+- **`GET /theft`** (top-nav "Theft", any logged-in user, owner-scoped):
+  - **Overview table** — every owned device: online/offline,
+    armed state (what it captures + interval) or disarmed, last capture
+    age, last known location (links to OSM), quick Disarm / Manage.
+  - **Fleet map** — OpenStreetMap `export/embed.html` iframe (no JS
+    library, no API key, offline-degrades); one marker at a time with
+    a per-device pin row that recenters via plain JS, plus direct
+    OSM/Google links per row.
+  - **Unified recent-capture feed** — newest captures across *all*
+    devices (reuses `_theft_media_card`, now with an optional device
+    label).
+  - **Bulk controls** — Arm ALL (capture types + interval + audio
+    length + camera id + a mandatory ownership attestation) and
+    Disarm all (confirm).
+  - **Live refresh** — polls `GET /theft/feed` and reloads on a new
+    capture or an armed-count change.
+- **`POST /theft/arm-all`** (attestation-gated, ≥1 capture type) /
+  **`POST /theft/disarm-all`** — iterate the account's devices,
+  best-effort keep-awake toggle for online ones. **`GET /theft/feed`**
+  — light JSON (newest id, armed count, online ids).
+- **db rollups**: `theft_states_for_user`, `list_theft_media_all`
+  (optional kind filter), `latest_location_per_device`,
+  `last_capture_per_device` — all owner-scoped.
+
+### Behaviour notes
+- Pure read/aggregate + the same per-device arm/disarm primitives in
+  bulk; capture transport, retention, and the V5.8 armed loop are
+  unchanged. The OSM embed shows a single marker (its basic API has no
+  multi-pin) — the pin row + per-row links cover the rest without a map
+  library. Same honesty as V5.8 applies (online-only capture, OS
+  privacy indicators, weak keep-awake). Version 5.9 → 5.10 (hub only;
+  agent unchanged).
+
+### Smoke-tested
+- Account-wide queries + owner isolation (Bob's media/states never
+  visible to Alice); `_theft_dashboard_data` rollup + map points;
+  routes; arm-all 400 without attestation, arms the whole fleet with
+  the chosen opts/interval and leaves other accounts untouched;
+  disarm-all; templates (table, OSM embed, nav link, V5.10 footer);
+  empty-fleet renders safely.
+
 ## [V5.9] — 2026-05-19
 
 **Per-account enrollment + node discovery.** Enrolling a device is now

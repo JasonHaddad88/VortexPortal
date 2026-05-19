@@ -821,6 +821,7 @@ def page(title: str, body: str, *, user: Optional[dict] = None,
         nav_items = [
             ("/", "Dashboard"),
             ("/pair", "Add Device"),
+            ("/theft", "Theft"),
         ]
         if user and user.get("is_admin"):
             nav_items.append(("/admin/invites", "Invites"))
@@ -1657,7 +1658,7 @@ def device_manage_page(user: dict, device: dict, online: bool) -> str:
     return page(device["name"], body, user=user, active="/")
 
 
-def _theft_media_card(did: str, m: dict) -> str:
+def _theft_media_card(did: str, m: dict, device_label: str = "") -> str:
     mid = m["id"]
     kind = m["kind"]
     url = f"/devices/{escape(did)}/theft/media/{mid}"
@@ -1696,6 +1697,7 @@ def _theft_media_card(did: str, m: dict) -> str:
   <div class="tm-body tm-{escape(kind)}">{inner}</div>
   <div class="tm-meta">
     <span class="kind">{escape(kind)}</span>
+    {f'<span class="devlbl">{escape(device_label)}</span>' if device_label else ''}
     <span class="status">{trig}</span>
     <span class="when">{when}</span>
     <form method="post" action="/devices/{escape(did)}/theft/media/{mid}/delete"
@@ -1705,6 +1707,209 @@ def _theft_media_card(did: str, m: dict) -> str:
     </form>
   </div>
 </div>"""
+
+
+def theft_dashboard_page(user: dict, rows: list, media: list,
+                         map_pts: list) -> str:
+    """V5.10 account-wide fleet view: overview table, OSM fleet map,
+    bulk arm/disarm, unified newest-capture feed, live refresh."""
+    name_by_id = {r["id"]: r["name"] for r in rows}
+    armed_n = sum(1 for r in rows if r["armed"])
+    total = len(rows)
+
+    # ---- overview rows ----
+    tr = []
+    for r in rows:
+        did = escape(r["id"])
+        nm = escape(r["name"])
+        on = r["online"]
+        onb = (f'<span class="badge {"online" if on else "offline"}">'
+               f'{"Online" if on else "Offline"}</span>')
+        if r["armed"]:
+            o = r["opts"]
+            kinds = "".join(k for k, on_ in (
+                ("📍", o.get("location")), ("📷", o.get("photo")),
+                ("🎙", o.get("audio"))) if on_) or "—"
+            iv = int(r.get("interval_s") or 300)
+            iv_s = f"{iv // 60}m" if iv >= 60 else f"{iv}s"
+            armb = (f'<span class="badge online" title="every {iv_s}">'
+                    f'🛡 {kinds} · {iv_s}</span>')
+            act = (f'<form method="post" action="/devices/{did}/theft/disarm" '
+                   f'style="margin:0"><button class="btn btn-small" '
+                   f'type="submit">Disarm</button></form>')
+        else:
+            armb = '<span class="badge offline">disarmed</span>'
+            act = (f'<a class="btn btn-small" href="/devices/{did}/theft">'
+                   f'Arm…</a>')
+        cap = (escape(_ago(r["last_capture"]) + " ago")
+               if r.get("last_capture") else "—")
+        if r.get("loc"):
+            lc = r["loc"]
+            osm = (f'https://www.openstreetmap.org/?mlat={lc["lat"]}'
+                   f'&mlon={lc["lon"]}#map=17/{lc["lat"]}/{lc["lon"]}')
+            loc = (f'<a href="{osm}" target="_blank" rel="noopener">'
+                   f'{lc["lat"]:.4f},{lc["lon"]:.4f}</a> '
+                   f'<span style="color:var(--muted)">'
+                   f'{escape(_ago(lc["at"]) + " ago") if lc.get("at") else ""}</span>')
+        else:
+            loc = "—"
+        tr.append(f"""<tr>
+  <td><a href="/devices/{did}/theft">{nm}</a></td>
+  <td>{onb}</td><td>{armb}</td>
+  <td>{cap}</td><td>{loc}</td>
+  <td style="text-align:right">{act}
+    <a class="btn btn-small" href="/devices/{did}/theft">Manage</a></td>
+</tr>""")
+    table = ("".join(tr) if tr else
+             '<tr><td colspan="6" style="color:var(--muted)">'
+             'No devices yet.</td></tr>')
+
+    # ---- fleet map (OSM embed, no JS lib / API key) ----
+    pts = [p for p in map_pts
+           if isinstance(p.get("lat"), (int, float))
+           and isinstance(p.get("lon"), (int, float))]
+    pts_js = _json_dumps_for_html(pts)
+    if pts:
+        dft = max(pts, key=lambda p: p.get("at") or 0)
+        la, lo = float(dft["lat"]), float(dft["lon"])
+        d = 0.02
+        bbox = f"{lo - d},{la - d},{lo + d},{la + d}"
+        src = ("https://www.openstreetmap.org/export/embed.html?"
+               f"bbox={bbox}&layer=mapnik&marker={la},{lo}")
+        pin_btns = "".join(
+            f'<button class="btn btn-small" type="button" '
+            f'onclick="vxFocus({i})">📍 {escape(p["name"])}</button>'
+            for i, p in enumerate(pts)
+        )
+        map_html = f"""
+  <iframe id="fleet-map" title="fleet map" src="{src}"
+          style="width:100%;height:340px;border:0;border-radius:10px;
+                 background:var(--surface-2)"></iframe>
+  <div class="pin-row">{pin_btns}</div>
+  <p style="color:var(--muted);font-size:.7rem;margin:.5rem 0 0">
+    OpenStreetMap embed — one marker at a time; tap a device to recenter.
+    Each row also links straight to OSM/Google Maps.
+  </p>"""
+    else:
+        map_html = ('<div class="empty"><p>No locations captured yet. '
+                    'Arm <em>Location</em> on a device, or use '
+                    '“Locate now” on its Theft page.</p></div>')
+
+    # ---- unified newest-capture feed ----
+    cards = "".join(
+        _theft_media_card(m["device_id"], m,
+                          device_label=name_by_id.get(m["device_id"], ""))
+        for m in media
+    )
+    feed = (f'<div class="tm-grid">{cards}</div>' if cards else
+            '<div class="empty"><p>No captures yet.</p></div>')
+    newest = media[0]["id"] if media else 0
+
+    body = f"""
+<div class="section-head" style="align-items:center">
+  <h2>// Theft Dashboard</h2>
+  <span class="badge {'online' if armed_n else 'offline'}"
+        style="margin-left:.5rem">{armed_n}/{total} armed</span>
+</div>
+
+<div class="card" style="margin-top:0">
+  <h3 style="margin:0 0 .6rem;color:var(--cyan)">Fleet location</h3>
+  {map_html}
+</div>
+
+<div class="card" style="margin-top:1.25rem">
+  <h3 style="margin:0 0 .6rem;color:var(--cyan)">Devices</h3>
+  <div style="overflow-x:auto">
+  <table class="tm-table">
+    <thead><tr><th>Device</th><th>Conn</th><th>Theft</th>
+      <th>Last capture</th><th>Last location</th><th></th></tr></thead>
+    <tbody>{table}</tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.25rem;max-width:640px">
+  <h3 style="margin:0 0 .6rem;color:var(--purple)">Bulk controls</h3>
+  <form method="post" action="/theft/arm-all">
+    <div class="bulk-ck">
+      <label><input type="checkbox" name="location" value="1" checked> 📍 Location</label>
+      <label><input type="checkbox" name="photo" value="1"> 📷 Photo</label>
+      <label><input type="checkbox" name="audio" value="1"> 🎙 Audio</label>
+      <label><input type="checkbox" name="keepawake" value="1"> Keep-awake</label>
+    </div>
+    <label>Interval
+      <select name="interval">
+        <option value="60">every 1 min</option>
+        <option value="300" selected>every 5 min</option>
+        <option value="900">every 15 min</option>
+        <option value="1800">every 30 min</option>
+        <option value="3600">every 1 hour</option>
+      </select>
+    </label>
+    <label>Audio length (s)
+      <input type="number" name="audio_seconds" value="15" min="1" max="120"></label>
+    <label>Camera id <input name="camera_id" value="0" maxlength="2"></label>
+    <label style="flex-direction:row;align-items:flex-start;gap:.5rem;text-transform:none;color:var(--text)">
+      <input type="checkbox" name="attest" value="1" required
+             style="width:auto;margin-top:.2rem">
+      I own / am authorised to monitor <strong>all</strong> these
+      devices, and accept covert recording is regulated.
+    </label>
+    <button class="btn btn-primary" type="submit"
+            style="align-self:flex-start">Arm ALL devices</button>
+  </form>
+  <form method="post" action="/theft/disarm-all" style="margin-top:1rem">
+    <button class="btn" type="submit"
+            onclick="return confirm('Disarm Theft Mode on every device?')">
+      Disarm all
+    </button>
+  </form>
+</div>
+
+<div class="section-head" style="margin-top:1.5rem">
+  <h2>// Recent captures</h2>
+  <span style="color:var(--muted);font-size:.75rem">newest across all devices</span>
+</div>
+{feed}
+
+<style>
+.tm-table {{ width:100%; border-collapse:collapse; font-size:.85rem; }}
+.tm-table th {{ text-align:left; color:var(--muted); font-size:.68rem;
+  text-transform:uppercase; letter-spacing:.06em; padding:.4rem .5rem;
+  border-bottom:1px solid var(--border); }}
+.tm-table td {{ padding:.5rem .5rem; border-bottom:1px solid var(--border);
+  vertical-align:middle; }}
+.tm-table tr:last-child td {{ border-bottom:none; }}
+.pin-row {{ display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.6rem; }}
+.bulk-ck {{ display:flex; flex-wrap:wrap; gap:.75rem 1.25rem; }}
+.bulk-ck label {{ flex-direction:row; align-items:center; gap:.4rem;
+  text-transform:none; color:var(--text); }}
+.bulk-ck input {{ width:auto; }}
+.tm-meta .devlbl {{ color:var(--text); }}
+</style>
+<script>
+(function() {{
+  const PTS = {pts_js};
+  window.vxFocus = function(i) {{
+    const p = PTS[i]; if (!p) return;
+    const d = 0.02, lo = p.lon, la = p.lat;
+    const bbox = (lo-d)+','+(la-d)+','+(lo+d)+','+(la+d);
+    const f = document.getElementById('fleet-map');
+    if (f) f.src = 'https://www.openstreetmap.org/export/embed.html?bbox='
+      + bbox + '&layer=mapnik&marker=' + la + ',' + lo;
+  }};
+  let newest = {newest}, armed = {armed_n};
+  setInterval(async () => {{
+    try {{
+      const r = await fetch('/theft/feed', {{cache:'no-store'}});
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j.newest !== newest || j.armed !== armed) location.reload();
+    }} catch (e) {{}}
+  }}, 8000);
+}})();
+</script>"""
+    return page("Theft Dashboard", body, user=user, active="/theft")
 
 
 def theft_page(user: dict, device: dict, state: dict,

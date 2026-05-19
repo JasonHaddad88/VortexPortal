@@ -170,6 +170,13 @@ Owner anti-theft for a paired device. From the device-manage page →
   indexed under your account and browsable in the UI (photo
   thumbnails, audio players, map links).
 
+**Theft Dashboard (V5.10):** the top-nav **Theft** link is an
+account-wide fleet view — every device's online/armed state, last
+capture and last location in one table, an OpenStreetMap fleet map
+(per-device pin recenter), a unified newest-captures feed across all
+devices, and **bulk Arm-all / Disarm-all** (arm-all needs the same
+one-time ownership attestation). It live-refreshes on new captures.
+
 Requires `pkg install termux-api` + the Termux:API app with Camera /
 Microphone / Location granted.
 

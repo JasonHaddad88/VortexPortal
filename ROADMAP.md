@@ -143,11 +143,22 @@ hub, enrollment should be per-account, not per-hub.
   credential + one bootstrap URL is the irreducible minimum. Legacy
   paths kept.
 
-## V5.10 — find-my-device / fleet UX (candidate, deferred)
+## V5.10 — Theft Dashboard (account-wide fleet view) — _shipped V5.10_
 
-User-requested. Ordered by value-per-effort. Note: **Find Location**
-and a ring/record are now delivered by Theft Mode (V5.8); what remains
-here is fleet-management polish. Not yet built.
+- [x] **`/theft` dashboard** 🟡 — _shipped_. Overview table (online /
+  armed-what-interval / last capture / last location), OSM-embed fleet
+  map + per-device pin recenter, unified newest-capture feed, bulk
+  arm-all (attestation) / disarm-all, `/theft/feed` live refresh,
+  top-nav link. db rollups: `theft_states_for_user`,
+  `list_theft_media_all`, `latest_location_per_device`,
+  `last_capture_per_device` (owner-scoped). Hub-only.
+
+## V5.11 — find-my-device / fleet UX (candidate, deferred)
+
+User-requested. Ordered by value-per-effort. Note: **Find Location**,
+fleet map and a ring/record are now delivered by Theft Mode (V5.8) +
+the Theft Dashboard (V5.10); what remains here is search/tags/sort
+polish. Not yet built.
 
 - [ ] **Device search bar** 🟢
   Client-only filter on the dashboard — substring match on device name

@@ -1524,6 +1524,123 @@ async def _theft_keepawake(device_id: str, on: bool) -> None:
         pass
 
 
+# --- V5.10: account-wide Theft Dashboard -----------------------------------
+def _theft_dashboard_data(user: dict) -> dict:
+    """Roll up every owned device for the fleet view."""
+    uid = user["id"]
+    devices = db.list_devices(uid)
+    online = ws_router.registry.online_ids()
+    states = db.theft_states_for_user(uid)
+    last_loc = db.latest_location_per_device(uid)
+    last_cap = db.last_capture_per_device(uid)
+
+    rows, map_pts = [], []
+    for d in devices:
+        did = d["id"]
+        st = states.get(did) or {}
+        try:
+            opts = json.loads(st.get("opts") or "{}")
+        except (ValueError, TypeError):
+            opts = {}
+        loc = None
+        lm = last_loc.get(did)
+        if lm and lm.get("meta"):
+            try:
+                m = json.loads(lm["meta"])
+                if m.get("lat") is not None and m.get("lon") is not None:
+                    loc = {"lat": float(m["lat"]), "lon": float(m["lon"]),
+                           "accuracy": m.get("accuracy"),
+                           "at": lm.get("created_at")}
+            except (ValueError, TypeError):
+                loc = None
+        if loc:
+            map_pts.append({"device_id": did, "name": d["name"],
+                            "lat": loc["lat"], "lon": loc["lon"],
+                            "at": loc["at"]})
+        rows.append({
+            "id": did, "name": d["name"],
+            "online": did in online,
+            "armed": bool(st.get("armed")),
+            "interval_s": st.get("interval_s"),
+            "opts": opts,
+            "last_capture": last_cap.get(did),
+            "loc": loc,
+        })
+    return {"rows": rows, "map_pts": map_pts,
+            "media": db.list_theft_media_all(uid, limit=48),
+            "armed_count": sum(1 for r in rows if r["armed"]),
+            "online": list(online)}
+
+
+@app.get("/theft", response_class=HTMLResponse)
+def theft_dashboard(request: Request,
+                    user: dict = Depends(auth.require_user)):
+    data = _theft_dashboard_data(user)
+    return HTMLResponse(templates.theft_dashboard_page(
+        user, data["rows"], data["media"], data["map_pts"]))
+
+
+@app.get("/theft/feed")
+def theft_dashboard_feed(request: Request,
+                         user: dict = Depends(auth.require_user)):
+    """Light JSON poll so the dashboard self-refreshes on new captures /
+    state changes without a full reload loop."""
+    uid = user["id"]
+    media = db.list_theft_media_all(uid, limit=48)
+    states = db.theft_states_for_user(uid)
+    return JSONResponse({
+        "newest": media[0]["id"] if media else 0,
+        "armed": sum(1 for s in states.values() if s.get("armed")),
+        "online": list(ws_router.registry.online_ids()),
+        "count": len(media),
+    })
+
+
+@app.post("/theft/arm-all")
+async def theft_arm_all(request: Request,
+                        user: dict = Depends(auth.require_user),
+                        interval: int = Form(300),
+                        photo: str = Form(""),
+                        audio: str = Form(""),
+                        location: str = Form(""),
+                        keepawake: str = Form(""),
+                        audio_seconds: int = Form(15),
+                        camera_id: str = Form("0"),
+                        attest: str = Form("")):
+    if not attest:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm you own / are authorised to monitor these "
+                   "devices before arming the whole fleet.")
+    opts = {
+        "photo": bool(photo), "audio": bool(audio),
+        "location": bool(location), "keepawake": bool(keepawake),
+        "audio_seconds": max(1, min(120, int(audio_seconds))),
+        "camera_id": str(camera_id),
+    }
+    if not (opts["photo"] or opts["audio"] or opts["location"]):
+        raise HTTPException(status_code=400,
+                            detail="Pick at least one capture type.")
+    payload = json.dumps(opts)
+    ival = max(30, int(interval))
+    for d in db.list_devices(user["id"]):
+        db.set_theft_armed(d["id"], True, by=user["id"],
+                           interval_s=ival, opts=payload)
+        if opts["keepawake"]:
+            await _theft_keepawake(d["id"], True)
+    return RedirectResponse(url="/theft", status_code=303)
+
+
+@app.post("/theft/disarm-all")
+async def theft_disarm_all(request: Request,
+                           user: dict = Depends(auth.require_user)):
+    for d in db.list_devices(user["id"]):
+        db.set_theft_armed(d["id"], False, by=None,
+                           interval_s=300, opts="{}")
+        await _theft_keepawake(d["id"], False)
+    return RedirectResponse(url="/theft", status_code=303)
+
+
 @app.get("/devices/{device_id}/theft", response_class=HTMLResponse)
 def theft_page(device_id: str, request: Request,
                user: dict = Depends(auth.require_user)):
