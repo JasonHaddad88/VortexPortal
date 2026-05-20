@@ -255,7 +255,36 @@ browser-side frame renderer (binary WS → blob → `<img>`/canvas).
   lists cameras; browse thumbnails load. Exhaustive 13-match /
   13-no-match smoke.
 
-## V5.20 — find-my-device / fleet UX (candidate, deferred)
+## V5.20 — direct-WS Phase A1: input fast-path — _shipped V5.20_
+
+- [x] **Agent direct-WS server + ticket** 🟡 — _shipped_.
+  `websockets.serve()` on `VORTEX_DIRECT_PORT`; `_serve_ws` factored
+  + reused; rotating ticket; protocol identical to hub-WS.
+- [x] **Reachable-host enumeration + direct_info push** 🟢 —
+  _shipped_. LAN + Tailscale 100.x, filters loopback/link-local;
+  pushed to hub after `auth_ok`.
+- [x] **Hub `/devices/{id}/direct` broker** 🟢 — _shipped_. Returns
+  `{ws[], ticket}`; relay-eligible so any node can broker.
+- [x] **Browser input over direct WS + fallback** 🟢 — _shipped_.
+  Races candidates with 1.5s deadline; falls back to hub `POST
+  /input` cleanly; "direct connect ok" status chip.
+
+## V5.21 — direct-WS Phase A2: media over direct WS (next)
+
+- [ ] Screen / camera frame streams over the same direct WS (kills the
+  remaining frame-transport latency). Browser `<img>` swap to chunked
+  binary frame render; reuse `_serve_ws` machinery.
+- [ ] Rotating-ticket support in-flight (no reconnect needed).
+
+## V5.22 — full-fledged Driver APK (next big track)
+
+Native Android: MediaProjection + MediaCodec H.264 capture; foreground
+service; account-token enrollment; direct-WS server (same protocol);
+deep-link enrollment; eventually viewer mode. Separate large track —
+slots into the direct-WS architecture as the device-side server for
+Android.
+
+## V5.23 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

@@ -3,6 +3,66 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.20] — 2026-05-20
+
+**Direct-WS Phase 1: browser ↔ agent direct connection (input
+fast-path).** The AnyDesk-style latency fix — the hub stops being in
+the data path for the latency-critical roundtrip. Universal: pure
+Python agent → works on PC / SBC / IoT / phone, no APK required. The
+scaffolding was already in the tree from earlier (V5.16-tagged
+comments) but was never verified end-to-end or version-shipped; this
+release closes both gaps.
+
+### Architecture
+- **Agent** also *listens*. A `websockets.serve()` runs on
+  `VORTEX_DIRECT_PORT` (default `8770`, `0`=off), guarded by an
+  in-memory rotating ticket. The post-auth serve loop is factored into
+  `_serve_ws(ws)` and reused by both the hub-client connection and the
+  direct-connect server, so the multiplexed op protocol is **byte-for
+  -byte identical** in both paths.
+- **Agent** enumerates reachable IPv4 hosts (`_local_hosts()`: LAN
+  IPs, hostname A-records, Tailscale 100.64/10), filtering loopback +
+  link-local, and pushes `{type:"direct_info", port, hosts, ticket}`
+  to the hub right after `auth_ok` over the existing WS.
+- **Hub**: `AgentConnection.direct_info` holds the latest
+  advertisement; `handle_incoming` captures `direct_info` messages.
+  New endpoint **`GET /devices/{id}/direct`** (owner-scoped,
+  **relay-eligible**) returns `{ws:[ws://host:port/...], ticket}` so
+  any node can broker for any device. Empty payload → browser uses the
+  hub path.
+- **Browser** (device screen page): on load, fetches `/direct`, races
+  a `WebSocket` to every candidate URL with `{type:"hello",ticket}`
+  and a 1.5 s deadline. First `hello_ok` wins; subsequent input
+  (`postInput`) is sent as `{type:"request", id, op:"input",
+  args:{command}}` over the direct WS and responses are correlated by
+  `id`. Errors / direct unavailable → automatic fallback to the
+  existing `POST /devices/{id}/input` hub path. Status chip flips to
+  "direct connect ok" so you can *see* you're on the fast path.
+
+### Behaviour notes
+- Phase 1 ships **input** over direct WS (the interactive RTT you
+  *feel*). **Screen/camera frame streams are still MJPEG via the hub
+  path** in this release — that's **Phase A2** (next).
+- The direct path works whenever a reachable address exists: same LAN,
+  Tailscale/WireGuard mesh, port-forward. Anywhere the browser can
+  open a WebSocket to the agent's address. No path → silent fallback,
+  zero UX disruption.
+- Ticket is per-agent-process and rotates on every cold start; rotated
+  in-flight tickets aren't supported in P1 (the hub gets a new ticket
+  on the next agent reconnect). Good enough for the fast path; full
+  rotation comes with A2.
+- Versions: hub 5.19 → 5.20, agent 5.16 → 5.20.
+
+### Smoke-tested
+- Agent direct WS server: valid ticket → `hello_ok` + a full
+  request/response op roundtrip (unknown-op path, returns
+  `{ok:false, error:"unknown op: …"}` — proves the protocol works
+  without needing Termux). Bad ticket → `hello_fail` + close.
+- `_local_hosts()` never returns 127.x / 169.254.x.
+- `/devices/{id}/direct`: returns `{ws:[…], ticket}` when present;
+  `{ws:[], ticket:null}` when the agent advertised nothing; path is
+  matched by `_RELAY_RE` so other nodes broker too.
+
 ## [V5.19] — 2026-05-20
 
 **Fix: "no cameras reported for a device On Its Node" (+ missing
