@@ -3,6 +3,48 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.18] — 2026-05-20
+
+Two field bugs: a **newly paired device shows offline on every node**,
+and **Browse renders gibberish**.
+
+### Fixed
+- **`pair_code_page` + `enroll_token_created_page` one-liners now
+  prepend `MODE=agent`.** Since V5.5 made `MODE=hub` the default,
+  pasting the QR/copy command on a fresh Termux phone spun up a
+  *local* hub there + a self-register-wait agent that **ignores
+  `PAIRING_CODE`/`VORTEX_ACCOUNT_TOKEN` and hardcodes
+  `HUB_URL=http://127.0.0.1:8000`** — so the credential never reached
+  the real hub, the device row was created (if pairing worked from
+  another path) but its agent never connected → offline on every node
+  forever. Both one-liners are now `MODE=agent …` and enrollment
+  reaches the right hub.
+- **Cross-node relay header pass-through (V5.15 bug)**. The middleware
+  used a tiny allow-list (`content-type, cache-control,
+  content-disposition, pragma, expires`) and silently dropped
+  everything else — including `content-encoding`, `accept-ranges`,
+  `etag`, `vary`, custom `x-*`. That produced "gibberish" /
+  pseudo-encrypted responses whenever the upstream relied on any of
+  those (compressed bodies, ranged downloads, etc.). Now the relay
+  passes EVERY response header except hop-by-hop (RFC 7230 §6.1) +
+  `content-length` (we stream — Starlette manages chunking). Standard
+  reverse-proxy behaviour.
+
+### Notes
+- Hub-only; no schema change; 5.17 → 5.18. The relay fix is universal;
+  the pair/enroll fix only affects newly-generated QR/one-liners (old
+  generated codes/tokens still work if you re-add `MODE=agent`
+  yourself).
+
+### Smoke-tested
+- Relay forwards every response header sent by upstream
+  (`content-type`, `content-encoding`, `accept-ranges`, `etag`,
+  `vary`, custom `x-*`, `cache-control`) and drops hop-by-hop
+  (`connection`, `keep-alive`, `content-length`, `transfer-encoding`,
+  `upgrade`, `te`, `trailers`, `proxy-*`). Pair QR string contains
+  `MODE=agent PAIRING_CODE=…`; token-created QR contains
+  `MODE=agent VORTEX_ACCOUNT_TOKEN=…`.
+
 ## [V5.17] — 2026-05-20
 
 **Fix: "from another node I can't browse / use a device's cameras when

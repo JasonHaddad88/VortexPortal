@@ -1492,7 +1492,11 @@ def enroll_token_created_page(user: dict, token: str, hub_url: str,
                               label: Optional[str]) -> str:
     """Shown ONCE right after minting — the plaintext token is never
     retrievable again (stored hashed)."""
-    one_liner = (f"VORTEX_ACCOUNT_TOKEN={token} "
+    # V5.18: MODE=agent is mandatory. Without it, V5.5+ Termux default
+    # MODE=hub spins up a LOCAL hub on the new phone whose co-located
+    # selfreg-wait agent hardcodes HUB_URL=127.0.0.1, so this token
+    # would never reach the real hub — device would show offline forever.
+    one_liner = (f"MODE=agent VORTEX_ACCOUNT_TOKEN={token} "
                  f"HUB_URL={_shell_quote(hub_url)} bash ~/server/serve.sh")
     qr_svg = _qr_svg(one_liner, box=7, border=2)
     cmd_js = _json_dumps_for_html(one_liner)
@@ -1555,8 +1559,10 @@ def pair_code_page(user: dict, code: str, hub_url: str,
     name_arg = ""
     if device_name:
         name_arg = f" DEVICE_NAME={_shell_quote(device_name)}"
-    cmd = (f"PAIRING_CODE={code} HUB_URL={_shell_quote(hub_url)}{name_arg} "
-           f"bash ~/server/serve.sh")
+    # V5.18: MODE=agent is mandatory — see the same fix in
+    # enroll_token_created_page for why omitting it strands the device.
+    cmd = (f"MODE=agent PAIRING_CODE={code} HUB_URL={_shell_quote(hub_url)}"
+           f"{name_arg} bash ~/server/serve.sh")
     qr_svg = _qr_svg(cmd, box=8, border=2)
     cmd_for_js = _json_dumps_for_html(cmd)
     body = f"""

@@ -175,9 +175,15 @@ async def _cross_node_relay(request: Request, call_next):
             await rp.aclose()
             await client.aclose()
 
-    keep = {"content-type", "cache-control", "content-disposition",
-            "pragma", "expires"}
-    hdrs = {k: v for k, v in rp.headers.items() if k.lower() in keep}
+    # V5.18: transparent-proxy headers — pass through EVERYTHING except
+    # hop-by-hop (RFC 7230 §6.1) + Content-Length (we stream, let
+    # Starlette decide chunking). The old allow-list silently stripped
+    # content-encoding, accept-ranges, etag, etc. and produced
+    # "gibberish" for compressed / ranged / non-trivial responses.
+    _drop = {"connection", "keep-alive", "proxy-authenticate",
+             "proxy-authorization", "te", "trailers", "transfer-encoding",
+             "upgrade", "content-length"}
+    hdrs = {k: v for k, v in rp.headers.items() if k.lower() not in _drop}
     return StreamingResponse(_body(), status_code=rp.status_code,
                              headers=hdrs)
 

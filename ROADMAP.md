@@ -240,7 +240,15 @@ browser-side frame renderer (binary WS → blob → `<img>`/canvas).
   override > file > cache > env so a stale loopback cache can't beat
   the launcher-written cloudflared URL.
 
-## V5.18 — find-my-device / fleet UX (candidate, deferred)
+## V5.18 — fix paired-offline + browse-gibberish — _shipped V5.18_
+
+- [x] **MODE=agent in pair/enroll one-liners** 🟢 — _shipped_. Without
+  it, V5.5+ default MODE=hub strands the agent on the new phone.
+- [x] **Relay header pass-through** 🟢 — _shipped_. Forward all
+  response headers except hop-by-hop (RFC 7230 §6.1) + content-length;
+  fixes "gibberish" from stripped content-encoding/accept-ranges/etag.
+
+## V5.19 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +
