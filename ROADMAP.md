@@ -248,7 +248,14 @@ browser-side frame renderer (binary WS → blob → `<img>`/canvas).
   response headers except hop-by-hop (RFC 7230 §6.1) + content-length;
   fixes "gibberish" from stripped content-encoding/accept-ranges/etag.
 
-## V5.19 — find-my-device / fleet UX (candidate, deferred)
+## V5.19 — fix relay coverage (cameras + thumbnails) — _shipped V5.19_
+
+- [x] **Add `/api/devices/{id}/cameras` and `/devices/{id}/thumb/...`
+  to the relay regex** 🟢 — _shipped_. Cross-node camera picker now
+  lists cameras; browse thumbnails load. Exhaustive 13-match /
+  13-no-match smoke.
+
+## V5.20 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

@@ -3,6 +3,29 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.19] — 2026-05-20
+
+**Fix: "no cameras reported for a device On Its Node" (+ missing
+thumbnails on cross-node browse).** The V5.15 cross-node relay regex
+allow-listed agent-dependent endpoints by path; `GET
+/api/devices/{id}/cameras` (the camera picker's list) and `GET
+/devices/{id}/thumb/{rel}` (file-browse thumbnails) were missed, so on
+the controlling node they got the local "Device offline" path instead
+of being forwarded to the holder. Camera UI showed "no cameras", and
+directory thumbnails 404'd.
+
+### Fixed
+- `_RELAY_RE` now also matches `^/api/devices/{id}/cameras$` and
+  `^/devices/{id}/thumb/...` — both relay to the node holding the
+  socket, like the rest of the agent-dependent endpoints.
+
+### Smoke-tested
+- Exhaustive regex coverage: 13 paths that MUST relay (incl. the new
+  `…/cameras` and `…/thumb/…`); 13 paths that must NOT (HTML pages,
+  DB-only ops like rename/delete, theft arm/disarm, theft media list,
+  `/api/devices/stats`, `/api/online`, `/health`, `/login`, etc.).
+  Hub-only; no schema change; 5.18 → 5.19.
+
 ## [V5.18] — 2026-05-20
 
 Two field bugs: a **newly paired device shows offline on every node**,

@@ -115,8 +115,9 @@ app = FastAPI(title="Vortex Hub", version=__VORTEX_VERSION__)
 # ---------------------------------------------------------------------------
 _RELAY_RE = re.compile(
     r"^/devices/(?P<did>[^/]+)/"
-    r"(?:files(?:/|$)|camera/|screen/|input$|theft/capture$|direct$)"
-    r"|^/api/devices/(?P<did2>[^/]+)/(?:info$|screen-size$)"
+    r"(?:files(?:/|$)|camera/|screen/|input$|theft/capture$"
+    r"|thumb/|direct$)"
+    r"|^/api/devices/(?P<did2>[^/]+)/(?:info$|screen-size$|cameras$)"
 )
 
 
