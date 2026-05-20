@@ -228,7 +228,19 @@ no paid service), works on PC/SBC/IoT/phone.
 direct socket → kills the video latency too. Likely needs a small
 browser-side frame renderer (binary WS → blob → `<img>`/canvas).
 
-## V5.17 — find-my-device / fleet UX (candidate, deferred)
+## V5.17 — fix "can't control elsewhere device" — _shipped V5.17_
+
+- [x] **Show normal controls everywhere** 🟢 — _shipped_. Dropped the
+  "Control on its node →" deep-link replacement on dashboard + theft
+  dashboard; every device renders Browse/Camera/Screen, relay carries
+  the cross-node call.
+- [x] **Don't cache loopback as the public URL** 🟢 — _shipped_.
+  `_is_loopback_host()`; `_PUBLIC_URL_CACHE` only takes externally-
+  reachable hosts. `_resolve_public_url` precedence reordered to
+  override > file > cache > env so a stale loopback cache can't beat
+  the launcher-written cloudflared URL.
+
+## V5.18 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
 fleet map and a ring/record are now delivered by Theft Mode (V5.8) +

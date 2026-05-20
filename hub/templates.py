@@ -1012,20 +1012,16 @@ def dashboard_page(user: dict, devices: list, online: set,
         # stacked over a trashcan icon-button. Info circle sits in the meta
         # row and pops a modal on click. Action row is exactly 4 buttons.
         _elsewhere_attr = escape(other_node) if other_node else ""
-        if other_node:
-            _actions = (
-                f'<div class="actions compact" data-actions>'
-                f'<a class="btn btn-primary" style="flex:1" '
-                f'href="{escape(other_node)}/devices/{did}">'
-                f'Control on its node →</a></div>'
-            )
-        else:
-            _actions = (
-                f'<div class="actions compact" data-actions>'
-                f'<a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>'
-                f'<a class="btn" href="/devices/{did}/camera">Camera</a>'
-                f'<a class="btn" href="/devices/{did}/screen">Screen</a></div>'
-            )
+        # V5.17: always render the normal controls. Cross-node control
+        # is handled by the relay middleware (V5.15+); the "On its node"
+        # badge is now just an info hint, not a UI block. A node can
+        # control every device in the fleet.
+        _actions = (
+            f'<div class="actions compact" data-actions>'
+            f'<a class="btn btn-primary" href="/devices/{did}/files/">Browse</a>'
+            f'<a class="btn" href="/devices/{did}/camera">Camera</a>'
+            f'<a class="btn" href="/devices/{did}/screen">Screen</a></div>'
+        )
         _kebab = (
             f'<details class="kebab"><summary title="More">⋮</summary>'
             f'<div class="menu">'
@@ -1738,11 +1734,10 @@ def theft_dashboard_page(user: dict, rows: list, media: list,
                    f'title="{escape(other)}">On its node</span>')
         else:
             onb = '<span class="badge offline">Offline</span>'
-        # Live capture only works on the node holding the socket; point
-        # the device + Manage links there when it's elsewhere. Arm/disarm
-        # is a DB write so it's effective from any node.
-        theft_href = (f'{escape(other)}/devices/{did}/theft' if other
-                      else f'/devices/{did}/theft')
+        # V5.17: always link locally; the relay middleware forwards
+        # /theft/capture to whichever node holds the socket, so the page
+        # works on any node.
+        theft_href = f'/devices/{did}/theft'
         if r["armed"]:
             o = r["opts"]
             kinds = "".join(k for k, on_ in (

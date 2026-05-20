@@ -247,6 +247,18 @@ def health():
 _PUBLIC_URL_CACHE = ""  # last URL derived from a real request (V5.9 heartbeat)
 
 
+def _is_loopback_host(host: str) -> bool:
+    """A loopback URL is useless to other nodes — never publish it as
+    'where this node is reachable' (the V5.17 cross-node bug)."""
+    if not host:
+        return True
+    h = host.lower()
+    if ":" in h and not h.startswith("["):
+        h = h.split(":", 1)[0]
+    return (h in ("localhost", "0.0.0.0", "::1", "[::1]")
+            or h.startswith("127."))
+
+
 def _hub_public_url(request: Request) -> str:
     override = _public_url_override()
     if override:
@@ -256,12 +268,10 @@ def _hub_public_url(request: Request) -> str:
     scheme = fwd_proto or request.url.scheme
     host = fwd_host or request.url.netloc
     url = f"{scheme}://{host}"
-    # Cache the externally-derived URL so the node-endpoint heartbeat (no
-    # Request in hand) can publish where this node is actually reachable —
-    # covers quick tunnels whose URL we can't know until traffic arrives.
-    global _PUBLIC_URL_CACHE
-    if host and "://" in url and not host.startswith("127.0.0.1") \
-            and not host.startswith("localhost"):
+    # Cache only externally-reachable URLs; loopback would poison the
+    # node-endpoint heartbeat + cross-node relay target.
+    if not _is_loopback_host(host):
+        global _PUBLIC_URL_CACHE
         _PUBLIC_URL_CACHE = url
     return url
 
@@ -280,13 +290,15 @@ def _public_url_file() -> str:
 
 
 def _resolve_public_url() -> str:
-    """Best-effort 'where am I reachable' for the node heartbeat / relay:
-    config override > URL from a real request > launcher-detected env >
-    launcher-written file. Empty => nothing reliable to advertise."""
+    """Best-effort 'where am I reachable' for the node heartbeat / relay.
+    Precedence (V5.17): config override > launcher-written file >
+    runtime request cache > launcher-detected env. The launcher file is
+    treated as authoritative (serve.sh writes the actual tunnel URL),
+    above the cache which can be wrong if the first hit was loopback."""
     return (_public_url_override()
+            or _public_url_file()
             or _PUBLIC_URL_CACHE
-            or os.environ.get("VORTEX_DETECTED_PUBLIC_URL", "").strip().rstrip("/")
-            or _public_url_file())
+            or os.environ.get("VORTEX_DETECTED_PUBLIC_URL", "").strip().rstrip("/"))
 
 
 def _other_node_for(device_id: str) -> Optional[str]:

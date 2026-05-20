@@ -3,6 +3,49 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.17] — 2026-05-20
+
+**Fix: "from another node I can't browse / use a device's cameras when
+it's On its node."** Two real bugs were blocking the V5.15 cross-node
+relay from doing its job: the dashboard *hid* the actual controls for
+elsewhere devices, and a loopback URL could get cached as the node's
+public address (so other nodes tried to relay to *their own* localhost
+and failed). Both fixed; a node now controls **every** device.
+
+### Fixed
+- **dashboard_page**: no more "Control on its node →" deep-link
+  replacement. Every device — local, "On its node", or offline —
+  renders the normal **Browse / Camera / Screen** actions. Cross-node
+  traffic transparently rides the V5.15 relay (kept), and the
+  "On its node" badge stays only as an informational hint.
+- **theft_dashboard_page**: row's device-name + Manage links point at
+  the local theft page (the relay forwards `/theft/capture` to the
+  holding node); no other-node deep-link.
+- **`_hub_public_url`**: skip the `_PUBLIC_URL_CACHE` write when the
+  request's host is **loopback** (`127.0.0.0/8`, `localhost`,
+  `0.0.0.0`, `::1`). Previously, hitting the hub via `127.0.0.1:8000`
+  poisoned the cache → presence/heartbeat published `http://127.0.0.1`
+  → other nodes' relay targeted *their own* localhost and 502'd. New
+  `_is_loopback_host()` helper.
+- **`_resolve_public_url` precedence reordered**: **override > file >
+  cache > env**. The launcher-written `~/.vortex_public_url` (the
+  actual cloudflared URL) now beats a possibly-stale runtime cache.
+  LAN / Tailscale IPs are *not* loopback and still cache fine.
+
+### Behaviour notes
+- A node can now control any device in the fleet; the only
+  "device-can't-control-itself" caveat is the natural one (you don't
+  remote-control the machine you're physically using). Hub-only; no
+  schema change; 5.16 → 5.17.
+
+### Smoke-tested
+- Loopback hosts (incl. `0.0.0.0`, `localhost`, `127.0.0.x`,
+  case-insensitive) never cached; real hostnames + LAN/Tailscale IPs
+  are. Precedence override > file > cache > env (incl. file-wins-over-
+  stale-cache and env-wins-when-empty). Dashboard renders normal local
+  controls for elsewhere devices + hint badge, no other-node URL in
+  actions. Theft dashboard links local; no other-node deep-link.
+
 ## [V5.16] — 2026-05-20
 
 **Phase 1 of "AnyDesk-style" direct-connect: the hub leaves the
