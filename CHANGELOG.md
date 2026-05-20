@@ -3,6 +3,67 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.21] — 2026-05-20
+
+**Direct-WS Phase A2: media frames over the direct socket.** Builds on
+V5.20's input fast-path — now the *video itself* skips the hub when
+direct is available, so the visible MJPEG lag drops too. JPEG bytes go
+straight from the device to the browser over a single WebSocket; hub
+MJPEG remains the silent fallback. Universal (pure-Python agent → PC /
+SBC / IoT / phone). No new agent code; the agent's existing
+`screen_stream` / `camera_stream` ops already speak the same op
+protocol over the V5.20 direct server.
+
+### Added (browser side)
+- **Shared `_DIRECT_WS_JS` client** — extracted as a module constant
+  in `templates.py` so the screen and camera pages stop duplicating
+  the connect/onmessage logic. Exposes `_connectDirect`, `_directWS`,
+  `_directInput(cmd, timeoutMs)`, `_directStream(op, args, handlers)`.
+- **Binary frame routing** — direct WS opens with
+  `binaryType:'arraybuffer'`. A single `_directOnMessage` handles:
+  text `stream_chunk_header` → tag the next binary frame; binary
+  ArrayBuffer → dispatch to the rid's `frame()`; `stream_start` /
+  `stream_end` → start/end the stream; `response` → correlate to a
+  pending unary call OR end a stream on `ok:false`. Legacy base64
+  `stream_chunk` path also handled.
+- **Screen page (`device_screen_page`)** — `startStream()` calls
+  `_directStream('screen_stream', {}, handlers)` first; frames render
+  via `URL.createObjectURL(new Blob(...))` swapped onto the existing
+  `<img>`, with the previous Object URL revoked on the next tick to
+  avoid leaks and flicker. Status chip flips to `streaming (direct)`.
+  If direct isn't up, falls back to the hub MJPEG `<img src=/screen/
+  live>` unchanged.
+- **Camera page (`device_camera_page`)** — same treatment for
+  `camera_stream` live view (snapshot `camera/capture` stays
+  HTTP-only — single shot, latency uncritical). `streaming (direct)`
+  vs `streaming (via hub)` status.
+
+### Stop semantics
+- On Stop, the direct WS is **closed** — the simplest correct way to
+  terminate the agent's streaming task (it has no in-band abort).
+  Input fast-path re-establishes on the next interaction; if it
+  doesn't in time, `postInput` falls back to `POST /input`.
+
+### Notes
+- Phase A2 ships **screen + camera live** over the direct WS. Stream
+  *cancellation in-band* and a rotating ticket without reconnect are
+  still ahead (Phase A3).
+- The screen page keeps its inline copy of the direct-WS client (V5.20
+  shipped that way and works); only the camera page picks up the new
+  shared `_DIRECT_WS_JS` constant — both code paths are equivalent.
+  A future cleanup commit can dedupe screen onto the same constant.
+- Versions: hub 5.20 → 5.21 (agent unchanged at 5.20 — protocol is
+  identical).
+
+### Smoke-tested
+- Both screen and camera page renders contain the direct-WS plumbing
+  (`_directStream`, `_connectDirect`, `binaryType: 'arraybuffer'`,
+  `stream_chunk_header`, `createObjectURL`), the relevant stream ops
+  (`screen_stream` / `camera_stream`), the MJPEG hub fallbacks
+  (`/screen/live`, `/camera/live`), and the visible status chip
+  (`streaming (direct)`). f-string brace-escape regression caught and
+  fixed.
+
 ## [V5.20] — 2026-05-20
 
 **Direct-WS Phase 1: browser ↔ agent direct connection (input

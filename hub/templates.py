@@ -2196,6 +2196,11 @@ def device_camera_page(user: dict, device: dict) -> str:
 
   function setStatus(s) {{ status.textContent = s; }}
 
+  // V5.21: shared direct-WS client (input + streams). Same protocol as
+  // the screen page's inline copy; exposes _connectDirect / _directWS
+  // / _directStream / _directInput in this IIFE's scope.
+{_DIRECT_WS_JS}
+
   async function loadCameras() {{
     setStatus('loading cameras…');
     try {{
@@ -2299,8 +2304,35 @@ def device_camera_page(user: dict, device: dict) -> str:
   }});
 
   // ----- V5.0 M1: real-time MJPEG live stream from the Driver APK -----
+  // V5.21: prefer the direct WS (LAN/mesh, no hub hop); fall back to
+  // hub MJPEG if direct isn't up.
   const stream = document.getElementById('cam-stream');
   let streaming = false;
+  let _camDirectRid = null, _camLastUrl = null;
+
+  function _startDirectCam(img) {{
+    let firstFrame = true;
+    const rid = _directStream('camera_stream', {{}}, {{
+      start: m => {{ /* first frame replaces the src */ }},
+      frame: ab => {{
+        const blob = new Blob([ab], {{type:'image/jpeg'}});
+        const u = URL.createObjectURL(blob);
+        const old = _camLastUrl; _camLastUrl = u; img.src = u;
+        if (old) setTimeout(() => URL.revokeObjectURL(old), 0);
+        if (firstFrame) {{ firstFrame = false; setStatus('streaming (direct)'); }}
+      }},
+      end: m => {{
+        if (_camLastUrl) {{ URL.revokeObjectURL(_camLastUrl); _camLastUrl = null; }}
+        _camDirectRid = null;
+        if (m && !m.ok) {{
+          showError('Direct camera stream failed: '
+              + String(m.error || '').slice(0, 200) + ' — falling back to hub.');
+        }}
+      }},
+    }});
+    return rid;
+  }}
+
   function startStream() {{
     // Stop snapshot polling while streaming -- they share the camera
     // hardware and the agent can only host one camera-using op at a time.
@@ -2315,6 +2347,18 @@ def device_camera_page(user: dict, device: dict) -> str:
       stage.appendChild(img);
     }}
     if (lastBlobUrl) {{ URL.revokeObjectURL(lastBlobUrl); lastBlobUrl = null; }}
+    // Try direct first; fallback to hub MJPEG.
+    const rid = _startDirectCam(img);
+    if (rid) {{
+      _camDirectRid = rid;
+      img.onerror = () => {{}};
+      streaming = true;
+      stream.textContent = '■ Stop stream';
+      stream.classList.remove('btn-primary');
+      setStatus('streaming (direct)');
+      save.disabled = true;
+      return;
+    }}
     // Bust intermediary caches; a t= query param forces a fresh stream.
     img.src = `/devices/${{encodeURIComponent(did)}}/camera/live?t=${{Date.now()}}`;
     img.onerror = () => {{
@@ -2326,7 +2370,7 @@ def device_camera_page(user: dict, device: dict) -> str:
     streaming = true;
     stream.textContent = '■ Stop stream';
     stream.classList.remove('btn-primary');
-    setStatus('streaming');
+    setStatus('streaming (via hub)');
     // Save isn't meaningful during a live stream (the <img> isn't a single frame).
     save.disabled = true;
   }}
@@ -2334,6 +2378,11 @@ def device_camera_page(user: dict, device: dict) -> str:
     streaming = false;
     stream.textContent = '▶ Live stream';
     stream.classList.add('btn-primary');
+    if (_camDirectRid) {{
+      try {{ _directWS && _directWS.close(); }} catch (e) {{}}
+      _camDirectRid = null;
+    }}
+    if (_camLastUrl) {{ URL.revokeObjectURL(_camLastUrl); _camLastUrl = null; }}
     const img = stage.querySelector('img');
     if (img) img.src = '';
     setStatus('stopped');
@@ -2434,11 +2483,51 @@ def device_screen_page(user: dict, device: dict) -> str:
     setStatus('error');
   }}
 
+  // V5.21: track active direct screen stream rid + last blob URL so we
+  // can shut down cleanly and not leak ObjectURLs.
+  let _screenDirectRid = null, _screenLastUrl = null;
+
+  function _startDirectScreen(img) {{
+    let firstFrame = true;
+    const rid = _directStream('screen_stream', {{}}, {{
+      start: m => {{ /* nothing — first frame will replace the src */ }},
+      frame: ab => {{
+        const blob = new Blob([ab], {{type:'image/jpeg'}});
+        const u = URL.createObjectURL(blob);
+        // Swap src first, THEN revoke the previous URL on the next
+        // tick so the browser has time to repaint without flicker.
+        const old = _screenLastUrl; _screenLastUrl = u; img.src = u;
+        if (old) setTimeout(() => URL.revokeObjectURL(old), 0);
+        if (firstFrame) {{ firstFrame = false; setStatus('streaming (direct)'); }}
+      }},
+      end: m => {{
+        if (_screenLastUrl) {{ URL.revokeObjectURL(_screenLastUrl); _screenLastUrl = null; }}
+        _screenDirectRid = null;
+        if (m && !m.ok) showError('Direct screen stream failed: '
+            + String(m.error || '').slice(0, 200) + ' — falling back to hub.');
+      }},
+    }});
+    return rid;
+  }}
+
   function startStream() {{
     placeholder.style.display = 'none';
     const err = stage.querySelector('.err'); if (err) err.remove();
     let img = stage.querySelector('img');
     if (!img) {{ img = document.createElement('img'); stage.appendChild(img); attachInput(img); }}
+    // Prefer the direct WS (LAN/mesh, no hub hop). If direct isn't up
+    // (or sending fails), fall back to the hub MJPEG path.
+    const rid = _startDirectScreen(img);
+    if (rid) {{
+      _screenDirectRid = rid;
+      img.onerror = () => {{}};   // direct uses blob URLs, no upstream error
+      streaming = true;
+      btn.textContent = '■ Stop stream'; btn.classList.remove('btn-primary');
+      setStatus('streaming (direct)');
+      loadScreenSize();
+      return;
+    }}
+    // Hub MJPEG fallback.
     img.src = `/devices/${{encodeURIComponent(did)}}/screen/live?t=${{Date.now()}}`;
     img.onerror = () => {{
       showError('Stream failed. Make sure the Vortex Driver APK is installed, the service is started, and screen sharing is armed.');
@@ -2449,15 +2538,23 @@ def device_screen_page(user: dict, device: dict) -> str:
     streaming = true;
     btn.textContent = '■ Stop stream';
     btn.classList.remove('btn-primary');
-    setStatus('streaming');
+    setStatus('streaming (via hub)');
     loadScreenSize();
   }}
   function stopStream() {{
     streaming = false;
     btn.textContent = '▶ Live stream';
     btn.classList.add('btn-primary');
+    if (_screenDirectRid) {{
+      // Closing the direct WS terminates the agent's streaming task
+      // (there's no in-band 'abort'). Input fast-path will re-establish
+      // on next interaction; if not, postInput silently falls back.
+      try {{ _directWS && _directWS.close(); }} catch (e) {{}}
+      _screenDirectRid = null;
+    }}
     const img = stage.querySelector('img');
     if (img) img.src = '';
+    if (_screenLastUrl) {{ URL.revokeObjectURL(_screenLastUrl); _screenLastUrl = null; }}
     setStatus('stopped');
   }}
   btn.addEventListener('click', () => {{
@@ -2478,9 +2575,59 @@ def device_screen_page(user: dict, device: dict) -> str:
   }}
 
   // V5.16: race a direct WebSocket to the agent (LAN / mesh) so input
-  // bypasses the hub. Falls back to the hub POST if no direct route.
+  // bypasses the hub. V5.21: also carries STREAMS (screen_stream
+  // frames) so the visible video latency drops too — JPEG bytes go
+  // straight from the device to this browser. Falls back to the hub
+  // POST/MJPEG if no direct route.
   let _directWS = null, _directNextId = 1;
-  const _directPending = new Map();
+  const _directPending = new Map();   // rid -> resolve+timeout       (unary)
+  const _directStreams = new Map();   // rid -> {{start,frame,end}}   (streams)
+  let _directBinaryRid = null;        // tag for the next binary frame
+
+  function _directOnMessage(ev) {{
+    if (ev.data instanceof ArrayBuffer) {{
+      const rid = _directBinaryRid; _directBinaryRid = null;
+      const h = rid && _directStreams.get(rid);
+      if (h && h.frame) {{ try {{ h.frame(ev.data); }} catch (_) {{}} }}
+      return;
+    }}
+    let m; try {{ m = JSON.parse(ev.data); }} catch (_) {{ return; }}
+    if (m.type === 'stream_chunk_header' && m.id) {{
+      _directBinaryRid = m.id; return;
+    }}
+    if (m.type === 'stream_start' && m.id && _directStreams.has(m.id)) {{
+      try {{ _directStreams.get(m.id).start && _directStreams.get(m.id).start(m); }} catch (_) {{}}
+      return;
+    }}
+    if (m.type === 'stream_chunk' && m.id && _directStreams.has(m.id)) {{
+      // Legacy/JSON chunk fallback (base64). Modern agent sends binary.
+      if (m.data) {{
+        try {{
+          const bin = atob(m.data); const u8 = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+          _directStreams.get(m.id).frame && _directStreams.get(m.id).frame(u8.buffer);
+        }} catch (_) {{}}
+      }}
+      return;
+    }}
+    if (m.type === 'stream_end' && m.id && _directStreams.has(m.id)) {{
+      try {{ _directStreams.get(m.id).end && _directStreams.get(m.id).end(null); }} catch (_) {{}}
+      _directStreams.delete(m.id);
+      return;
+    }}
+    if (m.type === 'response' && m.id) {{
+      if (_directPending.has(m.id)) {{
+        const e = _directPending.get(m.id);
+        clearTimeout(e.timeout); _directPending.delete(m.id);
+        e.resolve(m); return;
+      }}
+      if (_directStreams.has(m.id) && !m.ok) {{
+        try {{ _directStreams.get(m.id).end && _directStreams.get(m.id).end(m); }} catch (_) {{}}
+        _directStreams.delete(m.id);
+      }}
+    }}
+  }}
+
   async function _connectDirect() {{
     let info;
     try {{
@@ -2491,6 +2638,7 @@ def device_screen_page(user: dict, device: dict) -> str:
     if (!info || !info.ticket || !(info.ws || []).length) return;
     const tries = info.ws.map(url => new Promise(resolve => {{
       let s; try {{ s = new WebSocket(url); }} catch (e) {{ resolve(null); return; }}
+      try {{ s.binaryType = 'arraybuffer'; }} catch (_) {{}}
       const to = setTimeout(() => {{ try {{ s.close(); }} catch (_) {{}} resolve(null); }}, 1500);
       s.onopen = () => s.send(JSON.stringify({{type:'hello', ticket: info.ticket}}));
       s.onerror = () => {{ clearTimeout(to); resolve(null); }};
@@ -2503,15 +2651,13 @@ def device_screen_page(user: dict, device: dict) -> str:
     const winner = (await Promise.all(tries)).find(s => s);
     if (!winner) return;
     _directWS = winner;
-    winner.onmessage = ev => {{
-      let m; try {{ m = JSON.parse(ev.data); }} catch (_) {{ return; }}
-      if (m.type === 'response' && m.id && _directPending.has(m.id)) {{
-        const {{resolve, timeout}} = _directPending.get(m.id);
-        clearTimeout(timeout); _directPending.delete(m.id);
-        resolve(m);
-      }}
+    winner.onmessage = _directOnMessage;
+    winner.onclose = () => {{
+      _directWS = null; _directBinaryRid = null;
+      _directPending.clear();
+      _directStreams.forEach(h => {{ try {{ h.end && h.end({{ok:false,error:'closed'}}); }} catch (_) {{}} }});
+      _directStreams.clear();
     }};
-    winner.onclose = () => {{ _directWS = null; _directPending.clear(); }};
     setStatus('direct connect ok');
   }}
   _connectDirect();
@@ -2531,6 +2677,20 @@ def device_screen_page(user: dict, device: dict) -> str:
         clearTimeout(timeout); _directPending.delete(id); reject(e);
       }}
     }});
+  }}
+
+  /** Open a stream over the direct WS. handlers = {{start,frame,end}}.
+   *  Returns rid (string) on success, null if direct WS isn't up. */
+  function _directStream(op, args, handlers) {{
+    if (!_directWS || _directWS.readyState !== 1) return null;
+    const id = String(_directNextId++);
+    _directStreams.set(id, handlers || {{}});
+    try {{
+      _directWS.send(JSON.stringify({{type:'request', id, op, args: args||{{}}}}));
+      return id;
+    }} catch (e) {{
+      _directStreams.delete(id); return null;
+    }}
   }}
 
   async function postInput(cmd) {{
@@ -2869,6 +3029,125 @@ _TIER_A = ["VORTEX_SYNC_URL", "VORTEX_SYNC_TOKEN", "VORTEX_HUB_DB",
            "APP_PORT", "CLOUDFLARE_TUNNEL_TOKEN"]
 _TIER_B = ["VORTEX_HUB_PUBLIC_URL", "VORTEX_LOCK_TTL",
            "VORTEX_SESSION_TTL", "VORTEX_REGISTRATION_MODE"]
+
+# V5.21: shared direct-WS client (browser <-> agent). Injected as-is
+# into the screen + camera pages' inner IIFE; references `did` and
+# `setStatus` which both pages declare. Exposes _directInput (unary)
+# and _directStream(op, args, handlers) for streams; handles binary
+# frames via the stream_chunk_header pattern. Falls back silently
+# when no direct WS — callers race direct first, then hub.
+_DIRECT_WS_JS = r"""
+  let _directWS = null, _directNextId = 1;
+  const _directPending = new Map();
+  const _directStreams = new Map();
+  let _directBinaryRid = null;
+
+  function _directOnMessage(ev) {
+    if (ev.data instanceof ArrayBuffer) {
+      const rid = _directBinaryRid; _directBinaryRid = null;
+      const h = rid && _directStreams.get(rid);
+      if (h && h.frame) { try { h.frame(ev.data); } catch (_) {} }
+      return;
+    }
+    let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+    if (m.type === 'stream_chunk_header' && m.id) {
+      _directBinaryRid = m.id; return;
+    }
+    if (m.type === 'stream_start' && m.id && _directStreams.has(m.id)) {
+      try { _directStreams.get(m.id).start && _directStreams.get(m.id).start(m); } catch (_) {}
+      return;
+    }
+    if (m.type === 'stream_chunk' && m.id && _directStreams.has(m.id)) {
+      if (m.data) {
+        try {
+          const bin = atob(m.data); const u8 = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+          _directStreams.get(m.id).frame && _directStreams.get(m.id).frame(u8.buffer);
+        } catch (_) {}
+      }
+      return;
+    }
+    if (m.type === 'stream_end' && m.id && _directStreams.has(m.id)) {
+      try { _directStreams.get(m.id).end && _directStreams.get(m.id).end(null); } catch (_) {}
+      _directStreams.delete(m.id); return;
+    }
+    if (m.type === 'response' && m.id) {
+      if (_directPending.has(m.id)) {
+        const e = _directPending.get(m.id);
+        clearTimeout(e.timeout); _directPending.delete(m.id);
+        e.resolve(m); return;
+      }
+      if (_directStreams.has(m.id) && !m.ok) {
+        try { _directStreams.get(m.id).end && _directStreams.get(m.id).end(m); } catch (_) {}
+        _directStreams.delete(m.id);
+      }
+    }
+  }
+
+  async function _connectDirect() {
+    let info;
+    try {
+      const r = await fetch(`/devices/${encodeURIComponent(did)}/direct`,
+                            {cache:'no-store'});
+      if (!r.ok) return; info = await r.json();
+    } catch (e) { return; }
+    if (!info || !info.ticket || !(info.ws || []).length) return;
+    const tries = info.ws.map(url => new Promise(resolve => {
+      let s; try { s = new WebSocket(url); } catch (e) { resolve(null); return; }
+      try { s.binaryType = 'arraybuffer'; } catch (_) {}
+      const to = setTimeout(() => { try { s.close(); } catch (_) {} resolve(null); }, 1500);
+      s.onopen = () => s.send(JSON.stringify({type:'hello', ticket: info.ticket}));
+      s.onerror = () => { clearTimeout(to); resolve(null); };
+      s.onmessage = ev => {
+        let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+        if (m.type === 'hello_ok') { clearTimeout(to); resolve(s); }
+        else if (m.type === 'hello_fail') { clearTimeout(to); try { s.close(); } catch (_) {} resolve(null); }
+      };
+    }));
+    const winner = (await Promise.all(tries)).find(s => s);
+    if (!winner) return;
+    _directWS = winner;
+    winner.onmessage = _directOnMessage;
+    winner.onclose = () => {
+      _directWS = null; _directBinaryRid = null;
+      _directPending.clear();
+      _directStreams.forEach(h => { try { h.end && h.end({ok:false,error:'closed'}); } catch (_) {} });
+      _directStreams.clear();
+    };
+    try { setStatus && setStatus('direct connect ok'); } catch (_) {}
+  }
+  _connectDirect();
+
+  function _directInput(cmd, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      if (!_directWS || _directWS.readyState !== 1) return reject('no-direct');
+      const id = String(_directNextId++);
+      const timeout = setTimeout(() => {
+        _directPending.delete(id); reject('timeout');
+      }, timeoutMs);
+      _directPending.set(id, {resolve, timeout});
+      try {
+        _directWS.send(JSON.stringify({type:'request', id, op:'input',
+                                        args:{command: cmd}}));
+      } catch (e) {
+        clearTimeout(timeout); _directPending.delete(id); reject(e);
+      }
+    });
+  }
+
+  function _directStream(op, args, handlers) {
+    if (!_directWS || _directWS.readyState !== 1) return null;
+    const id = String(_directNextId++);
+    _directStreams.set(id, handlers || {});
+    try {
+      _directWS.send(JSON.stringify({type:'request', id, op, args: args||{}}));
+      return id;
+    } catch (e) {
+      _directStreams.delete(id); return null;
+    }
+  }
+"""
+
 
 def _db_test_js(endpoint: str) -> str:
     """Inline 'Test connection' script. `endpoint` differs by context:

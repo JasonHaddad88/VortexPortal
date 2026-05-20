@@ -269,12 +269,16 @@ browser-side frame renderer (binary WS → blob → `<img>`/canvas).
   Races candidates with 1.5s deadline; falls back to hub `POST
   /input` cleanly; "direct connect ok" status chip.
 
-## V5.21 — direct-WS Phase A2: media over direct WS (next)
+## V5.21 — direct-WS Phase A2: media over direct WS — _shipped V5.21_
 
-- [ ] Screen / camera frame streams over the same direct WS (kills the
-  remaining frame-transport latency). Browser `<img>` swap to chunked
-  binary frame render; reuse `_serve_ws` machinery.
-- [ ] Rotating-ticket support in-flight (no reconnect needed).
+- [x] **Shared `_DIRECT_WS_JS` client + binary frame routing** 🟡 —
+  _shipped_. `stream_chunk_header` + `arraybuffer` + per-rid stream
+  dispatch + `URL.createObjectURL` blob render with revoke.
+- [x] **Screen `screen_stream` over direct WS** 🟢 — _shipped_.
+- [x] **Camera `camera_stream` over direct WS** 🟢 — _shipped_.
+- [ ] **A3 (later)**: in-band stream cancellation (no WS close); ticket
+  rotation without reconnect; screen page dedupe onto the shared
+  constant.
 
 ## V5.22 — full-fledged Driver APK (next big track)
 
