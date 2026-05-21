@@ -11,8 +11,8 @@ android {
         applicationId = "com.vortex.driver"
         minSdk = 26          // Android 8.0 -- foreground-service notifications + adaptive icons
         targetSdk = 34       // Android 14
-        versionCode = 4
-        versionName = "0.4.0-m3"
+        versionCode = 5
+        versionName = "0.5.0-b1"
     }
 
     buildTypes {
@@ -57,4 +57,8 @@ dependencies {
 
     // Kotlin coroutines for the socket-poll loop.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // B1: OkHttp for the outbound WebSocket to the hub + the enroll
+    // POST. Standard, ~600 KB, includes WebSocket out of the box.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

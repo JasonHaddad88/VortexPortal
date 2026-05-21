@@ -52,10 +52,22 @@ class MainActivity : AppCompatActivity() {
         binding.armScreenBtn.setOnClickListener { armScreenSharing() }
         binding.disarmScreenBtn.setOnClickListener { disarmScreenSharing() }
         binding.openA11yBtn.setOnClickListener { openAccessibilitySettings() }
+        // B1: standalone enrollment (no Termux needed). Enroll button
+        // launches the activity; Forget clears creds.
+        binding.enrollBtn.setOnClickListener {
+            startActivity(Intent(this, EnrollActivity::class.java))
+        }
+        binding.unenrollBtn.setOnClickListener {
+            Prefs.clear(this)
+            // Stop the service so HubClient unwinds with the old creds.
+            stopService(Intent(this, DriverService::class.java))
+            refreshEnrollStatus()
+        }
 
         ensureNotificationPermission()
         refreshNotifStatus()
         refreshA11yStatus()
+        refreshEnrollStatus()
     }
 
     override fun onResume() {
@@ -63,6 +75,26 @@ class MainActivity : AppCompatActivity() {
         // The user might have just toggled us in Settings -> Accessibility;
         // recompute the row when the app comes back to the foreground.
         refreshA11yStatus()
+        // Also catches a fresh enrollment from EnrollActivity finishing.
+        refreshEnrollStatus()
+    }
+
+    /** B1: reflect whether this device has been enrolled into a Vortex
+     *  account. When enrolled, the "Enroll" button becomes "Forget
+     *  enrollment" and the status text shows the saved device name. */
+    private fun refreshEnrollStatus() {
+        if (Prefs.isEnrolled(this)) {
+            val name = Prefs.deviceName(this) ?: getString(R.string.app_name)
+            binding.enrollStatus.text = getString(
+                R.string.hub_status_enrolled, name, getString(R.string.hub_status_unknown),
+            )
+            binding.enrollBtn.visibility = View.GONE
+            binding.unenrollBtn.visibility = View.VISIBLE
+        } else {
+            binding.enrollStatus.text = getString(R.string.hub_status_not_enrolled)
+            binding.enrollBtn.visibility = View.VISIBLE
+            binding.unenrollBtn.visibility = View.GONE
+        }
     }
 
     /** Deep-link to Settings -> Accessibility. We can't take the user any

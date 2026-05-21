@@ -52,6 +52,17 @@
             android:exported="false"
             android:theme="@style/Theme.VortexDriver.Translucent" />
 
+        <!--
+          B1: standalone enrollment — paste an account token + hub URL,
+          POST /api/enroll, save device_id+token. Launched from
+          MainActivity when Prefs.isEnrolled() is false.
+        -->
+        <activity
+            android:name=".EnrollActivity"
+            android:exported="false"
+            android:label="@string/enroll_title"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name=".DriverService"
             android:exported="false"

@@ -3,6 +3,54 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B1] — 2026-05-20
+
+**Full-fledged APK, Phase 1 (foundation).** The Vortex Driver APK
+can now be the entire Vortex client on Android — open it, paste an
+account enrollment token + your hub URL, tap Enroll. No Termux, no
+Termux:API, no copy-pasting shell one-liners. Hub-versioned changes
+unchanged; this is an APK-side milestone (driver versionCode 4 → 5,
+versionName `0.5.0-b1`).
+
+### Added (in `driver/`)
+- `Prefs.kt` — SharedPreferences-backed store for account token,
+  bootstrap URL, device id/token/name and the live nodes list.
+- `HubClient.kt` — outbound OkHttp WebSocket to `{hub}/ws/agent`:
+  authenticates with `device_id`+`token`, handles `auth_ok` (saves any
+  fresh nodes list the hub returns), routes inbound `request` frames
+  to `OpDispatcher`, reconnects with backoff across the candidate
+  list. Pushes a stub `direct_info` (port=0) so the hub broker behaves
+  — the real in-APK direct-WS server lands in B3.
+- `OpDispatcher.kt` + `Ops.kt` — same `{type:request,id,op,args}` →
+  `{type:response,id,ok,result|error}` protocol as the Python agent.
+  First native op `device_info` returns Build + Battery via
+  `BatteryManager`, no permissions, no Termux.
+- `EnrollActivity.kt` + `activity_enroll.xml` — paste account token +
+  hub URL + (optional) device name → POST `/api/enroll` → save creds
+  → kick the service. Native equivalent of the agent's
+  `pairing.enroll_now()`.
+- `MainActivity` shows enrollment status + Enroll / Forget buttons;
+  `DriverService` starts `HubClient` when `Prefs.isEnrolled()` and
+  surfaces its status in the foreground notification.
+- `build.gradle.kts` — added `com.squareup.okhttp3:okhttp:4.12.0`,
+  bumped `versionCode 4 → 5`, `versionName 0.4.0-m3 → 0.5.0-b1`.
+- `AndroidManifest.xml` — registered `EnrollActivity`.
+- `driver/README.md` — milestone matrix updated (M0-M3 marked shipped,
+  B1 marked shipped, B2-B5 planned with scope notes).
+
+### Behaviour notes
+- **Coexists with helper mode.** The M0-M3 loopback-socket helper
+  role (Termux Python agent talking to localhost:5097/5098/5099) is
+  untouched — phones still running the agent that way keep working.
+  Enrollment just *adds* the standalone client.
+- **B2 next** wires the existing ScreenEngine / CameraEngine /
+  InputServer into the OpDispatcher so the APK alone serves
+  screen_stream / camera_stream / input — no Termux needed for any
+  control path on Android.
+- I can't compile Android in this environment; the CI workflow
+  (`.github/workflows/driver-build.yml`) builds + uploads the debug
+  APK on push.
+
 ## [V5.21] — 2026-05-20
 
 **Direct-WS Phase A2: media frames over the direct socket.** Builds on

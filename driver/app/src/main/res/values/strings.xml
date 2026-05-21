@@ -50,4 +50,22 @@
         hub instance you have paired with — this permission is what lets it
         impersonate touch input on the device.
     </string>
+
+    <!-- B1: standalone APK Vortex-client role (no Termux required). -->
+    <string name="cancel">Cancel</string>
+    <string name="btn_enroll">Enroll this device</string>
+    <string name="btn_unenroll">Forget enrollment</string>
+    <string name="hub_status_not_enrolled">Not enrolled. Tap “Enroll this device” to register with your Vortex account.</string>
+    <string name="hub_status_enrolled">Enrolled as %1$s. Service status: %2$s</string>
+    <string name="hub_status_unknown">Enrolled. Start the service to connect.</string>
+
+    <string name="enroll_title">Enroll this device</string>
+    <string name="enroll_subtitle">Mint a reusable account token in your Vortex hub at /enroll-tokens, paste it below along with the hub\'s URL. No pairing code, no Termux required.</string>
+    <string name="enroll_label_account_token">Account enrollment token</string>
+    <string name="enroll_hint_account_token">paste the token shown ONCE after minting</string>
+    <string name="enroll_label_hub_url">Hub URL (any reachable node)</string>
+    <string name="enroll_hint_hub_url">https://your-hub.trycloudflare.com</string>
+    <string name="enroll_label_device_name">Device name (optional)</string>
+    <string name="enroll_hint_device_name">e.g. Living-room Pixel</string>
+    <string name="enroll_btn">Enroll</string>
 </resources>

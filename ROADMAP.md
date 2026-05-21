@@ -280,13 +280,25 @@ browser-side frame renderer (binary WS → blob → `<img>`/canvas).
   rotation without reconnect; screen page dedupe onto the shared
   constant.
 
-## V5.22 — full-fledged Driver APK (next big track)
+## V5.22 — full-fledged Driver APK (in progress, multi-phase)
 
-Native Android: MediaProjection + MediaCodec H.264 capture; foreground
-service; account-token enrollment; direct-WS server (same protocol);
-deep-link enrollment; eventually viewer mode. Separate large track —
-slots into the direct-WS architecture as the device-side server for
-Android.
+Replace Termux+Termux:API+Python agent on Android with a native APK
+that's the whole Vortex client. Phases (see `driver/README.md`):
+
+- [x] **B1 — foundation** _shipped_. `HubClient` (OkHttp WS to hub),
+  `EnrollActivity` (paste account token + hub URL → POST `/api/enroll`
+  → save device creds), `OpDispatcher` + first native op
+  `device_info` (Build + Battery, no Termux). Service auto-dials the
+  hub on enrollment; coexists with M0-M3 helper mode.
+- [ ] **B2** — wire ScreenEngine / CameraEngine / InputServer as
+  native `screen_stream`/`camera_stream`/`input` ops; retire the
+  loopback-socket helper role on Android.
+- [ ] **B3** — direct-WS server inside the APK; browser ↔ APK direct
+  (hub leaves the data path on Android too).
+- [ ] **B4** — theft-mode native ops (FusedLocationProvider,
+  MediaRecorder, PowerManager wake-lock). Last Termux:API deps gone.
+- [ ] **B5** — H.264 / MediaCodec video over the direct WS (real
+  low-latency video, the AnyDesk-grade endgame).
 
 ## V5.23 — find-my-device / fleet UX (candidate, deferred)
 

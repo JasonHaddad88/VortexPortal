@@ -35,10 +35,31 @@ Future milestones, in order:
 | Milestone | Scope | Status |
 |---|---|---|
 | **M0** | Project scaffold + foreground service + agent-presence ping | _shipped_ |
-| **M1** | Real-time camera streaming (Camera2 → H.264 → WebSocket) | planned |
-| **M2** | Screen capture (MediaProjection consent + encode) | planned |
-| **M3** | Touch input (AccessibilityService gesture dispatch) | planned |
+| **M1** | Real-time camera streaming (Camera2 → JPEG → loopback socket) | _shipped_ |
+| **M2** | Screen capture (MediaProjection consent + encode) | _shipped_ |
+| **M3** | Touch input (AccessibilityService gesture dispatch) | _shipped_ |
+| **B1** | **Standalone** Vortex client (HubClient + EnrollActivity + native `device_info`) — APK enrolls into your account & dials the hub itself, no Termux needed | _shipped_ |
+| **B2** | Wire screen/camera/input engines as native ops (drop loopback-socket helper role) | planned |
+| **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | planned |
+| **B4** | Theft-mode native ops (location, audio, push, wake-lock) — last Termux:API dependencies gone | planned |
+| **B5** | H.264 / MediaCodec video — real low-latency video over the direct WS | planned |
 | **M4** | Polish, autostart on boot, signed release builds, F-Droid | planned |
+
+### B1: standalone Vortex-client role (no Termux required)
+
+Before B1 the APK was a *helper* — the Python agent in Termux talked
+to it over `127.0.0.1` sockets so Android-gated things (screen,
+camera, input) had a path. B1 lets the APK be the **whole** Vortex
+client on Android: open it, paste an account enrollment token + your
+hub URL, tap Enroll. The APK posts `/api/enroll`, saves the device
+credentials, and the foreground service dials your hub directly over
+WebSocket — same role the Python agent plays elsewhere.
+
+After enrollment the device shows up in your hub's dashboard. The
+first native op (`device_info`) returns Build/Battery info straight
+from the OS — no Termux, no Termux:API, no permissions beyond
+notifications. B2 will move screen/camera/input dispatch into this
+same client so the loopback-socket helper role can retire on Android.
 
 ## Install (no Android Studio required)
 

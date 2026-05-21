@@ -48,6 +48,11 @@ class DriverService : Service(), CameraEngine.FrameSink {
     // ---- Input (M3) ----
     private lateinit var inputServer: InputServer
 
+    // ---- B1: outbound hub WS (standalone client role). Optional —
+    // ----- only starts when Prefs.isEnrolled().
+    private var hubClient: HubClient? = null
+    @Volatile private var hubStatus: String = ""
+
     @Volatile private var lastError: String? = null
     @Volatile private var frameCount: Long = 0L
 
@@ -77,6 +82,17 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // while the service is up, so the agent can control the phone
         // without needing to also be streaming video.
         inputServer = InputServer(this, port = INPUT_PORT).also { it.start() }
+
+        // B1: if the user has enrolled this device, dial the hub
+        // directly (skipping the Termux Python agent entirely). The
+        // service stays useful in helper-mode (Termux still on the
+        // phone) when not enrolled — these two paths coexist.
+        if (Prefs.isEnrolled(this)) {
+            hubClient = HubClient(this) { s ->
+                hubStatus = s
+                updateNotification()
+            }.also { it.start() }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -99,6 +115,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { cameraServer.stop() } catch (_: Exception) {}
         try { screenServer.stop() } catch (_: Exception) {}
         try { inputServer.stop() } catch (_: Exception) {}
+        try { hubClient?.stop() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -274,6 +291,10 @@ class DriverService : Service(), CameraEngine.FrameSink {
         if (parts.size == 1 && parts[0] == getString(R.string.notif_input_disabled)) {
             // Only the "input disabled" badge is showing -- prepend the idle hint.
             parts.add(0, getString(R.string.notif_idle, CAMERA_PORT))
+        }
+        // B1: surface the standalone hub link state (when enrolled).
+        if (hubClient != null && hubStatus.isNotBlank()) {
+            parts += "Hub: $hubStatus"
         }
         val text = parts.joinToString(" · ")
         return NotificationCompat.Builder(this, CHANNEL_ID)
