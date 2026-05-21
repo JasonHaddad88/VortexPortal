@@ -41,8 +41,30 @@ class EnrollActivity : AppCompatActivity() {
         b.hubUrl.setText(Prefs.bootstrapUrl(this) ?: "")
         b.deviceName.setText(Prefs.deviceName(this) ?: Build.MODEL ?: "")
 
+        // B2 ease-of-enrollment: vortex://enroll?token=…&hub=…&name=…
+        // (typically opened by scanning the QR on the hub's token-
+        // created page). Prefill what's there; auto-submit if the
+        // required fields are both present.
+        val uri = intent?.data
+        var autoSubmit = false
+        if (uri != null && uri.scheme == "vortex" && uri.host == "enroll") {
+            uri.getQueryParameter("token")?.takeIf { it.isNotBlank() }
+                ?.let { b.accountToken.setText(it) }
+            uri.getQueryParameter("hub")?.takeIf { it.isNotBlank() }
+                ?.let { b.hubUrl.setText(it) }
+            uri.getQueryParameter("name")?.takeIf { it.isNotBlank() }
+                ?.let { b.deviceName.setText(it) }
+            autoSubmit = !b.accountToken.text.isNullOrBlank()
+                && !b.hubUrl.text.isNullOrBlank()
+        }
+
         b.enrollBtn.setOnClickListener { doEnroll() }
         b.cancelBtn.setOnClickListener { finish() }
+
+        if (autoSubmit) {
+            setStatus("Deep-link received — enrolling…", err = false)
+            b.enrollBtn.post { doEnroll() }
+        }
     }
 
     override fun onDestroy() {

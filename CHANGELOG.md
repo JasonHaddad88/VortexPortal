@@ -3,6 +3,41 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B2.1] — 2026-05-21
+
+Two things: enrollment is now **scan-and-done**, and **input** is
+handled natively in the APK (no loopback hop, no Termux). Both
+build on B1's foundation.
+
+### Easier enrollment — `vortex://enroll` deep-link
+- New `<intent-filter>` on `EnrollActivity` for
+  `vortex://enroll?token=…&hub=…&name=…`. Scanning the QR with the
+  phone's built-in Camera (any QR-aware app, really) opens Vortex
+  Driver with all fields pre-filled and auto-runs `/api/enroll`.
+  No typing.
+- Hub: `enroll_token_created_page` now leads with a Vortex Driver QR
+  encoding that deep-link plus a visible copyable link. The legacy
+  Termux one-liner moves into a `<details>` expander (still works for
+  pure-Termux phones).
+
+### Native `op_input` (first B2 step)
+- New `InputDispatch.kt` — the input-command logic that was inside
+  `InputServer` is now a standalone object. `InputServer` (the legacy
+  loopback socket for the Termux Python agent) is unchanged in
+  behaviour; the new native path uses the same dispatch directly.
+- `Ops.registerAll` registers `op_input`: the hub's `/input` request
+  is handled inside the APK against `VortexAccessibilityService`
+  — no `127.0.0.1:5097` round-trip, no Termux.
+- B2.2 next: wire `screen_stream` + `camera_stream` the same way so
+  the loopback helper can retire on Android entirely.
+
+### Notes
+- Coexists with helper mode (still useful on phones running the
+  Termux agent alongside the APK).
+- APK versionCode 5 → 6, versionName `0.5.0-b1` → `0.6.0-b2.1`.
+- I can't compile Android locally; the driver-build CI workflow
+  builds the debug APK on push.
+
 ## [Driver-B1] — 2026-05-20
 
 **Full-fledged APK, Phase 1 (foundation).** The Vortex Driver APK

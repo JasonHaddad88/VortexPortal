@@ -290,9 +290,15 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   → save device creds), `OpDispatcher` + first native op
   `device_info` (Build + Battery, no Termux). Service auto-dials the
   hub on enrollment; coexists with M0-M3 helper mode.
-- [ ] **B2** — wire ScreenEngine / CameraEngine / InputServer as
-  native `screen_stream`/`camera_stream`/`input` ops; retire the
-  loopback-socket helper role on Android.
+- [x] **B2.1 — deep-link enroll + native op_input** _shipped_.
+  `vortex://enroll?token=&hub=&name=` intent-filter on EnrollActivity
+  + URI prefill + auto-submit; hub token-created page renders a 2nd
+  QR encoding the deep-link + copyable link, demotes the Termux
+  one-liner to a `<details>` expander. Native `op_input` via shared
+  `InputDispatch.kt` (also used by legacy InputServer) — input no
+  longer needs the loopback hop on Android.
+- [ ] **B2.2** — native `screen_stream` + `camera_stream` ops via the
+  same dispatcher; retire the loopback helper for media too.
 - [ ] **B3** — direct-WS server inside the APK; browser ↔ APK direct
   (hub leaves the data path on Android too).
 - [ ] **B4** — theft-mode native ops (FusedLocationProvider,

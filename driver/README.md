@@ -39,7 +39,8 @@ Future milestones, in order:
 | **M2** | Screen capture (MediaProjection consent + encode) | _shipped_ |
 | **M3** | Touch input (AccessibilityService gesture dispatch) | _shipped_ |
 | **B1** | **Standalone** Vortex client (HubClient + EnrollActivity + native `device_info`) — APK enrolls into your account & dials the hub itself, no Termux needed | _shipped_ |
-| **B2** | Wire screen/camera/input engines as native ops (drop loopback-socket helper role) | planned |
+| **B2.1** | Deep-link enroll (`vortex://enroll` QR → auto-fill + auto-submit) + native `op_input` (no loopback hop for input) | _shipped_ |
+| **B2.2** | Native `screen_stream` + `camera_stream` ops (drop the loopback helper for media) | planned |
 | **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | planned |
 | **B4** | Theft-mode native ops (location, audio, push, wake-lock) — last Termux:API dependencies gone | planned |
 | **B5** | H.264 / MediaCodec video — real low-latency video over the direct WS | planned |

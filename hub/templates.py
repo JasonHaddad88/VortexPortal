@@ -1500,6 +1500,15 @@ def enroll_token_created_page(user: dict, token: str, hub_url: str,
                  f"HUB_URL={_shell_quote(hub_url)} bash ~/server/serve.sh")
     qr_svg = _qr_svg(one_liner, box=7, border=2)
     cmd_js = _json_dumps_for_html(one_liner)
+    # Driver-B2: a second QR encodes the Vortex Driver APK deep-link
+    # `vortex://enroll?token=…&hub=…&name=…`. Scanning with the phone
+    # camera opens the APK directly with everything pre-filled and
+    # auto-runs the enroll. No typing, no Termux.
+    from urllib.parse import quote as _q
+    apk_link = (f"vortex://enroll?token={_q(token, safe='')}"
+                f"&hub={_q(hub_url, safe='')}")
+    apk_qr_svg = _qr_svg(apk_link, box=7, border=2)
+    apk_link_js = _json_dumps_for_html(apk_link)
     tok_e = escape(token)
     body = f"""
 <div class="section-head"><h2>// Token Created</h2></div>
@@ -1514,20 +1523,46 @@ def enroll_token_created_page(user: dict, token: str, hub_url: str,
   </div>
 
   <div class="qr-row" style="margin-top:1.5rem">
-    <div class="qr-card">{qr_svg}</div>
+    <div class="qr-card">{apk_qr_svg}</div>
     <div class="qr-side">
-      <h4>// One-liner (Termux)</h4>
+      <h4>// Vortex Driver APK (Android — easiest)</h4>
       <ol>
-        <li>On the new device, scan the QR (or copy below).</li>
-        <li>Paste into Termux, hit enter. That’s it — reuse the same
-            token/QR for every other device too.</li>
+        <li>Install Vortex Driver on the phone (see <code>driver/</code> CI artifact).</li>
+        <li>Open the phone's <strong>Camera</strong> (or any QR scanner)
+            and point it at this QR.</li>
+        <li>Tap the <code>vortex://enroll</code> link — Vortex Driver
+            opens, all fields are pre-filled, and it enrols itself
+            against this hub. No typing, no Termux.</li>
       </ol>
       <p style="margin:0;color:var(--muted);font-size:.7rem">
-        No per-device code. The agent enrols into your account and
-        auto-discovers a node to connect to.
+        Reusable across all your Android devices; revoke the token to
+        cut off enrollment.
       </p>
     </div>
   </div>
+  <h3 style="margin-top:1rem;font-size:.85rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)">
+    Or open this link on the phone directly:
+    <button class="copy-btn" id="copy-apk-link">Copy link</button>
+  </h3>
+  <div class="card" style="padding:1rem">
+    <code id="apk-link" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;color:var(--cyan);word-break:break-all;user-select:all;display:block">{escape(apk_link)}</code>
+  </div>
+
+  <details style="margin-top:1.25rem">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem">
+      Termux-based phone instead? (legacy one-liner)
+    </summary>
+    <div class="qr-row" style="margin-top:.75rem">
+      <div class="qr-card">{qr_svg}</div>
+      <div class="qr-side">
+        <h4>// One-liner (Termux)</h4>
+        <ol>
+          <li>Scan the QR (or copy below).</li>
+          <li>Paste into Termux, hit enter.</li>
+        </ol>
+      </div>
+    </div>
+  </details>
 
   <h3 style="margin-top:1.5rem;font-size:.85rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)">
     Or paste this manually:
@@ -1542,13 +1577,17 @@ def enroll_token_created_page(user: dict, token: str, hub_url: str,
 </div>
 <script>
 (function() {{
-  const cmd = {cmd_js};
-  const b = document.getElementById('copy-cmd');
-  if (b) b.addEventListener('click', async () => {{
-    try {{ await navigator.clipboard.writeText(cmd);
-           b.textContent = 'Copied ✓'; b.classList.add('ok'); }}
-    catch (e) {{ b.textContent = 'Copy failed'; }}
-  }});
+  const wire = (id, value) => {{
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.addEventListener('click', async () => {{
+      try {{ await navigator.clipboard.writeText(value);
+             b.textContent = 'Copied ✓'; b.classList.add('ok'); }}
+      catch (e) {{ b.textContent = 'Copy failed'; }}
+    }});
+  }};
+  wire('copy-cmd', {cmd_js});
+  wire('copy-apk-link', {apk_link_js});
 }})();
 </script>"""
     return page("Token Created", body, user=user, active="/pair")

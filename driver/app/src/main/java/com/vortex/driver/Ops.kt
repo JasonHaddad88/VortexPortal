@@ -18,6 +18,14 @@ object Ops {
 
     fun registerAll(ctx: Context, dispatcher: OpDispatcher) {
         dispatcher.register("device_info") { _ -> deviceInfo(ctx) }
+        // B2: native input — same dispatch as InputServer but invoked
+        // directly by the hub's WS, no Termux/loopback hop.
+        dispatcher.register("input") { args ->
+            val cmd = args.optJSONObject("command")
+                ?: throw RuntimeException("op_input expects args.command to be an object")
+            InputDispatch.dispatchInput(ctx, cmd)
+                ?: JSONObject().put("acked", true)
+        }
     }
 
     /** Native equivalent of the Python agent's `op_device_info` — no

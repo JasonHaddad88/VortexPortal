@@ -59,9 +59,25 @@
         -->
         <activity
             android:name=".EnrollActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/enroll_title"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize">
+            <!--
+              B2: deep-link enrollment via QR. The hub renders a QR
+              encoding `vortex://enroll?token=…&hub=…&name=…`; scanning
+              with the phone camera opens this activity with all fields
+              pre-filled and immediately runs /api/enroll. No typing.
+              `exported=true` is required for an external intent (the
+              camera app) to launch us; we still only act on a parsed
+              URI we control end-to-end.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vortex" android:host="enroll" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name=".DriverService"
