@@ -41,7 +41,7 @@ Future milestones, in order:
 | **B1** | **Standalone** Vortex client (HubClient + EnrollActivity + native `device_info`) — APK enrolls into your account & dials the hub itself, no Termux needed | _shipped_ |
 | **B2.1** | Deep-link enroll (`vortex://enroll` QR → auto-fill + auto-submit) + native `op_input` (no loopback hop for input) | _shipped_ |
 | **B2.2** | Native `screen_stream` + `camera_stream` ops (drop the loopback helper for media) | _shipped_ |
-| **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | planned |
+| **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | _shipped_ |
 | **B4** | Theft-mode native ops (location, audio, push, wake-lock) — last Termux:API dependencies gone | planned |
 | **B5** | H.264 / MediaCodec video — real low-latency video over the direct WS | planned |
 | **M4** | Polish, autostart on boot, signed release builds, F-Droid | planned |
@@ -61,6 +61,30 @@ first native op (`device_info`) returns Build/Battery info straight
 from the OS — no Termux, no Termux:API, no permissions beyond
 notifications. B2 will move screen/camera/input dispatch into this
 same client so the loopback-socket helper role can retire on Android.
+
+### B3: direct-WS server in the APK
+
+After B3 the APK hosts its **own** WebSocket server on a kernel-assigned
+port. The hub-bound `HubClient` pushes the server's `(port, ticket,
+reachable IPv4 hosts)` in `direct_info` after every `auth_ok`, and the
+hub stores it against the device. A browser asking
+`GET /api/devices/{id}/direct` gets that candidate list back and
+opens `ws://<host>:<port>/ws/direct?ticket=...` — frames go straight
+from the browser to the APK with **no hub in the data path**, just
+like V5.20/V5.21 did for Python agents.
+
+The same `OpDispatcher` runs against both backends (`OkHttpWsBackend`
+for the hub WS, `JavaWsBackend` for the direct WS) so screen_stream,
+camera_stream, input, and device_info Just Work over either path.
+Tickets are one-shot and TTL'd at 5 min so a leaked-but-unused one
+can't be replayed forever. Streams are tracked per-connection and
+cancelled on close so engines release promptly when the browser
+disconnects.
+
+If the device is on a different network than the browser, the LAN
+IPs in the candidate list will fail to dial → the browser falls back
+to the hub relay automatically. No code change needed for that path
+— the hub broker has done the right thing since V5.20.
 
 ### B2.2: native `screen_stream` + `camera_stream`
 

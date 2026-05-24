@@ -155,12 +155,20 @@ class HubClient(
                 onStatus("connected as $name")
                 val nodes = msg.optJSONArray("nodes")
                 if (nodes != null) saveNodes(nodes)
-                // Stub direct_info (B3 will host a real direct-WS server).
-                val di = JSONObject()
-                    .put("type", "direct_info")
-                    .put("port", 0)
-                    .put("hosts", JSONArray())
-                    .put("ticket", "")
+                // B3: push real direct_info if the DirectServer is up.
+                // The hub stores this against the device and hands it to
+                // browsers so they can connect direct (skipping the hub
+                // from the data path entirely on Android). If the server
+                // isn't ready, we still send {port:0} so the broker can
+                // tell the browser to fall back to the relay path.
+                val server = DriverService.instance?.directServer()
+                val di = if (server != null && server.port() > 0) {
+                    val ticket = server.armTicket()
+                    val hosts = DeviceHosts.reachableIps()
+                    buildDirectInfo(server.port(), hosts, ticket)
+                } else {
+                    buildDirectInfo(0, emptyList(), "")
+                }
                 sendText(webSocket, di.toString())
             }
             "auth_fail" -> {
@@ -194,7 +202,7 @@ class HubClient(
         // If a previous stream with this rid is still running (shouldn't
         // normally happen but the hub could retry), cancel it first.
         streamJobs.remove(rid)?.cancel()
-        val sink = WsStreamSink(webSocket, rid, sendLock)
+        val sink = WsStreamSink(OkHttpWsBackend(webSocket), rid, sendLock)
         val job = scope.launch(Dispatchers.Default) {
             try {
                 s.handler.run(s.args, sink)

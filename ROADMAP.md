@@ -311,8 +311,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   agent's contract. After B2.2, **Termux + Termux:API are no longer
   required on Android** for camera / screen / input / device info —
   only Theft Mode (B4) and H.264 (B5) still need future work.
-- [ ] **B3** — direct-WS server inside the APK; browser ↔ APK direct
-  (hub leaves the data path on Android too).
+- [x] **B3 — direct-WS server in the APK** _shipped_. Added the
+  `Java-WebSocket` lib (~200 KB) for the inbound server; abstracted
+  the sink behind a `WsBackend` interface so the same `OpDispatcher`
+  serves both the OkHttp hub WS and the Java-WebSocket browser WS.
+  `DirectServer` binds port 0 (kernel-assigned), accepts
+  `ws://<host>:<port>/ws/direct?ticket=...` with one-shot ticket
+  auth, runs the same screen_stream / camera_stream / input ops.
+  `DeviceHosts.reachableIps()` enumerates non-loopback non-link-local
+  IPv4 addresses (skips loopback / clatd / tun / sit). `HubClient`
+  pushes real `direct_info` after every `auth_ok` so the hub broker
+  hands browsers a candidate list — the existing
+  `GET /api/devices/{id}/direct` + browser fallback path Just Works.
 - [ ] **B4** — theft-mode native ops (FusedLocationProvider,
   MediaRecorder, PowerManager wake-lock). Last Termux:API deps gone.
 - [ ] **B5** — H.264 / MediaCodec video over the direct WS (real

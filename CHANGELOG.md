@@ -3,6 +3,70 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B3] — 2026-05-24
+
+**Hub leaves the data path on Android too.** The APK now hosts a
+WebSocket server itself, so browsers can dial it directly over the
+LAN — same architecture the V5.20/V5.21 Python agent has. End result:
+on a LAN with the device reachable, screen + camera + input frames
+travel browser → APK with zero hub hops; on a different network the
+existing fallback to the hub relay kicks in transparently.
+
+### New dependency
+- `org.java-websocket:Java-WebSocket:1.5.7` (~200 KB, no transitive
+  deps). Server-side counterpart to OkHttp; mature `WebSocketServer`
+  base class with onOpen/onClose/onMessage callbacks.
+
+### Backend abstraction (`WsBackend`)
+- New interface `WsBackend { send(text) / send(bytes) / queueSize() }`
+  with `OkHttpWsBackend` + `JavaWsBackend` implementations.
+- `WsStreamSink` rewritten against `WsBackend` so it works against
+  both the hub-bound OkHttp WS and the browser-bound Java-WebSocket
+  connection. Zero changes to the existing wire format.
+- HubClient flips to `OkHttpWsBackend(webSocket)` -- byte-identical
+  behaviour.
+
+### `DirectServer`
+- Binds `0.0.0.0:0` (kernel-assigned port), reports the bound port
+  via `port()` after `onStart`. One instance per service lifetime,
+  owned by `DriverService` alongside `HubClient`.
+- Same OpDispatcher surface as the hub WS -- screen_stream,
+  camera_stream, input, device_info all available over the direct
+  path via the same Ops.registerAll registration.
+- Per-connection state (sendLock + streamJobs map). On close, every
+  active stream coroutine for that conn is cancelled so engines
+  release promptly. No cross-connection lock contention.
+- Handshake: `ws://<host>:<port>/ws/direct?ticket=...`. Tickets are
+  one-shot (consumed on accept) and TTL'd at 5 min so a leaked-but-
+  unused ticket can't be replayed forever. Hello frame is the same
+  `{type:auth_ok, device_name, agent_version}` the hub sends so
+  browser code can stay symmetric.
+
+### `DeviceHosts.reachableIps()`
+- Walks `NetworkInterface.getNetworkInterfaces()` for non-loopback,
+  non-link-local, non-multicast IPv4 addresses on non-virtual
+  interfaces. Skips obvious tunnel/clatd interface names so we don't
+  publish a v4-over-v6 NAT64 stub that won't route on the browser's
+  LAN.
+
+### `HubClient` pushes real `direct_info`
+- On every `auth_ok` we now arm a fresh ticket on the DirectServer
+  and push `{port, hosts, ticket}` to the hub. If the DirectServer
+  failed to start (rare -- bind error), we still push `{port:0}` so
+  the hub broker correctly tells browsers to use the relay path.
+- Hub side needs zero changes -- `GET /api/devices/{id}/direct` +
+  the browser's "try direct, fall back to relay" code from V5.20
+  Just Work.
+
+### Notes
+- `INTERNET` permission was already declared back in M0 ("reserved
+  for direct WebSocket support if we ever need it") so nothing new
+  for the user to allow.
+- Browsers on a different network than the device will find every
+  candidate host unreachable and fall back to the hub-relay path
+  exactly like Python agents do today.
+- APK version: **0.7.1-b2.3 → 0.8.0-b3 (versionCode 8 → 9)**.
+
 ## [Driver-B2.3] — 2026-05-24
 
 **JPEG-pipeline tuning for the native stream ops.** No new ops, no

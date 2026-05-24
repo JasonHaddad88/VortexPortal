@@ -1,14 +1,11 @@
 package com.vortex.driver
 
-import okhttp3.WebSocket
-import okio.ByteString
-import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 
 /**
- * A streaming sink for hub-bound binary frames (B2.2).
+ * A streaming sink for outbound binary frames (B2.2; backend-agnostic B3).
  *
- * The hub's stream protocol is:
+ * The stream protocol (matches the Python agent + hub):
  *
  *   {"type":"stream_start", "id":rid, "content_type":"image/jpeg"}
  *   {"type":"stream_chunk_header", "id":rid}    <-- text
@@ -18,23 +15,20 @@ import org.json.JSONObject
  *
  * The `stream_chunk_header` text frame MUST be immediately followed by the
  * binary frame with no other writer interleaving. Multiple concurrent ops
- * on the same WebSocket would otherwise race -- so we serialize all sends
- * through a shared send lock (one per WebSocket, passed in by HubClient).
+ * on the same socket would otherwise race -- so we serialize all sends
+ * through a shared send lock (one per backend connection, passed in by
+ * the owner: HubClient for hub-bound, DirectServer for browser-bound).
  *
- * Idempotent close: [sendEnd] / [sendError] short-circuit if already ended,
- * so finally-blocks can call sendEnd safely after onError already fired.
+ * Backend-agnostic: the actual socket type lives behind [WsBackend], so
+ * the same dispatcher + handlers work for both OkHttp client and
+ * Java-WebSocket server connections.
  */
 class WsStreamSink(
-    private val ws: WebSocket,
+    private val backend: WsBackend,
     private val rid: String,
-    /** Shared mutex from HubClient -- the SAME object instance for every
-     *  stream on this WebSocket. Guards atomic header+binary send pairs
-     *  and serializes against unrelated text sends (responses, direct_info). */
     private val sendLock: Any,
     /** Bytes already buffered for transport at which we start dropping
-     *  binary chunks. Default ~256 KB -- a couple of unsent JPEGs on a
-     *  typical link. Above this, sendChunk returns false so the engine
-     *  can skip future frames before encoding. */
+     *  binary chunks. Default ~256 KB. */
     private val backpressureBytes: Long = 256L * 1024L,
 ) {
     @Volatile private var started = false
@@ -43,11 +37,11 @@ class WsStreamSink(
     @Volatile var framesDropped: Long = 0L; private set
 
     /** True if the WS write queue is below the backpressure threshold.
-     *  Called by the engines BEFORE encoding the next frame -- skipping
+     *  Engines call this before encoding the next frame -- skipping
      *  here saves us the JPEG encode CPU, not just the send. */
     fun isReady(): Boolean {
         if (ended) return false
-        return try { ws.queueSize() < backpressureBytes } catch (_: Exception) { false }
+        return backend.queueSize() < backpressureBytes
     }
 
     fun sendStart(contentType: String = "image/jpeg", size: Long? = null): Boolean {
@@ -58,25 +52,21 @@ class WsStreamSink(
             .put("id", rid)
             .put("content_type", contentType)
         if (size != null) msg.put("size", size)
-        return synchronized(sendLock) { trySend(msg.toString()) }
+        return synchronized(sendLock) { backend.send(msg.toString()) }
     }
 
-    /** Atomic header+binary pair. Returns false if the socket rejected the
-     *  send (queue full / closed) OR backpressure kicked in -- caller
-     *  should stop producing frames. Also bumps `framesDropped` when
-     *  backpressure is the reason, so the engine can log it. */
     fun sendChunk(bytes: ByteArray): Boolean {
         if (ended) return false
         if (!isReady()) { framesDropped++; return false }
-        if (!started) sendStart()  // be forgiving -- streams in the wild forget
+        if (!started) sendStart()
         val header = JSONObject()
             .put("type", "stream_chunk_header")
             .put("id", rid)
             .toString()
         return synchronized(sendLock) {
-            val a = trySend(header)
+            val a = backend.send(header)
             if (!a) return@synchronized false
-            val b = trySend(bytes.toByteString())
+            val b = backend.send(bytes)
             if (b) framesSent++ else framesDropped++
             b
         }
@@ -90,26 +80,18 @@ class WsStreamSink(
             .put("id", rid)
             .put("frames", framesSent)
             .toString()
-        synchronized(sendLock) { trySend(msg) }
+        synchronized(sendLock) { backend.send(msg) }
     }
 
-    /** End the stream with an error response frame. Used when the engine
-     *  fails mid-stream (camera lost, projection revoked). The hub treats
-     *  a {ok:false} response after stream_start as a fatal stream error. */
     fun sendError(message: String) {
         if (ended) return
         ended = true
-        // Send the stream_end first so the hub stops reading chunks, then
-        // an error response so the browser gets a clear failure mode.
         val end = JSONObject()
             .put("type", "stream_end")
             .put("id", rid)
             .put("frames", framesSent)
             .put("error", message)
             .toString()
-        synchronized(sendLock) { trySend(end) }
+        synchronized(sendLock) { backend.send(end) }
     }
-
-    private fun trySend(text: String): Boolean = try { ws.send(text) } catch (_: Exception) { false }
-    private fun trySend(bytes: ByteString): Boolean = try { ws.send(bytes) } catch (_: Exception) { false }
 }

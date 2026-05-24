@@ -11,8 +11,8 @@ android {
         applicationId = "com.vortex.driver"
         minSdk = 26          // Android 8.0 -- foreground-service notifications + adaptive icons
         targetSdk = 34       // Android 14
-        versionCode = 8
-        versionName = "0.7.1-b2.3"
+        versionCode = 9
+        versionName = "0.8.0-b3"
     }
 
     buildTypes {
@@ -61,4 +61,9 @@ dependencies {
     // B1: OkHttp for the outbound WebSocket to the hub + the enroll
     // POST. Standard, ~600 KB, includes WebSocket out of the box.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // B3: Java-WebSocket for the inbound direct-WS server (browser <->
+    // APK direct, no hub in the data path). ~200 KB, no transitive deps,
+    // mature WebSocketServer base class with onOpen/onClose/onMessage.
+    implementation("org.java-websocket:Java-WebSocket:1.5.7")
 }

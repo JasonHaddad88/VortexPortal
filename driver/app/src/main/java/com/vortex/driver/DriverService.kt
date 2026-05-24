@@ -53,6 +53,12 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private var hubClient: HubClient? = null
     @Volatile private var hubStatus: String = ""
 
+    // ---- B3: inbound direct-WS server (browser ↔ APK direct). One
+    // ----- instance per service lifetime; HubClient pushes its port +
+    // ----- ticket + reachable hosts in direct_info on each auth_ok.
+    private var directServerImpl: DirectServer? = null
+    fun directServer(): DirectServer? = directServerImpl
+
     @Volatile private var lastError: String? = null
     @Volatile private var frameCount: Long = 0L
 
@@ -100,6 +106,15 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // service stays useful in helper-mode (Termux still on the
         // phone) when not enrolled — these two paths coexist.
         if (Prefs.isEnrolled(this)) {
+            // B3: spin up the direct-WS server BEFORE HubClient so the
+            // first auth_ok already has a real port + ticket to push.
+            try {
+                directServerImpl = DirectServer(this, requestedPort = 0).also { it.start() }
+                Log.i(TAG, "DirectServer started")
+            } catch (t: Throwable) {
+                Log.w(TAG, "DirectServer failed to start: ${t.javaClass.simpleName}: ${t.message}")
+                directServerImpl = null
+            }
             hubClient = HubClient(this) { s ->
                 hubStatus = s
                 updateNotification()
@@ -130,6 +145,8 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { screenServer.stop() } catch (_: Exception) {}
         try { inputServer.stop() } catch (_: Exception) {}
         try { hubClient?.stop() } catch (_: Exception) {}
+        try { directServerImpl?.shutdown() } catch (_: Exception) {}
+        directServerImpl = null
         nativeCamera = null
         nativeScreen = null
         nativeCameraSink = null
@@ -408,6 +425,10 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // B1: surface the standalone hub link state (when enrolled).
         if (hubClient != null && hubStatus.isNotBlank()) {
             parts += "Hub: $hubStatus"
+        }
+        // B3: surface the direct-WS server port (for diagnostics).
+        directServerImpl?.takeIf { it.port() > 0 }?.let {
+            parts += "Direct: :${it.port()}"
         }
         val text = parts.joinToString(" · ")
         return NotificationCompat.Builder(this, CHANNEL_ID)
