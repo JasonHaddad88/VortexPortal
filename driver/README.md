@@ -44,6 +44,7 @@ Future milestones, in order:
 | **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | _shipped_ |
 | **B4** | Theft-mode native ops (location, audio, camera_capture, wake-lock) — last Termux:API dependencies gone | _shipped_ |
 | **B5** | H.264 / MediaCodec video (screen) — real low-latency video over the direct WS | _shipped_ |
+| **B5.1** | H.264 / MediaCodec for camera_stream (same wire, Camera2 → encoder Surface) | _shipped_ |
 | **M4** | Polish, autostart on boot, signed release builds, F-Droid | planned |
 
 ### B1: standalone Vortex-client role (no Termux required)
@@ -161,7 +162,36 @@ Knobs (all optional, passed via `screen_stream` args):
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
 
-Camera-H264 and audio defer to **B5.1**.
+### B5.1: H.264 for `camera_stream`
+
+Same wire shape as the screen H.264 path (content_type
+`video/h264`, `csd_base64` on stream_start, `kf` + `pts` on each
+chunk_header) — only the source differs. New
+`CameraH264Encoder.kt` mirrors `ScreenH264Encoder` but feeds the
+MediaCodec input Surface from a Camera2 `TEMPLATE_RECORD` capture
+session instead of a VirtualDisplay. The encoder picks the closest
+supported size from the camera's StreamConfigurationMap; FPS is
+clamped via `CONTROL_AE_TARGET_FPS_RANGE` so the camera HAL stops
+producing more frames than the encoder asked for.
+
+The browser's camera page negotiates `codec: "h264"` when
+`window.VideoDecoder` exists (same WebCodecs path as the screen
+page); on `content_type === "video/h264"` it replaces the `<img>`
+with a `<canvas>` and decodes via `VideoDecoder`. MJPEG remains the
+fallback for the hub-relay path and for browsers without WebCodecs.
+
+Args (all optional):
+
+| Arg | Default | What |
+|---|---|---|
+| `codec` | `"mjpeg"` | `"h264"` enables MediaCodec |
+| `facing` | `"back"` | `"front"` or `"back"` |
+| `max_dim` | 720 | longest side, clamped 160-1080 |
+| `fps_cap` | 30 | encoder hint + camera AE FPS range |
+| `bitrate` | scaled with `max_dim` | bps; 200 kbps - 8 Mbps |
+
+Audio capture still defers (the MJPEG/H.264 channels here are
+video-only; audio over the same socket is its own protocol delta).
 
 ### B2.2: native `screen_stream` + `camera_stream`
 

@@ -2348,12 +2348,75 @@ def device_camera_page(user: dict, device: dict) -> str:
   const stream = document.getElementById('cam-stream');
   let streaming = false;
   let _camDirectRid = null, _camLastUrl = null;
+  let _camDecoder = null, _camCanvas = null;
 
   function _startDirectCam(img) {{
     let firstFrame = true;
-    const rid = _directStream('camera_stream', {{}}, {{
-      start: m => {{ /* first frame replaces the src */ }},
-      frame: ab => {{
+    let mode = null;
+    let canvas = null, ctx = null;
+    const wantCodec = (typeof window.VideoDecoder === 'function') ? 'h264' : 'mjpeg';
+
+    function setupH264(m) {{
+      // Replace the <img> with a <canvas> sized to the encoder output.
+      const w = m.width || 1280;
+      const h = m.height || 720;
+      canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.style.maxWidth = '100%';
+      canvas.style.maxHeight = '100%';
+      canvas.style.objectFit = 'contain';
+      if (img.parentNode) {{
+        img.parentNode.replaceChild(canvas, img);
+      }}
+      ctx = canvas.getContext('2d', {{alpha: false, desynchronized: true}});
+      _camCanvas = canvas;
+      let description = null;
+      try {{
+        const bin = atob(m.csd_base64 || '');
+        description = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) description[i] = bin.charCodeAt(i);
+      }} catch (e) {{}}
+      const decoder = new VideoDecoder({{
+        output: frame => {{
+          try {{ ctx.drawImage(frame, 0, 0, canvas.width, canvas.height); }}
+          finally {{ frame.close(); }}
+        }},
+        error: e => setStatus('decoder error: ' + e.message),
+      }});
+      try {{
+        decoder.configure({{
+          codec: m.codec || 'avc1.42E01E',
+          description: description || undefined,
+          optimizeForLatency: true,
+        }});
+      }} catch (e) {{ setStatus('h264 unsupported: ' + e.message); return false; }}
+      _camDecoder = decoder;
+      return true;
+    }}
+
+    const rid = _directStream('camera_stream', {{codec: wantCodec}}, {{
+      start: m => {{
+        if (m && m.content_type === 'video/h264') {{
+          mode = setupH264(m) ? 'h264' : null;
+        }} else {{
+          mode = 'mjpeg';
+        }}
+      }},
+      frame: (ab, hdr) => {{
+        if (mode === 'h264' && _camDecoder) {{
+          const kf = !!(hdr && hdr.kf);
+          const pts = (hdr && typeof hdr.pts === 'number')
+                          ? hdr.pts : Math.round(performance.now() * 1000);
+          try {{
+            _camDecoder.decode(new EncodedVideoChunk({{
+              type: kf ? 'key' : 'delta',
+              timestamp: pts,
+              data: new Uint8Array(ab),
+            }}));
+          }} catch (e) {{ setStatus('decode err: ' + e.message); }}
+          if (firstFrame) {{ firstFrame = false; setStatus('streaming (direct h264)'); }}
+          return;
+        }}
         const blob = new Blob([ab], {{type:'image/jpeg'}});
         const u = URL.createObjectURL(blob);
         const old = _camLastUrl; _camLastUrl = u; img.src = u;
@@ -2362,6 +2425,7 @@ def device_camera_page(user: dict, device: dict) -> str:
       }},
       end: m => {{
         if (_camLastUrl) {{ URL.revokeObjectURL(_camLastUrl); _camLastUrl = null; }}
+        if (_camDecoder) {{ try {{ _camDecoder.close(); }} catch (_) {{}} _camDecoder = null; }}
         _camDirectRid = null;
         if (m && !m.ok) {{
           showError('Direct camera stream failed: '
@@ -2422,6 +2486,12 @@ def device_camera_page(user: dict, device: dict) -> str:
       _camDirectRid = null;
     }}
     if (_camLastUrl) {{ URL.revokeObjectURL(_camLastUrl); _camLastUrl = null; }}
+    if (_camDecoder) {{ try {{ _camDecoder.close(); }} catch (_) {{}} _camDecoder = null; }}
+    if (_camCanvas && _camCanvas.parentNode) {{
+      const fresh = document.createElement('img');
+      _camCanvas.parentNode.replaceChild(fresh, _camCanvas);
+      _camCanvas = null;
+    }}
     const img = stage.querySelector('img');
     if (img) img.src = '';
     setStatus('stopped');

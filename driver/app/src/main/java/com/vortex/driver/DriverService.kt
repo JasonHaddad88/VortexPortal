@@ -71,6 +71,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private var nativeCamera: CameraEngine? = null
     private var nativeScreen: ScreenEngine? = null
     private var nativeScreenH264: ScreenH264Encoder? = null
+    private var nativeCameraH264: CameraH264Encoder? = null
     @Volatile private var nativeCameraSink: CameraEngine.FrameSink? = null
     @Volatile private var nativeScreenSink: CameraEngine.FrameSink? = null
 
@@ -143,6 +144,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { nativeCamera?.stop() } catch (_: Exception) {}
         try { nativeScreen?.stop() } catch (_: Exception) {}
         try { nativeScreenH264?.stop() } catch (_: Exception) {}
+        try { nativeCameraH264?.stop() } catch (_: Exception) {}
         try { cameraServer.stop() } catch (_: Exception) {}
         try { screenServer.stop() } catch (_: Exception) {}
         try { inputServer.stop() } catch (_: Exception) {}
@@ -253,6 +255,41 @@ class DriverService : Service(), CameraEngine.FrameSink {
     fun stopNativeScreenStreamH264() {
         try { nativeScreenH264?.stop() } catch (_: Exception) {}
         nativeScreenH264 = null
+        promoteForeground()
+        updateNotification()
+    }
+
+    /** B5.1: H.264 variant of [startNativeCameraStream]. Same Camera2
+     *  permission contract as the JPEG path; the encoder is fed via
+     *  Camera2 TEMPLATE_RECORD targeting MediaCodec's input surface,
+     *  not the per-frame JPEG callback path. */
+    @Synchronized
+    fun startNativeCameraStreamH264(
+        sink: CameraH264Encoder.NalSink,
+        facing: Int = CameraCharacteristics.LENS_FACING_BACK,
+        maxDimension: Int = 720,
+        bitrateBps: Int = 2_000_000,
+        fpsCap: Int = 30,
+    ) {
+        try { nativeCameraH264?.stop() } catch (_: Exception) {}
+        nativeCameraH264 = null
+        promoteForeground()
+        val target = if (maxDimension >= 1080) android.util.Size(1920, 1080)
+                     else android.util.Size((maxDimension * 16 / 9), maxDimension)
+        nativeCameraH264 = CameraH264Encoder(
+            context = this,
+            cameraFacing = facing,
+            targetSize = target,
+            bitrateBps = bitrateBps,
+            fpsCap = fpsCap,
+        ).also { it.start(sink) }
+        updateNotification()
+    }
+
+    @Synchronized
+    fun stopNativeCameraStreamH264() {
+        try { nativeCameraH264?.stop() } catch (_: Exception) {}
+        nativeCameraH264 = null
         promoteForeground()
         updateNotification()
     }
@@ -418,7 +455,8 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private fun promoteForeground() {
         startForegroundCompat(
             buildNotification(),
-            includeCamera = cameraClientConnected || camera != null || nativeCamera != null,
+            includeCamera = cameraClientConnected || camera != null ||
+                            nativeCamera != null || nativeCameraH264 != null,
             includeMediaProjection = screenArmed || nativeScreen != null || nativeScreenH264 != null,
         )
     }

@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V5.22 + Driver-B5/B4** — multi-user, multi-node control plane for your
+**V5.23 + Driver-B5.1** — multi-user, multi-node control plane for your
 devices. One or more **hubs** (any laptop, phone, or VM) share a
 database and present the same dashboard; each device runs an **agent**
 (pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver
@@ -147,7 +147,7 @@ APK enrols itself, dials your hub, and ships native ops for:
 | `device_info` | `Build` + `BatteryManager` | No permissions beyond notifications |
 | `input` | `AccessibilityService` | Tap, long-press, swipe, system buttons |
 | `screen_stream` | `MediaProjection` → MediaCodec H.264 (or JPEG) | `codec: "h264"\|"mjpeg"`, `quality`, `max_dim`, `fps_cap`, `bitrate` |
-| `camera_stream` | `Camera2` → JPEG (MJPEG) | `{facing:"front"\|"back"}` |
+| `camera_stream` | `Camera2` → MediaCodec H.264 (or JPEG) | `codec: "h264"\|"mjpeg"`, `facing:"front"\|"back"`, `max_dim`, `fps_cap`, `bitrate` |
 | `camera_capture` | One-shot Camera2 → JPEG | `{camera_id:"0"\|"1"}` (B4) |
 | `location` | `LocationManager` (GPS + Network race) | last-known fast path; 30 s timeout (B4) |
 | `record_audio` | `MediaRecorder` MP4/AAC | `{duration: 1-120s}` (B4) |
@@ -161,10 +161,11 @@ APK on every push to `main`; install it from the GitHub Actions
 artifact (see [`driver/README.md`](driver/README.md) for the full
 install + permission walkthrough).
 
-Where the APK doesn't go yet: camera + audio over H.264 (still MJPEG /
-MP4-AAC) — the **B5.1** delta is small now that the wire format,
-sink, and browser pipeline are in place. Otherwise the APK is at
-**full parity** with the Python agent.
+Both **screen** and **camera** now ride hardware H.264 (MediaCodec →
+WebCodecs) on the direct-WS LAN route. The APK is otherwise at
+**full parity** with the Python agent. Audio capture for Theft Mode
+is still MP4/AAC (the H.264 video pipeline doesn't carry an audio
+track today — that's a future Opus-over-WS delta).
 
 ## Multi-node control (since V5.15)
 

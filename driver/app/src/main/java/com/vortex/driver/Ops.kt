@@ -46,7 +46,12 @@ object Ops {
             }
         }
         dispatcher.registerStream("camera_stream") { args, sink ->
-            runNativeStream(StreamKind.CAMERA, sink, args)
+            val codec = args?.optString("codec", "mjpeg") ?: "mjpeg"
+            if (codec.equals("h264", ignoreCase = true)) {
+                runCameraH264Stream(sink, args)
+            } else {
+                runNativeStream(StreamKind.CAMERA, sink, args)
+            }
         }
         // B4: native theft-mode ops -- replaces the Termux:API surface on
         // Android. Wire shapes match the Python agent so the hub's Theft
@@ -282,6 +287,73 @@ object Ops {
         maxDim >= 900  -> 2_500_000
         maxDim >= 600  -> 1_500_000
         else           -> 800_000
+    }
+
+    /**
+     * B5.1: camera_stream H.264 variant. Same wire shape as
+     * [runScreenH264Stream]; only the source differs (Camera2 via
+     * [CameraH264Encoder] instead of MediaProjection).
+     *
+     * Args understood (all optional):
+     *   max_dim: longest side in px, clamped 160..1080  (default 720)
+     *   fps_cap: target fps                              (default 30)
+     *   bitrate: bits/s; defaults scaled by max_dim      (default 2 Mbps @ 720p)
+     *   facing:  "front" | "back"                        (default "back")
+     */
+    private suspend fun runCameraH264Stream(sink: WsStreamSink, args: JSONObject?) {
+        val svc = DriverService.instance
+            ?: throw RuntimeException("Vortex Driver service is not running")
+
+        val maxDim  = (args?.optInt("max_dim", 0) ?: 0).let { if (it <= 0) 720 else it.coerceIn(160, 1080) }
+        val fpsCap  = (args?.optInt("fps_cap", -1) ?: -1).let { if (it < 0) 30 else it.coerceIn(0, 60) }
+        val bitrate = (args?.optInt("bitrate", 0) ?: 0).let {
+            if (it > 0) it.coerceIn(200_000, 8_000_000)
+            else        defaultBitrateFor(maxDim).coerceAtLeast(1_200_000)
+        }
+        val facing = when (args?.optString("facing", "back")) {
+            "front" -> CameraCharacteristics.LENS_FACING_FRONT
+            else    -> CameraCharacteristics.LENS_FACING_BACK
+        }
+
+        val failure = CompletableDeferred<Throwable>()
+        val nalSink = object : CameraH264Encoder.NalSink {
+            override fun onCodecConfig(csdBytes: ByteArray, width: Int, height: Int, codecString: String) {
+                val csdB64 = Base64.encodeToString(csdBytes, Base64.NO_WRAP)
+                sink.sendStartWith { m ->
+                    m.put("content_type", "video/h264")
+                    m.put("codec", codecString)
+                    m.put("width", width)
+                    m.put("height", height)
+                    m.put("csd_base64", csdB64)
+                }
+            }
+            override fun onFrame(nalBytes: ByteArray, isKeyFrame: Boolean, ptsMicros: Long) {
+                sink.sendChunkAnnotated(nalBytes) { hdr ->
+                    hdr.put("kf", isKeyFrame)
+                    hdr.put("pts", ptsMicros)
+                }
+            }
+            override fun onError(message: String) {
+                if (!failure.isCompleted) failure.complete(RuntimeException(message))
+            }
+        }
+
+        svc.startNativeCameraStreamH264(
+            sink = nalSink,
+            facing = facing,
+            maxDimension = maxDim,
+            bitrateBps = bitrate,
+            fpsCap = fpsCap,
+        )
+
+        try {
+            while (true) {
+                if (failure.isCompleted) throw failure.getCompleted()
+                delay(100)
+            }
+        } finally {
+            try { svc.stopNativeCameraStreamH264() } catch (_: Exception) {}
+        }
     }
 
     /** Native equivalent of the Python agent's `op_device_info` -- no

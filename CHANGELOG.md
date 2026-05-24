@@ -3,6 +3,55 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.23 / Driver-B5.1] — 2026-05-24
+
+**H.264 for `camera_stream`.** Same low-latency win the screen got
+in B5, applied to the camera path. Camera2 feeds the MediaCodec
+input Surface directly via a `TEMPLATE_RECORD` capture session, NAL
+units flow through the existing `WsStreamSink` infrastructure,
+browser WebCodecs decodes into a `<canvas>`. After B5.1 both heavy
+media paths are H.264 on the direct-WS LAN route; MJPEG remains the
+back-compat default + hub-relay fallback.
+
+### APK side (Driver-B5.1)
+- New `CameraH264Encoder.kt` -- mirrors `ScreenH264Encoder`.
+  Differences: Camera2 (not VirtualDisplay) feeds the encoder
+  surface; encoder size is picked from the camera's
+  `StreamConfigurationMap` (closest 16:9 size to the requested
+  target); FPS is clamped via `CONTROL_AE_TARGET_FPS_RANGE` so the
+  HAL stops producing more frames than the encoder asked for. Same
+  baseline / level 3.1 / 1s I-frame interval defaults.
+- `camera_stream` op now reads `args.codec` (default `"mjpeg"`).
+  `"h264"` routes through `runCameraH264Stream` which mirrors the
+  screen variant: starts encoder, waits for codec config, sends
+  fat `stream_start` with `csd_base64`, forwards each access unit
+  with `kf` + `pts` on the `stream_chunk_header`.
+- `DriverService` gains `startNativeCameraStreamH264 /
+  stopNativeCameraStreamH264` paired with the existing JPEG
+  methods; `promoteForeground` includes the H.264 encoder in the
+  camera service-type bit.
+- APK version: **0.10.0-b4 → 0.11.0-b5.1 (versionCode 11 → 12)**.
+
+### Browser side (templates.py)
+- Camera page `_startDirectCam`: same WebCodecs negotiation as the
+  screen page. Asks for `codec: "h264"` when `window.VideoDecoder`
+  exists; on `content_type === "video/h264"` replaces the `<img>`
+  with a `<canvas>`, decodes via `VideoDecoder` with
+  `optimizeForLatency:true`. MJPEG path stays as the fallback for
+  hub-relay or non-WebCodecs browsers.
+- `stopStream` restores the `<img>` + closes the decoder.
+
+### Wire format
+- Identical to B5 -- no new fields, no new ops. Existing hub +
+  agent code paths Just Work.
+
+### Scope notes
+- Audio capture still defers (the H.264 channels here are video-
+  only; audio over the same socket is a separate protocol delta).
+- Sensor orientation metadata for the camera page is unchanged
+  (B5.2 territory).
+- Hub version: **5.22 → 5.23**.
+
 ## [Driver-B4] — 2026-05-24
 
 **Theft Mode goes native; Termux:API no longer required on Android.**

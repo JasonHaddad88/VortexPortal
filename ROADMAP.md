@@ -346,6 +346,16 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B5.1 — H.264 for `camera_stream`** _shipped_. New
+  `CameraH264Encoder` mirrors `ScreenH264Encoder` but feeds the
+  MediaCodec input Surface from a Camera2 `TEMPLATE_RECORD` capture
+  session (not VirtualDisplay). Same wire shape, same browser
+  WebCodecs decode path. `camera_stream` op branches on
+  `args.codec="h264"`; defaults stay `"mjpeg"` for back-compat.
+  Browser camera page now negotiates WebCodecs the same way the
+  screen page does (`<img>` → `<canvas>` swap on h264). Audio still
+  defers (separate protocol delta).
+
 ## V5.23 — find-my-device / fleet UX (candidate, deferred)
 
 User-requested. Ordered by value-per-effort. Note: **Find Location**,
