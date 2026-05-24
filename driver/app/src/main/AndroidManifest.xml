@@ -41,8 +41,8 @@
 
     <!-- M4: receive BOOT_COMPLETED so we can re-arm the foreground
          service after a reboot. The user still has to grant any per-
-         OEM "autostart" toggle (Xiaomi/Huawei/OnePlus etc.) -- we
-         document that in driver/README.md. -->
+         OEM "autostart" toggle (Xiaomi/Huawei/OnePlus etc.); see
+         driver/README.md for the per-vendor path. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- We require *some* camera but don't pin to a specific one (front or
