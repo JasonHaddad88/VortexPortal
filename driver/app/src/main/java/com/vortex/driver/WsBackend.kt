@@ -43,15 +43,15 @@ class OkHttpWsBackend(private val ws: okhttp3.WebSocket) : WsBackend {
  * throwing. We return 0 so the backpressure gate is a no-op; the [send]
  * failure path takes care of the rest. */
 class JavaWsBackend(private val ws: org.java_websocket.WebSocket) : WsBackend {
-    override fun send(text: String): Boolean = try {
+    override fun send(text: String): Boolean {
         if (!ws.isOpen) return false
-        ws.send(text); true
-    } catch (_: Exception) { false }
+        return try { ws.send(text); true } catch (_: Exception) { false }
+    }
 
-    override fun send(bytes: ByteArray): Boolean = try {
+    override fun send(bytes: ByteArray): Boolean {
         if (!ws.isOpen) return false
-        ws.send(ByteBuffer.wrap(bytes)); true
-    } catch (_: Exception) { false }
+        return try { ws.send(ByteBuffer.wrap(bytes)); true } catch (_: Exception) { false }
+    }
 
     override fun queueSize(): Long = 0L
 }
