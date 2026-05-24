@@ -39,6 +39,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
+    <!-- M4: receive BOOT_COMPLETED so we can re-arm the foreground
+         service after a reboot. The user still has to grant any per-
+         OEM "autostart" toggle (Xiaomi/Huawei/OnePlus etc.) -- we
+         document that in driver/README.md. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- We require *some* camera but don't pin to a specific one (front or
          back) so the APK installs on phones that only have one of them. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -106,6 +112,25 @@
             android:name=".DriverService"
             android:exported="false"
             android:foregroundServiceType="dataSync|camera|mediaProjection|microphone|location" />
+
+        <!--
+          M4: BootReceiver re-arms the foreground service after a reboot
+          (or APK update via ACTION_MY_PACKAGE_REPLACED). Only runs if
+          Prefs.isEnrolled(); a fresh install does nothing on boot.
+          Exported because BOOT_COMPLETED is delivered by the system,
+          which is an external sender from our process's POV.
+        -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!--
           M3: AccessibilityService for remote touch input. Must be exported

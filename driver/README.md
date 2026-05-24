@@ -45,7 +45,7 @@ Future milestones, in order:
 | **B4** | Theft-mode native ops (location, audio, camera_capture, wake-lock) — last Termux:API dependencies gone | _shipped_ |
 | **B5** | H.264 / MediaCodec video (screen) — real low-latency video over the direct WS | _shipped_ |
 | **B5.1** | H.264 / MediaCodec for camera_stream (same wire, Camera2 → encoder Surface) | _shipped_ |
-| **M4** | Polish, autostart on boot, signed release builds, F-Droid | planned |
+| **M4** | Autostart on boot + (later) signed release builds + F-Droid | autostart _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -271,6 +271,29 @@ notifications back on at Settings → Apps → Vortex Driver → Notifications.
 **Status stays "Waiting for Termux agent…" forever.** Expected in M0 —
 the agent doesn't open the local listener yet. Lands in M1.
 
+**Device doesn't reconnect after a reboot.** Since M4 the APK listens
+for `BOOT_COMPLETED` and auto-starts the foreground service if
+`Prefs.isEnrolled()`. AOSP and most stock Android distributions
+respect that broadcast; **OEM skins (Xiaomi MIUI, Huawei EMUI,
+OnePlus OxygenOS, ColorOS, etc.) silently drop it** unless the user
+grants a per-app "Autostart" toggle from the OEM's app-info screen.
+Workaround per phone:
+
+- **Xiaomi / MIUI** → Settings → Apps → Permissions → Autostart →
+  enable Vortex Driver. Also Settings → Battery → App battery saver
+  → Vortex Driver → No restrictions.
+- **Huawei / EMUI** → Phone Manager → App launch → Vortex Driver →
+  Manage manually → enable all three toggles.
+- **OnePlus / OxygenOS** → Settings → Battery → Battery Optimisation
+  → Vortex Driver → Don't optimise. Some builds also have an
+  "Autostart" toggle hidden under App Info → Battery.
+- **Oppo/Realme ColorOS** → Settings → Battery → Power Consumption
+  Manager → Vortex Driver → enable both Background Activity and
+  Allow Auto-launch.
+
+Stock Pixels and AOSP-based ROMs (LineageOS, GrapheneOS) don't need
+any of this -- they respect the broadcast as-is.
+
 ## Permissions roadmap
 
 What we ask for, why, and which milestone introduces it:
@@ -286,3 +309,4 @@ What we ask for, why, and which milestone introduces it:
 | `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` + `FOREGROUND_SERVICE_LOCATION` | `location` op (LocationManager fix) | B4 |
 | `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE` | `record_audio` op (MediaRecorder MP4/AAC) | B4 |
 | `WAKE_LOCK` | `keepawake` op (`PARTIAL_WAKE_LOCK`) | B4 |
+| `RECEIVE_BOOT_COMPLETED` | Re-arm the foreground service after a reboot or APK update | M4 |

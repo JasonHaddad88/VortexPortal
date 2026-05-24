@@ -3,6 +3,41 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-M4] — 2026-05-24
+
+**Autostart on boot.** Removes the user-visible papercut where
+rebooting the phone meant manually re-opening the Driver app and
+tapping "Start service" before any device control would work again.
+
+### New BootReceiver
+- New `BootReceiver.kt` listens for `ACTION_BOOT_COMPLETED`,
+  `ACTION_LOCKED_BOOT_COMPLETED`, and `ACTION_MY_PACKAGE_REPLACED`.
+  Re-arms `DriverService` via `ContextCompat.startForegroundService`
+  only if `Prefs.isEnrolled()` -- a fresh install does nothing on
+  boot. Idempotent (a second start while running coalesces).
+
+### Manifest
+- New `RECEIVE_BOOT_COMPLETED` permission.
+- New `<receiver>` declaration with the three intent-filter actions
+  above. `exported="true"` (BOOT_COMPLETED is delivered by the
+  system, an external sender from our process's POV);
+  `directBootAware="false"` since we don't use direct-boot storage.
+
+### OEM caveat documented
+- Stock Pixels / GrapheneOS / LineageOS / AOSP respect the
+  broadcast immediately. OEM skins (Xiaomi MIUI, Huawei EMUI,
+  OnePlus OxygenOS, Oppo/Realme ColorOS) silently drop it unless
+  the user grants a per-app "Autostart" toggle from the OEM's
+  app-info screen. `driver/README.md` Troubleshooting now lists
+  the per-vendor path.
+
+### Not included this pass
+- Signed release builds (needs a keystore the maintainer has to
+  generate and a CI secret to upload it; happy to wire on demand).
+- F-Droid submission (fastlane metadata + reproducible-build setup).
+
+APK version: **0.11.0-b5.1 → 0.12.0-m4 (versionCode 12 → 13)**.
+
 ## [V5.23 / Driver-B5.1] — 2026-05-24
 
 **H.264 for `camera_stream`.** Same low-latency win the screen got

@@ -346,6 +346,17 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **M4 — autostart on boot** _shipped_. New `BootReceiver`
+  listens for `BOOT_COMPLETED`, `LOCKED_BOOT_COMPLETED`, and
+  `MY_PACKAGE_REPLACED`; re-arms `DriverService` via
+  `ContextCompat.startForegroundService` if `Prefs.isEnrolled()`,
+  no-ops on fresh installs. AOSP / stock Pixel / GrapheneOS /
+  LineageOS respect the broadcast immediately; OEM skins
+  (MIUI / EMUI / OxygenOS / ColorOS) need a per-app autostart
+  toggle from their app-info screen -- documented in
+  `driver/README.md`. Signed release builds + F-Droid submission
+  defer (need a keystore + a CI secret the maintainer has to set up).
+
 - [x] **B5.1 — H.264 for `camera_stream`** _shipped_. New
   `CameraH264Encoder` mirrors `ScreenH264Encoder` but feeds the
   MediaCodec input Surface from a Camera2 `TEMPLATE_RECORD` capture
