@@ -1,6 +1,7 @@
 package com.vortex.driver
 
 import android.content.Intent
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -27,30 +28,26 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * B6: in-app sign-in -- the new default enrollment path.
+ * B6: in-app sign-in. B7: in-app register too -- the same activity
+ * with a Sign-in / Create-account toggle so the user can switch
+ * direction without leaving the screen.
  *
- * Flow (one tap on the user's part):
+ * Flows (single tap on the user's part):
  *
- *   1. POST {hub}/login  (form-encoded, username + password)
- *      -> 303 redirect on success. We don't follow the redirect; the
- *         Set-Cookie response header is what we want, which OkHttp's
- *         [CookieJar] captures for us into [InMemoryCookieJar].
+ *   SIGN-IN:
+ *     1. POST {hub}/login                  (form, 303 + Set-Cookie)
+ *     2. POST {hub}/api/session-enroll     (JSON, cookie auto-forwarded)
+ *     3. Prefs.saveDevice + start service.
  *
- *   2. POST {hub}/api/session-enroll  (JSON, device_name)
- *      -> cookie sent automatically by OkHttp's cookie jar
- *      -> JSON {device_id, token, name, nodes:[url,...]}  (same shape
- *         as /api/enroll; the new V5.24 hub endpoint).
+ *   REGISTER:
+ *     0. GET  {hub}/api/registration-mode  (to hide invite when not needed)
+ *     1. POST {hub}/api/session-register   (JSON in/out; sets cookie on ok)
+ *     2. POST {hub}/api/session-enroll     (same as above; chain)
+ *     3. Prefs.saveDevice + start service.
  *
- *   3. Prefs.saveBootstrap + Prefs.saveDevice + start DriverService.
- *
- * If the hub doesn't expose /api/session-enroll (older than V5.24),
- * step 2 returns 404 -- we surface a clear message pointing the user
- * at the legacy "Have a token?" link.
- *
- * The token-paste flow ([EnrollActivity]) stays available for:
- *   - QR / `vortex://enroll` deep-links (no UI change needed)
- *   - users on older hubs without /api/session-enroll
- *   - headless setups that pre-mint a long-lived token
+ * Token-paste fallback ([EnrollActivity]) still reachable via
+ * "Have an account token instead?" inside this activity AND via
+ * the `vortex://enroll` deep-link.
  */
 class SignInActivity : AppCompatActivity() {
 
@@ -60,35 +57,104 @@ class SignInActivity : AppCompatActivity() {
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .cookieJar(cookieJar)
-            // Don't follow the /login 303 -- we want to inspect the
-            // status + grab the Set-Cookie ourselves, not chase the
-            // dashboard HTML that comes after.
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
     }
+
+    private enum class Mode { SIGN_IN, REGISTER }
+    private var mode: Mode = Mode.SIGN_IN
+    /** Cached from GET /api/registration-mode; null until first probe. */
+    private var hubRegistrationMode: String? = null
+    private var hubIsBootstrap: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         b = ActivitySignInBinding.inflate(layoutInflater)
         setContentView(b.root)
 
-        // Prefill from any prior attempt's saved values.
         b.hubUrl.setText(Prefs.bootstrapUrl(this) ?: "")
         b.deviceName.setText(Prefs.deviceName(this) ?: Build.MODEL ?: "")
 
-        b.signinBtn.setOnClickListener { doSignIn() }
+        b.modeSignin.setOnClickListener { setMode(Mode.SIGN_IN) }
+        b.modeRegister.setOnClickListener { setMode(Mode.REGISTER) }
+        b.signinBtn.setOnClickListener { onSubmit() }
         b.cancelBtn.setOnClickListener { finish() }
         b.useTokenBtn.setOnClickListener {
             startActivity(Intent(this, EnrollActivity::class.java))
             finish()
         }
         b.registerBtn.setOnClickListener { openRegisterInBrowser() }
+
+        setMode(Mode.SIGN_IN)
     }
 
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun setMode(m: Mode) {
+        mode = m
+        val isReg = (m == Mode.REGISTER)
+        // Visual: bold the active toggle so it reads as selected.
+        b.modeSignin.setTypeface(null, if (isReg) Typeface.NORMAL else Typeface.BOLD)
+        b.modeRegister.setTypeface(null, if (isReg) Typeface.BOLD else Typeface.NORMAL)
+        b.title.text = getString(
+            if (isReg) R.string.signin_title_register else R.string.signin_title
+        )
+        b.subtitle.text = getString(
+            if (isReg) R.string.signin_subtitle_register else R.string.signin_subtitle
+        )
+        b.signinBtn.text = getString(
+            if (isReg) R.string.signin_btn_register else R.string.signin_btn
+        )
+        b.password2Label.visibility = if (isReg) View.VISIBLE else View.GONE
+        b.password2.visibility = if (isReg) View.VISIBLE else View.GONE
+        // Invite field visibility depends on the hub's mode -- we probe
+        // when the user enters Register mode so we don't ask for an
+        // invite if registration is open or this is the bootstrap user.
+        if (isReg) {
+            // Optimistic: show until we know better.
+            b.inviteLabel.visibility = View.VISIBLE
+            b.invite.visibility = View.VISIBLE
+            probeRegistrationMode()
+        } else {
+            b.inviteLabel.visibility = View.GONE
+            b.invite.visibility = View.GONE
+        }
+        // Reset the bottom-link "register in browser" -- still useful
+        // as a fallback if the hub doesn't expose /api/session-register
+        // (pre-V5.25).
+    }
+
+    private fun probeRegistrationMode() {
+        val hubUrl = b.hubUrl.text.toString().trim().trimEnd('/')
+        if (hubUrl.isEmpty()) return
+        scope.launch {
+            val r = runCatching { getRegistrationMode(hubUrl) }
+            r.onSuccess { info ->
+                hubRegistrationMode = info.optString("mode", "invite")
+                hubIsBootstrap = info.optBoolean("bootstrap", false)
+                val needsInvite = !hubIsBootstrap && hubRegistrationMode == "invite"
+                b.inviteLabel.visibility = if (needsInvite) View.VISIBLE else View.GONE
+                b.invite.visibility = if (needsInvite) View.VISIBLE else View.GONE
+                if (hubRegistrationMode == "closed") {
+                    setStatus(
+                        "This hub has registration closed. Ask an admin for an " +
+                        "invite code or use Sign-in if you already have an account.",
+                        err = true,
+                    )
+                } else if (hubIsBootstrap) {
+                    setStatus(
+                        "First-user setup: this account will be the hub admin.",
+                        err = false,
+                    )
+                }
+            }
+            // Probe failure isn't fatal -- we just leave the invite
+            // field visible and let the hub return a clear error.
+        }
     }
 
     private fun openRegisterInBrowser() {
@@ -104,7 +170,7 @@ class SignInActivity : AppCompatActivity() {
         }
     }
 
-    private fun doSignIn() {
+    private fun onSubmit() {
         val hubUrl = b.hubUrl.text.toString().trim().trimEnd('/')
         val username = b.username.text.toString().trim()
         val password = b.password.text.toString()
@@ -117,40 +183,47 @@ class SignInActivity : AppCompatActivity() {
             setStatus("Hub URL must start with http:// or https://", err = true)
             return
         }
+        if (mode == Mode.REGISTER) {
+            val pw2 = b.password2.text.toString()
+            if (password != pw2) {
+                setStatus("Passwords do not match.", err = true); return
+            }
+            if (password.length < 8) {
+                setStatus("Password must be at least 8 characters.", err = true); return
+            }
+        }
         setBusy(true)
-        setStatus("Signing in…", err = false)
+        setStatus(if (mode == Mode.REGISTER) "Creating account…" else "Signing in…", err = false)
 
         scope.launch {
+            val invite = b.invite.text.toString().trim()
             val result = runCatching {
                 cookieJar.clear()
-                login(hubUrl, username, password)
+                if (mode == Mode.REGISTER) {
+                    register(hubUrl, invite, username, password)
+                } else {
+                    login(hubUrl, username, password)
+                }
                 sessionEnroll(hubUrl, devName)
             }
             setBusy(false)
             result.onSuccess { (deviceId, deviceToken, name, nodes) ->
-                // Save bootstrap so HubClient can reconnect even if the
-                // user later edits the URL (we still keep this one as
-                // the first candidate).
                 Prefs.saveBootstrap(this@SignInActivity, "session", hubUrl)
                 Prefs.saveDevice(this@SignInActivity, deviceId, deviceToken, name, nodes)
-                setStatus("Signed in as $username. Enrolled as $name. Starting service…",
+                val verb = if (mode == Mode.REGISTER) "Registered" else "Signed in"
+                setStatus("$verb as $username. Enrolled as $name. Starting service…",
                           err = false)
                 val i = Intent(this@SignInActivity, DriverService::class.java)
                 ContextCompat.startForegroundService(this@SignInActivity, i)
                 finish()
             }.onFailure { e ->
-                setStatus("Sign-in failed: ${e.javaClass.simpleName}: ${e.message ?: ""}",
+                val verb = if (mode == Mode.REGISTER) "Register" else "Sign-in"
+                setStatus("$verb failed: ${e.javaClass.simpleName}: ${e.message ?: ""}",
                           err = true)
             }
         }
     }
 
-    /**
-     * POST {hub}/login (form-encoded). On success the hub returns 303
-     * with `Set-Cookie: vortex_session=…`; we read the cookie via the
-     * cookie jar (already wired into the OkHttp client) and forward it
-     * automatically on the next request.
-     */
     private suspend fun login(hubUrl: String, username: String, password: String): Unit =
         withContext(Dispatchers.IO) {
             val form = FormBody.Builder()
@@ -158,15 +231,8 @@ class SignInActivity : AppCompatActivity() {
                 .add("password", password)
                 .add("next", "/")
                 .build()
-            val req = Request.Builder()
-                .url("$hubUrl/login")
-                .post(form)
-                .build()
+            val req = Request.Builder().url("$hubUrl/login").post(form).build()
             http.newCall(req).execute().use { rsp ->
-                // 303 = success. 401 = bad creds. 429 = rate-limited.
-                // 200 with an HTML body = we got the login page again,
-                // which means creds were wrong but the server didn't
-                // bother with a 401 (rare; handle defensively).
                 when (rsp.code) {
                     303 -> { /* good */ }
                     401 -> throw RuntimeException("Wrong username or password.")
@@ -177,19 +243,49 @@ class SignInActivity : AppCompatActivity() {
                         "Hub error ${rsp.code}: ${rsp.body?.string().orEmpty().take(160)}"
                     )
                     else -> throw RuntimeException(
-                        "Unexpected sign-in response (HTTP ${rsp.code}). " +
-                        "Is the Hub URL correct?"
+                        "Unexpected sign-in response (HTTP ${rsp.code}). Is the Hub URL correct?"
                     )
                 }
-                // Sanity check: the session cookie must actually be in the jar now.
-                val haveSession = cookieJar.has(hubUrl, "vortex_session")
-                if (!haveSession) {
-                    throw RuntimeException(
-                        "Hub returned 303 but no session cookie -- this may be an " +
-                        "old hub version without /api/session-enroll. Tap " +
-                        "\"Have an account token instead?\" below."
-                    )
-                }
+                if (!cookieJar.has(hubUrl, "vortex_session")) throw RuntimeException(
+                    "Hub returned 303 but no session cookie. The hub may be older " +
+                    "than V5.24 -- tap \"Have an account token instead?\" for the legacy flow."
+                )
+            }
+        }
+
+    private suspend fun register(
+        hubUrl: String, invite: String, username: String, password: String,
+    ): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("invite", invite)
+            .put("username", username)
+            .put("password", password)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        val req = Request.Builder().url("$hubUrl/api/session-register").post(body).build()
+        http.newCall(req).execute().use { rsp ->
+            val text = rsp.body?.string().orEmpty()
+            if (!rsp.isSuccessful) {
+                if (rsp.code == 404) throw RuntimeException(
+                    "This hub doesn't support in-app registration (added in V5.25). " +
+                    "Tap \"Open hub register page in browser\" below for the web flow."
+                )
+                val detail = try { JSONObject(text).optString("detail", text) }
+                             catch (_: Exception) { text }
+                throw RuntimeException("HTTP ${rsp.code}: ${detail.take(200)}")
+            }
+            if (!cookieJar.has(hubUrl, "vortex_session")) throw RuntimeException(
+                "Hub returned 200 OK but no session cookie -- unexpected."
+            )
+        }
+    }
+
+    private suspend fun getRegistrationMode(hubUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder().url("$hubUrl/api/registration-mode").build()
+            http.newCall(req).execute().use { rsp ->
+                if (!rsp.isSuccessful) throw RuntimeException("HTTP ${rsp.code}")
+                JSONObject(rsp.body?.string().orEmpty())
             }
         }
 
@@ -200,10 +296,7 @@ class SignInActivity : AppCompatActivity() {
             .put("device_name", deviceName)
             .toString()
             .toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$hubUrl/api/session-enroll")
-            .post(body)
-            .build()
+        val req = Request.Builder().url("$hubUrl/api/session-enroll").post(body).build()
         http.newCall(req).execute().use { rsp ->
             val text = rsp.body?.string().orEmpty()
             if (!rsp.isSuccessful) {
@@ -241,6 +334,8 @@ class SignInActivity : AppCompatActivity() {
         b.cancelBtn.isEnabled = !busy
         b.useTokenBtn.isEnabled = !busy
         b.registerBtn.isEnabled = !busy
+        b.modeSignin.isEnabled = !busy
+        b.modeRegister.isEnabled = !busy
         b.progress.visibility = if (busy) View.VISIBLE else View.GONE
     }
 
@@ -251,13 +346,6 @@ class SignInActivity : AppCompatActivity() {
         val nodes: List<String>,
     )
 
-    /**
-     * Minimal in-memory cookie jar. The hub sets one cookie
-     * (`vortex_session`) on /login; we need to forward it on the
-     * subsequent /api/session-enroll. No persistence -- the cookie
-     * is single-use here and we'd rather not leave a usable session
-     * on disk after the activity finishes.
-     */
     private class InMemoryCookieJar : CookieJar {
         private val store = mutableMapOf<String, MutableList<Cookie>>()
 

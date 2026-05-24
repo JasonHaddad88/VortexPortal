@@ -47,6 +47,7 @@ Future milestones, in order:
 | **B5.1** | H.264 / MediaCodec for camera_stream (same wire, Camera2 → encoder Surface) | _shipped_ |
 | **M4** | Autostart on boot + (later) signed release builds + F-Droid | autostart _shipped_ |
 | **B6** | In-app **sign-in** (username + password, no token paste) | _shipped_ |
+| **B7** | In-app **register** (toggle on sign-in screen, invite-mode aware) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -162,6 +163,33 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B7: in-app register (no browser detour)
+
+The sign-in screen now has a **Sign in** / **Create account**
+toggle at the top. Tapping **Create account** reveals a Confirm
+password field and -- conditionally -- an Invite code field
+(probed via the new `GET /api/registration-mode` so we hide it
+when the hub is in `open` mode or when this is the bootstrap
+first-user enrollment).
+
+On submit, the APK:
+1. `POST {hub}/api/session-register` (JSON: `{invite, username,
+   password}`). Returns `{ok:true, username, is_admin}` and sets
+   the `vortex_session` cookie on success, or a `{detail}` error
+   JSON with an appropriate 4xx status.
+2. Chains straight into `POST {hub}/api/session-enroll` reusing
+   the cookie from step 1 -- no second login needed.
+3. Save creds, start the service.
+
+Hub-side errors come back as plain `detail` strings ("Username
+already taken", "Invalid or already-used invite code", "Password
+must be at least 8 characters", etc.), surfaced verbatim in the
+status text -- no HTML parsing in Kotlin.
+
+For hubs older than V5.25 (no `/api/session-register`), the APK
+falls back to the in-screen **Open hub register page in browser**
+button which deep-links to `{hub}/register`.
 
 ### B6: in-app sign-in (no token paste)
 

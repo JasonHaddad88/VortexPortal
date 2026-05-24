@@ -346,6 +346,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B7 — in-app register** _shipped_. Same `SignInActivity`
+  grew a Sign-in / Create-account toggle. On Register: reveals
+  Confirm-password + conditional Invite (probed via new
+  `GET /api/registration-mode` -- hidden when the hub is in `open`
+  mode or this is the bootstrap user). Submit chain: new hub
+  `POST /api/session-register` (JSON in/out, sets cookie on
+  success) -> existing `/api/session-enroll` (reuses the cookie)
+  -> save creds + start service. Hub errors surface as plain
+  `detail` strings ("Username already taken", "Invalid or
+  already-used invite code", etc.) -- no HTML parsing in Kotlin.
+  Falls back to opening `{hub}/register` in a browser if the hub
+  is older than V5.25.
+
 - [x] **B6 — in-app sign-in** _shipped_. New `SignInActivity`
   becomes the default "Enroll" landing: hub URL + username +
   password + device name -> `POST /login` (form, 303 + Set-Cookie)

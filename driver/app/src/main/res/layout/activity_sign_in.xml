@@ -11,6 +11,7 @@
         android:padding="20dp">
 
         <TextView
+            android:id="@+id/title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/signin_title"
@@ -18,12 +19,35 @@
             android:textStyle="bold"/>
 
         <TextView
+            android:id="@+id/subtitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/signin_subtitle"
             android:textSize="13sp"
             android:layout_marginTop="6dp"
-            android:layout_marginBottom="18dp"/>
+            android:layout_marginBottom="14dp"/>
+
+        <!-- B7: mode toggle. Two equal-weight buttons; the active one
+             is bold + tinted via the activity's setMode(). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="10dp">
+            <Button
+                android:id="@+id/mode_signin"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/signin_mode_signin"/>
+            <Button
+                android:id="@+id/mode_register"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="@string/signin_mode_register"/>
+        </LinearLayout>
 
         <TextView
             android:layout_width="match_parent"
@@ -69,6 +93,42 @@
             android:hint="@string/signin_hint_password"
             android:autofillHints="password"
             android:layout_marginTop="4dp"/>
+
+        <!-- B7: register-only fields. Visibility toggled by setMode(). -->
+        <TextView
+            android:id="@+id/password2_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/signin_label_password2"
+            android:textStyle="bold"
+            android:layout_marginTop="14dp"
+            android:visibility="gone"/>
+        <EditText
+            android:id="@+id/password2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textPassword"
+            android:hint="@string/signin_hint_password2"
+            android:autofillHints="newPassword"
+            android:layout_marginTop="4dp"
+            android:visibility="gone"/>
+
+        <TextView
+            android:id="@+id/invite_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/signin_label_invite"
+            android:textStyle="bold"
+            android:layout_marginTop="14dp"
+            android:visibility="gone"/>
+        <EditText
+            android:id="@+id/invite"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:hint="@string/signin_hint_invite"
+            android:layout_marginTop="4dp"
+            android:visibility="gone"/>
 
         <TextView
             android:layout_width="match_parent"
@@ -140,7 +200,7 @@
             android:layout_height="wrap_content"
             style="?android:attr/buttonBarButtonStyle"
             android:textAlignment="center"
-            android:text="@string/signin_register"/>
+            android:text="@string/signin_register_browser"/>
 
     </LinearLayout>
 </ScrollView>

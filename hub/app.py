@@ -778,6 +778,71 @@ async def api_session_enroll(request: Request,
             "nodes": _live_node_urls(request)}
 
 
+# V5.25: JSON-friendly registration probe + create for the Vortex
+# Driver APK's in-app "Create account" flow (Driver-B7). The web
+# /register endpoint returns HTML with errors embedded -- fragile
+# to parse from a Kotlin client -- so we expose a structured pair:
+#
+#   GET  /api/registration-mode  -> {mode, bootstrap, user_count}
+#   POST /api/session-register   -> {ok: true, username} on success
+#                                   ({ok: false, detail} + 4xx on error)
+#
+# Both reuse the same db.* helpers and validation rules /register
+# uses -- this is just a JSON surface over the existing logic, not
+# a parallel auth path.
+@app.get("/api/registration-mode")
+def api_registration_mode():
+    n = db.user_count()
+    # Bootstrap (first user) overrides the mode entirely -- always allowed.
+    mode = "invite" if n == 0 else config.registration_mode()
+    return {"mode": mode, "bootstrap": (n == 0), "user_count": n}
+
+
+@app.post("/api/session-register")
+async def api_session_register(request: Request, response: Response):
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    invite = str(body.get("invite", "")).strip()
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", ""))
+
+    is_bootstrap = (db.user_count() == 0)
+    mode = "invite" if is_bootstrap else config.registration_mode()
+    if mode == "closed":
+        raise HTTPException(status_code=403, detail="Registration is closed on this hub.")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="All fields required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400,
+                            detail="Password must be at least 8 characters")
+    if not username.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(status_code=400,
+                            detail="Username may only contain letters, numbers, _ and -")
+    if db.get_user_by_username(username) is not None:
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    if is_bootstrap:
+        user_id = db.create_user(username, password, is_admin=True)
+    elif mode == "open":
+        user_id = db.create_user(username, password, is_admin=False)
+    else:  # invite
+        if not db.invite_is_valid(invite):
+            raise HTTPException(status_code=400,
+                                detail="Invalid or already-used invite code")
+        user_id = db.create_user(username, password, is_admin=False)
+        if not db.consume_invite(invite, user_id):
+            raise HTTPException(status_code=400,
+                                detail="Invite was used by another registration")
+
+    # Set the session cookie on the JSON response so the same client
+    # can immediately POST /api/session-enroll without a second /login.
+    auth.login(response, user_id)
+    return {"ok": True, "username": username, "is_admin": is_bootstrap}
+
+
 @app.get("/api/nodes")
 async def api_nodes(request: Request):
     """Live node URLs for an already-enrolled agent to (re)discover where

@@ -3,6 +3,61 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.25 / Driver-B7] — 2026-05-25
+
+**Register in-app.** The polished counterpart to B6's sign-in:
+the same `SignInActivity` now has a Sign-in / Create-account
+toggle. Pick Create account, fill out the form, tap once -- the
+APK creates your hub account AND enrolls this device in a single
+chained request. No browser detour.
+
+### Hub: new JSON-friendly endpoints
+- `GET /api/registration-mode` -- returns
+  `{mode: "open"|"invite"|"closed", bootstrap: bool, user_count}`.
+  Lets the APK hide the Invite field when not needed; surfaces a
+  clear "registration closed" status when the hub is locked down.
+- `POST /api/session-register` -- JSON in
+  (`{invite, username, password}`), JSON out
+  (`{ok:true, username, is_admin}` on success, `{detail}` + 4xx
+  on error). Sets the `vortex_session` cookie on success so the
+  same client can immediately POST `/api/session-enroll` without
+  a second `/login`. Reuses the exact validation rules `/register`
+  uses (8-char password, alnum + `_-` username, invite required
+  in `invite` mode, etc.) -- this is a JSON surface over the
+  existing logic, not a parallel auth path.
+
+### APK: register toggle on the sign-in screen
+- New segmented control at the top: **Sign in** / **Create
+  account**. Switching reveals/hides Confirm-password + Invite.
+- When entering Create-account mode, the APK probes
+  `GET /api/registration-mode` and hides the Invite field if the
+  hub is in `open` mode OR if this is the bootstrap (first-user)
+  setup. Bootstrap also shows a friendly
+  "this account will be the hub admin" hint.
+- Submit chain: register -> session-enroll (cookie reused) ->
+  save device creds -> start service. Errors come back as
+  hub-side `detail` strings ("Username already taken",
+  "Invalid or already-used invite code", "Password must be at
+  least 8 characters", "Registration is closed on this hub")
+  and are surfaced verbatim in the status text.
+- Fallback link **Open hub register page in browser** stays as
+  the escape hatch for hubs older than V5.25 (no
+  `/api/session-register`).
+
+### Layout / strings
+- `activity_sign_in.xml` adds the 2-button mode toggle +
+  conditional password2/invite blocks.
+- New strings `signin_mode_*`, `signin_title_register`,
+  `signin_subtitle_register`, `signin_label_password2`,
+  `signin_label_invite`, `signin_btn_register`,
+  `signin_register_browser`.
+
+### Hub version
+- **5.24 → 5.25**.
+
+### APK version
+- **0.13.0-b6 → 0.14.0-b7 (versionCode 14 → 15)**.
+
 ## [V5.24 / Driver-B6] — 2026-05-24
 
 **Sign in to the Vortex Driver APK like any other app.** No more
