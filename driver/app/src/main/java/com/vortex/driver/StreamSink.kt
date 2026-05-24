@@ -31,10 +31,24 @@ class WsStreamSink(
      *  stream on this WebSocket. Guards atomic header+binary send pairs
      *  and serializes against unrelated text sends (responses, direct_info). */
     private val sendLock: Any,
+    /** Bytes already buffered for transport at which we start dropping
+     *  binary chunks. Default ~256 KB -- a couple of unsent JPEGs on a
+     *  typical link. Above this, sendChunk returns false so the engine
+     *  can skip future frames before encoding. */
+    private val backpressureBytes: Long = 256L * 1024L,
 ) {
     @Volatile private var started = false
     @Volatile private var ended = false
     @Volatile var framesSent: Long = 0L; private set
+    @Volatile var framesDropped: Long = 0L; private set
+
+    /** True if the WS write queue is below the backpressure threshold.
+     *  Called by the engines BEFORE encoding the next frame -- skipping
+     *  here saves us the JPEG encode CPU, not just the send. */
+    fun isReady(): Boolean {
+        if (ended) return false
+        return try { ws.queueSize() < backpressureBytes } catch (_: Exception) { false }
+    }
 
     fun sendStart(contentType: String = "image/jpeg", size: Long? = null): Boolean {
         if (started || ended) return false
@@ -48,9 +62,12 @@ class WsStreamSink(
     }
 
     /** Atomic header+binary pair. Returns false if the socket rejected the
-     *  send (queue full / closed) -- caller should stop producing frames. */
+     *  send (queue full / closed) OR backpressure kicked in -- caller
+     *  should stop producing frames. Also bumps `framesDropped` when
+     *  backpressure is the reason, so the engine can log it. */
     fun sendChunk(bytes: ByteArray): Boolean {
         if (ended) return false
+        if (!isReady()) { framesDropped++; return false }
         if (!started) sendStart()  // be forgiving -- streams in the wild forget
         val header = JSONObject()
             .put("type", "stream_chunk_header")
@@ -60,7 +77,7 @@ class WsStreamSink(
             val a = trySend(header)
             if (!a) return@synchronized false
             val b = trySend(bytes.toByteString())
-            if (b) framesSent++
+            if (b) framesSent++ else framesDropped++
             b
         }
     }

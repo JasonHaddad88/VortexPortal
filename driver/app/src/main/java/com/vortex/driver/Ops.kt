@@ -34,8 +34,8 @@ object Ops {
         }
         // B2.2: native screen + camera streams. Handler runs in a HubClient
         // coroutine; cancellation tears down the engine via the finally.
-        dispatcher.registerStream("screen_stream") { _, sink ->
-            runNativeStream(StreamKind.SCREEN, sink, args = null)
+        dispatcher.registerStream("screen_stream") { args, sink ->
+            runNativeStream(StreamKind.SCREEN, sink, args)
         }
         dispatcher.registerStream("camera_stream") { args, sink ->
             runNativeStream(StreamKind.CAMERA, sink, args)
@@ -44,8 +44,19 @@ object Ops {
 
     private enum class StreamKind { SCREEN, CAMERA }
 
-    /** Shared driver between screen_stream and camera_stream -- they only
-     *  differ in which engine they start. */
+    /**
+     * Request args understood by both stream ops (all optional):
+     *
+     *   - `quality`  Int 1-100  -- JPEG quality. Default 70 (camera), 50 (screen).
+     *   - `max_dim`  Int        -- longest side in pixels. Default 720; capped
+     *                              at 1080 to keep encode time reasonable.
+     *   - `fps_cap`  Int        -- max frames per second. Default 30; 0 = unlimited.
+     *   - `facing`   "front"|"back"  -- camera only; default "back".
+     *
+     * camera_stream defaults sized for a quick low-latency preview;
+     * screen_stream defaults sized for a UI mirror. Browsers wanting
+     * something different should pass args explicitly.
+     */
     private suspend fun runNativeStream(
         kind: StreamKind,
         sink: WsStreamSink,
@@ -53,6 +64,13 @@ object Ops {
     ) {
         val svc = DriverService.instance
             ?: throw RuntimeException("Vortex Driver service is not running")
+
+        val maxDim  = (args?.optInt("max_dim", 0) ?: 0).let { if (it <= 0) 720 else it.coerceIn(160, 1080) }
+        val fpsCap  = (args?.optInt("fps_cap", -1) ?: -1).let { if (it < 0) 30 else it.coerceIn(0, 60) }
+        val quality = (args?.optInt("quality", 0) ?: 0).let {
+            val def = if (kind == StreamKind.SCREEN) 50 else 70
+            if (it <= 0) def else it.coerceIn(10, 95)
+        }
 
         // Bridge from the engine's FrameSink callbacks back into the
         // coroutine. Errors complete `failure` so the suspending await
@@ -73,13 +91,26 @@ object Ops {
         // as a normal {ok:false} response (same contract as the Python
         // agent's op_camera_stream).
         when (kind) {
-            StreamKind.SCREEN -> svc.startNativeScreenStream(engineSink)
+            StreamKind.SCREEN -> svc.startNativeScreenStream(
+                sink = engineSink,
+                maxDimension = maxDim,
+                jpegQuality = quality,
+                fpsCap = fpsCap,
+                readyToEmit = { sink.isReady() },
+            )
             StreamKind.CAMERA -> {
                 val facing = when (args?.optString("facing", "back")) {
                     "front" -> CameraCharacteristics.LENS_FACING_FRONT
                     else    -> CameraCharacteristics.LENS_FACING_BACK
                 }
-                svc.startNativeCameraStream(engineSink, facing)
+                svc.startNativeCameraStream(
+                    sink = engineSink,
+                    facing = facing,
+                    maxDimension = maxDim,
+                    jpegQuality = quality,
+                    fpsCap = fpsCap,
+                    readyToEmit = { sink.isReady() },
+                )
             }
         }
 

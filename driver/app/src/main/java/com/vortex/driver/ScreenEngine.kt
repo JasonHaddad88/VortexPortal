@@ -40,9 +40,16 @@ class ScreenEngine(
     private val resultCode: Int,
     private val resultData: Intent,
     /** Longest side of the captured frame, in pixels. We downscale to keep
-     *  bandwidth + JPEG encode time reasonable. 720 by default. */
+     *  bandwidth + JPEG encode time reasonable. 720 by default; can be
+     *  raised by the request args up to 1080 on capable phones. */
     private val maxDimension: Int = 720,
     private val jpegQuality: Int = 50,
+    /** Frames per second cap. <=0 means unlimited. Default 30 -- screen
+     *  content rarely benefits from higher (the UI compositor caps repaint
+     *  anyway) and we save a lot of CPU + Bitmap allocations. */
+    private val fpsCap: Int = 30,
+    /** Pre-encode backpressure gate (HubClient passes a WS-queue probe). */
+    private val readyToEmit: () -> Boolean = { true },
 ) {
     private val workThread = HandlerThread("ScreenEngine").apply { start() }
     private val workHandler = Handler(workThread.looper)
@@ -51,6 +58,9 @@ class ScreenEngine(
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var sink: CameraEngine.FrameSink? = null
+    private val minFrameIntervalNanos: Long =
+        if (fpsCap > 0) 1_000_000_000L / fpsCap else 0L
+    @Volatile private var lastEmitNanos: Long = 0L
 
     fun start(sink: CameraEngine.FrameSink) {
         this.sink = sink
@@ -111,8 +121,10 @@ class ScreenEngine(
         reader.setOnImageAvailableListener({ r ->
             val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
+                if (!shouldEmitNow()) return@setOnImageAvailableListener
                 val jpeg = encodeRgbaToJpeg(image, jpegQuality)
                 sink.onFrame(jpeg, image.width, image.height, /* sensorRotation = */ 0)
+                lastEmitNanos = System.nanoTime()
             } catch (e: Throwable) {
                 sink.onError("screen frame encode failed: ${e::class.simpleName}: ${e.message}")
             } finally {
@@ -132,6 +144,12 @@ class ScreenEngine(
         } catch (e: Throwable) {
             sink.onError("createVirtualDisplay threw: ${e::class.simpleName}: ${e.message}")
         }
+    }
+
+    private fun shouldEmitNow(): Boolean {
+        if (!readyToEmit()) return false
+        if (minFrameIntervalNanos <= 0L) return true
+        return (System.nanoTime() - lastEmitNanos) >= minFrameIntervalNanos
     }
 
     /**

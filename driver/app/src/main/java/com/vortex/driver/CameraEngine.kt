@@ -37,6 +37,15 @@ class CameraEngine(
     private var cameraFacing: Int = CameraCharacteristics.LENS_FACING_BACK,
     private val targetSize: Size = Size(1280, 720),
     private val jpegQuality: Int = 70,
+    /** Frames per second cap. <=0 means unlimited (push as fast as the
+     *  encoder produces). 30 is a sensible default -- saves ~50% CPU vs.
+     *  unbounded on a midrange phone and matches typical browser repaint. */
+    private val fpsCap: Int = 30,
+    /** Pre-encode backpressure gate. Returning false from this lambda
+     *  drops the current frame BEFORE the JPEG encode runs, so we don't
+     *  waste CPU on frames that will just sit in the WebSocket send queue.
+     *  Default = always emit. HubClient passes a WS-queue-aware probe. */
+    private val readyToEmit: () -> Boolean = { true },
 ) {
     interface FrameSink {
         fun onFrame(jpegBytes: ByteArray, width: Int, height: Int, sensorRotation: Int)
@@ -53,6 +62,10 @@ class CameraEngine(
     private var imageReader: ImageReader? = null
     private var sink: FrameSink? = null
     @Volatile private var sensorRotation: Int = 0
+    private val minFrameIntervalNanos: Long =
+        if (fpsCap > 0) 1_000_000_000L / fpsCap else 0L
+    @Volatile private var lastEmitNanos: Long = 0L
+    @Volatile private var droppedSinceLastEmit: Long = 0L
 
     /**
      * Open the camera and start emitting frames. Idempotent: a second
@@ -109,8 +122,11 @@ class CameraEngine(
             // keep up with -- live latency over completeness.
             val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
+                if (!shouldEmitNow()) { droppedSinceLastEmit++; return@setOnImageAvailableListener }
                 val jpeg = encodeYuv420ToJpeg(image, jpegQuality)
                 sink.onFrame(jpeg, image.width, image.height, sensorRotation)
+                lastEmitNanos = System.nanoTime()
+                droppedSinceLastEmit = 0
             } catch (e: Throwable) {
                 sink.onError("frame encode failed: ${e::class.simpleName}: ${e.message}")
             } finally {
@@ -165,6 +181,15 @@ class CameraEngine(
         } catch (e: Throwable) {
             sink.onError("createCaptureSession threw: $e")
         }
+    }
+
+    /** Returns true if we should encode + emit this frame; false to skip
+     *  (either fps cap not yet elapsed, or downstream is backpressured). */
+    private fun shouldEmitNow(): Boolean {
+        if (!readyToEmit()) return false
+        if (minFrameIntervalNanos <= 0L) return true
+        val now = System.nanoTime()
+        return (now - lastEmitNanos) >= minFrameIntervalNanos
     }
 
     private fun pickCameraId(): String? {

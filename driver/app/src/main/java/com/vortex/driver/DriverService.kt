@@ -153,7 +153,13 @@ class DriverService : Service(), CameraEngine.FrameSink {
      * to enable screen sharing" error message.
      */
     @Synchronized
-    fun startNativeScreenStream(sink: CameraEngine.FrameSink) {
+    fun startNativeScreenStream(
+        sink: CameraEngine.FrameSink,
+        maxDimension: Int = 720,
+        jpegQuality: Int = 50,
+        fpsCap: Int = 30,
+        readyToEmit: () -> Boolean = { true },
+    ) {
         val data = pendingScreenResultData
         if (!screenArmed || data == null) {
             throw IllegalStateException(
@@ -169,7 +175,15 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // Make sure the foreground service type includes mediaProjection
         // before we ask getMediaProjection() for a session.
         promoteForeground()
-        nativeScreen = ScreenEngine(this, pendingScreenResultCode, data).also { it.start(sink) }
+        nativeScreen = ScreenEngine(
+            context = this,
+            resultCode = pendingScreenResultCode,
+            resultData = data,
+            maxDimension = maxDimension,
+            jpegQuality = jpegQuality,
+            fpsCap = fpsCap,
+            readyToEmit = readyToEmit,
+        ).also { it.start(sink) }
         updateNotification()
     }
 
@@ -183,12 +197,29 @@ class DriverService : Service(), CameraEngine.FrameSink {
     }
 
     @Synchronized
-    fun startNativeCameraStream(sink: CameraEngine.FrameSink, facing: Int = CameraCharacteristics.LENS_FACING_BACK) {
+    fun startNativeCameraStream(
+        sink: CameraEngine.FrameSink,
+        facing: Int = CameraCharacteristics.LENS_FACING_BACK,
+        maxDimension: Int = 720,
+        jpegQuality: Int = 70,
+        fpsCap: Int = 30,
+        readyToEmit: () -> Boolean = { true },
+    ) {
         try { nativeCamera?.stop() } catch (_: Exception) {}
         nativeCamera = null
         nativeCameraSink = sink
         promoteForeground()
-        nativeCamera = CameraEngine(this, facing).also { it.start(sink) }
+        // Convert maxDimension -> a 16:9 Size with the long side honored.
+        val target = if (maxDimension >= 1080) android.util.Size(1920, 1080)
+                     else android.util.Size((maxDimension * 16 / 9), maxDimension)
+        nativeCamera = CameraEngine(
+            context = this,
+            cameraFacing = facing,
+            targetSize = target,
+            jpegQuality = jpegQuality,
+            fpsCap = fpsCap,
+            readyToEmit = readyToEmit,
+        ).also { it.start(sink) }
         updateNotification()
     }
 

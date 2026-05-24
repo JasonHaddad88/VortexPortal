@@ -3,6 +3,50 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B2.3] — 2026-05-24
+
+**JPEG-pipeline tuning for the native stream ops.** No new ops, no
+new dependencies — three knobs that cut wasted CPU and tame latency
+on the existing MJPEG path. (H.264 / MediaCodec is still B5; this
+makes the road there less bumpy.)
+
+### FPS cap in the engines
+- `CameraEngine` + `ScreenEngine` now take a `fpsCap` ctor param
+  (default 30). The `ImageReader.onImageAvailable` callback drops
+  frames before the YUV→NV21→JPEG / RGBA→Bitmap→JPEG path when
+  `now - lastEmit < 1/fps`. That saves the encode cost on phones
+  whose camera/projection HAL ticks above 30 Hz.
+
+### Pre-encode backpressure gate
+- New `readyToEmit: () -> Boolean` ctor param on both engines. When
+  it returns false, the engine `image.close()`s and skips encoding
+  entirely. `HubClient` wires this to `WsStreamSink.isReady()`,
+  which checks the OkHttp WebSocket's `queueSize()` against a
+  256 KB threshold. Above that, frames are dropped at the source
+  — the WS queue can't balloon and latency stays bounded under a
+  slow link.
+- `WsStreamSink.sendChunk` also short-circuits past the threshold
+  and bumps a `framesDropped` counter (useful diagnostic next time
+  we add a notification line).
+
+### Per-request tuning args
+- `screen_stream` and `camera_stream` now accept (all optional):
+  - `quality` 1-100  — JPEG quality. Default 70 (camera), 50 (screen).
+  - `max_dim`        — longest side, default 720, clamped 160–1080.
+  - `fps_cap`        — frames per second cap; 0 = unlimited; default 30.
+  - `facing`         — `"front"` or `"back"`; camera only.
+- The browser can now ask the APK for a higher-res / smoother /
+  cheaper stream without any hub-side changes. Defaults match the
+  previous behaviour so no caller breaks.
+
+### Notes
+- Camera target size is now derived from `max_dim` as a 16:9 box,
+  with a 1920×1080 special case so we can hand Camera2 a real
+  CamcorderProfile-friendly resolution at the top end.
+- Screen `maxDimension` is honored as-is up to 1080. (The compositor
+  still costs CPU per pixel; 720 remains the default sweet spot.)
+- APK version: **0.7.0-b2.2 → 0.7.1-b2.3 (versionCode 7 → 8)**.
+
 ## [Driver-B2.2] — 2026-05-24
 
 **Native `screen_stream` + `camera_stream` in the APK.** After B2.2,
