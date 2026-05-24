@@ -7,15 +7,23 @@ import okhttp3.*
 import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * APK's outbound WebSocket to the hub — the same role the Python agent
+ * APK's outbound WebSocket to the hub -- the same role the Python agent
  * plays in Termux. Authenticates with the device_id+token written by
- * [EnrollActivity], handles inbound op requests via [OpDispatcher],
- * and reconnects with backoff on any disconnect.
+ * [EnrollActivity], handles inbound op requests via [OpDispatcher], and
+ * reconnects with backoff on any disconnect.
  *
- * One instance per [DriverService]. Use [start]/[stop]; the internal
- * coroutine scope is cancelled on stop so there's no leak.
+ * B2.2: streaming ops. The dispatcher can now return [OpDispatcher.Outcome.Stream]
+ * for long-lived handlers (screen_stream, camera_stream). We launch each
+ * stream in its own coroutine, track them by rid, and cancel all of them
+ * when the WebSocket closes (so engines stop and the camera/projection
+ * is released promptly).
+ *
+ * Send serialization: every outbound text + binary frame goes through
+ * [sendLock] so a stream's atomic `stream_chunk_header`+binary pair can't
+ * be interleaved by an unrelated response/direct_info send.
  */
 class HubClient(
     private val ctx: Context,
@@ -31,6 +39,11 @@ class HubClient(
     @Volatile private var stopped = false
     @Volatile private var backoffSec = 1.0
 
+    /** Per-WS connection. Reset on each (re)connect so a stale lock
+     *  from a previous session can't accidentally serialize new sends. */
+    private var sendLock: Any = Any()
+    private val streamJobs = ConcurrentHashMap<String, Job>()
+
     fun start() {
         if (!Prefs.isEnrolled(ctx)) {
             onStatus("not enrolled")
@@ -42,6 +55,7 @@ class HubClient(
     fun stop() {
         stopped = true
         try { ws?.close(1000, "stopping") } catch (_: Exception) {}
+        cancelAllStreams("client stopping")
         scope.cancel()
     }
 
@@ -75,6 +89,11 @@ class HubClient(
         val deviceId = Prefs.deviceId(ctx) ?: return@withContext false
         val token    = Prefs.deviceToken(ctx) ?: return@withContext false
 
+        // Fresh lock per connection -- old streams' references stay valid
+        // (their sends just no-op against the closed socket) but new
+        // streams get a clean mutex.
+        sendLock = Any()
+
         val gate = kotlinx.coroutines.CompletableDeferred<Boolean>()
         val req = Request.Builder().url(wsUrl).build()
         Log.i(TAG, "connecting -> $wsUrl")
@@ -87,7 +106,7 @@ class HubClient(
                     .put("device_id", deviceId)
                     .put("token", token)
                     .put("agent_version", BuildConfig.VERSION_NAME)
-                webSocket.send(auth.toString())
+                sendText(webSocket, auth.toString())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -95,8 +114,8 @@ class HubClient(
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                // B1: we don't accept inbound binary frames (uploads — write_file
-                // — are a B2+ feature on the APK). Ignore silently.
+                // B2.2: still no inbound binary (write_file remains a B-later
+                // feature on the APK). Ignore silently.
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -106,6 +125,7 @@ class HubClient(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.i(TAG, "closed: $code $reason")
+                cancelAllStreams("ws closed ($code)")
                 ws = null
                 onStatus("disconnected ($code)")
                 if (!gate.isCompleted) gate.complete(true)
@@ -113,13 +133,14 @@ class HubClient(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.w(TAG, "failure: ${t.javaClass.simpleName}: ${t.message}")
+                cancelAllStreams("ws failure")
                 ws = null
                 onStatus("connect failed: ${t.javaClass.simpleName}")
                 if (!gate.isCompleted) gate.complete(false)
             }
         }
         http.newWebSocket(req, listener)
-        // Suspend until close or failure — returns true on clean close
+        // Suspend until close or failure -- returns true on clean close
         // (reset backoff), false on transport failure (try next node).
         val ok = gate.await()
         if (ok) backoffSec = 1.0
@@ -127,47 +148,93 @@ class HubClient(
     }
 
     private fun handleText(webSocket: WebSocket, text: String) {
-        // Cheap fast-path: dispatch op requests without parsing the
-        // whole frame twice.
         val msg = try { JSONObject(text) } catch (_: Exception) { return }
         when (msg.optString("type")) {
             "auth_ok" -> {
                 val name = msg.optString("name", Prefs.deviceName(ctx) ?: "")
                 onStatus("connected as $name")
-                // Persist any node list the hub just gave us so the next
-                // reconnect has a fresh candidate set.
                 val nodes = msg.optJSONArray("nodes")
                 if (nodes != null) saveNodes(nodes)
-                // Stub direct_info: we don't host a direct-WS server yet
-                // (B3 will). Sending it (with port=0) makes the hub
-                // broker correctly return "no candidates" and browsers
-                // fall back to the hub path.
+                // Stub direct_info (B3 will host a real direct-WS server).
                 val di = JSONObject()
                     .put("type", "direct_info")
                     .put("port", 0)
                     .put("hosts", JSONArray())
                     .put("ticket", "")
-                webSocket.send(di.toString())
+                sendText(webSocket, di.toString())
             }
             "auth_fail" -> {
                 val err = msg.optString("error", "")
                 onStatus("auth rejected: $err")
                 if (err.lowercase().contains("credentials")) {
-                    stopped = true   // fatal — wait for re-enroll
+                    stopped = true   // fatal -- wait for re-enroll
                     try { webSocket.close(4001, "fatal auth") } catch (_: Exception) {}
                 }
             }
-            "request" -> {
-                // Run the op off the WS thread so a slow handler can't
-                // block keepalive / next inbound frame.
-                scope.launch(Dispatchers.Default) {
-                    val out = dispatcher.handle(text)
-                    if (out != null) {
-                        try { webSocket.send(out) } catch (_: Exception) {}
-                    }
-                }
-            }
+            "request" -> dispatchRequest(webSocket, text)
             else -> { /* ignore */ }
+        }
+    }
+
+    /** Route a `{type:request}` frame through the dispatcher and either
+     *  send back a Unary response or spin up a Stream coroutine. */
+    private fun dispatchRequest(webSocket: WebSocket, text: String) {
+        when (val outcome = dispatcher.classify(text)) {
+            is OpDispatcher.Outcome.Unary -> sendText(webSocket, outcome.responseJson)
+            is OpDispatcher.Outcome.Reject -> {
+                val r = outcome.responseJson
+                if (r != null) sendText(webSocket, r)
+            }
+            is OpDispatcher.Outcome.Stream -> launchStream(webSocket, outcome)
+        }
+    }
+
+    private fun launchStream(webSocket: WebSocket, s: OpDispatcher.Outcome.Stream) {
+        val rid = s.rid
+        // If a previous stream with this rid is still running (shouldn't
+        // normally happen but the hub could retry), cancel it first.
+        streamJobs.remove(rid)?.cancel()
+        val sink = WsStreamSink(webSocket, rid, sendLock)
+        val job = scope.launch(Dispatchers.Default) {
+            try {
+                s.handler.run(s.args, sink)
+                // Handler returned normally -- close the stream if it
+                // didn't already.
+                sink.sendEnd()
+            } catch (ce: CancellationException) {
+                // WebSocket closed or new request superseded this stream.
+                sink.sendEnd()
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "stream $rid (${s.op}) failed: ${t.javaClass.simpleName}: ${t.message}")
+                // If the handler died before sending any chunks, surface
+                // it as a unary error response so the hub returns a 502.
+                if (sink.framesSent == 0L) {
+                    sendText(webSocket, dispatcher.streamSetupError(rid, t))
+                } else {
+                    sink.sendError("${t.javaClass.simpleName}: ${t.message ?: ""}")
+                }
+            } finally {
+                streamJobs.remove(rid)
+            }
+        }
+        streamJobs[rid] = job
+    }
+
+    private fun cancelAllStreams(reason: String) {
+        val snap = streamJobs.toMap()
+        streamJobs.clear()
+        for ((rid, j) in snap) {
+            Log.i(TAG, "cancel stream $rid ($reason)")
+            j.cancel()
+        }
+    }
+
+    /** Always send via this helper so concurrent ops + the direct_info
+     *  push can't interleave with a stream's atomic header+binary pair. */
+    private fun sendText(ws: WebSocket, text: String) {
+        synchronized(sendLock) {
+            try { ws.send(text) } catch (_: Exception) {}
         }
     }
 

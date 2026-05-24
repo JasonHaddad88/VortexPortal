@@ -40,7 +40,7 @@ Future milestones, in order:
 | **M3** | Touch input (AccessibilityService gesture dispatch) | _shipped_ |
 | **B1** | **Standalone** Vortex client (HubClient + EnrollActivity + native `device_info`) — APK enrolls into your account & dials the hub itself, no Termux needed | _shipped_ |
 | **B2.1** | Deep-link enroll (`vortex://enroll` QR → auto-fill + auto-submit) + native `op_input` (no loopback hop for input) | _shipped_ |
-| **B2.2** | Native `screen_stream` + `camera_stream` ops (drop the loopback helper for media) | planned |
+| **B2.2** | Native `screen_stream` + `camera_stream` ops (drop the loopback helper for media) | _shipped_ |
 | **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | planned |
 | **B4** | Theft-mode native ops (location, audio, push, wake-lock) — last Termux:API dependencies gone | planned |
 | **B5** | H.264 / MediaCodec video — real low-latency video over the direct WS | planned |
@@ -61,6 +61,26 @@ first native op (`device_info`) returns Build/Battery info straight
 from the OS — no Termux, no Termux:API, no permissions beyond
 notifications. B2 will move screen/camera/input dispatch into this
 same client so the loopback-socket helper role can retire on Android.
+
+### B2.2: native `screen_stream` + `camera_stream`
+
+With B2.2 the APK can serve the **media** ops without bouncing through
+the Termux Python agent. The `OpDispatcher` now distinguishes unary
+ops (single JSON response) from streaming ops, and the hub-bound
+WebSocket spawns one coroutine per stream `id` that pumps `stream_start`
++ N `stream_chunk_header`+binary pairs + `stream_end` straight into
+the hub — identical wire shape to the Python agent's `op_camera_stream`
+/ `op_screen_stream`, so the existing hub + browser code Just Works.
+
+Engines (`CameraEngine`, `ScreenEngine`) are unchanged; the foreground
+service gained `startNativeCameraStream` / `startNativeScreenStream`
+methods that the new ops call. Screen streams still require the user
+to have tapped "Enable screen sharing" in the Driver app (the system
+MediaProjection dialog) — the op surfaces a clear `RuntimeError` if
+not. Cancelling the WebSocket cancels every active stream coroutine,
+which releases the camera / projection promptly. After B2.2, **Termux
++ Termux:API are no longer required on Android** for camera, screen,
+or input — only Theft Mode (B4) and H.264 (B5) still need future work.
 
 ## Install (no Android Studio required)
 

@@ -3,22 +3,28 @@ package com.vortex.driver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.camera2.CameraCharacteristics
 import android.os.BatteryManager
 import android.os.Build
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Native ops for the APK's standalone client role. Initially just
- * `device_info` (no permissions). B2+ will register screen_stream /
- * camera_stream / input here, replacing the loopback-socket helper
- * model on Android.
+ * Native ops for the APK's standalone client role.
+ *
+ *   B1   -- device_info (no permissions)
+ *   B2.1 -- input (AccessibilityService dispatch, no loopback hop)
+ *   B2.2 -- screen_stream + camera_stream (native streams via the
+ *           same engines the loopback StreamServer drives, but
+ *           routed straight into HubClient WebSocket frames)
  */
 object Ops {
 
     fun registerAll(ctx: Context, dispatcher: OpDispatcher) {
         dispatcher.register("device_info") { _ -> deviceInfo(ctx) }
-        // B2: native input — same dispatch as InputServer but invoked
+        // B2.1: native input -- same dispatch as InputServer but invoked
         // directly by the hub's WS, no Termux/loopback hop.
         dispatcher.register("input") { args ->
             val cmd = args.optJSONObject("command")
@@ -26,9 +32,77 @@ object Ops {
             InputDispatch.dispatchInput(ctx, cmd)
                 ?: JSONObject().put("acked", true)
         }
+        // B2.2: native screen + camera streams. Handler runs in a HubClient
+        // coroutine; cancellation tears down the engine via the finally.
+        dispatcher.registerStream("screen_stream") { _, sink ->
+            runNativeStream(StreamKind.SCREEN, sink, args = null)
+        }
+        dispatcher.registerStream("camera_stream") { args, sink ->
+            runNativeStream(StreamKind.CAMERA, sink, args)
+        }
     }
 
-    /** Native equivalent of the Python agent's `op_device_info` — no
+    private enum class StreamKind { SCREEN, CAMERA }
+
+    /** Shared driver between screen_stream and camera_stream -- they only
+     *  differ in which engine they start. */
+    private suspend fun runNativeStream(
+        kind: StreamKind,
+        sink: WsStreamSink,
+        args: JSONObject?,
+    ) {
+        val svc = DriverService.instance
+            ?: throw RuntimeException("Vortex Driver service is not running")
+
+        // Bridge from the engine's FrameSink callbacks back into the
+        // coroutine. Errors complete `failure` so the suspending await
+        // wakes up and we can rethrow with a clean message.
+        val failure = CompletableDeferred<Throwable>()
+        val engineSink = object : CameraEngine.FrameSink {
+            override fun onFrame(jpegBytes: ByteArray, width: Int, height: Int, sensorRotation: Int) {
+                // sink.sendChunk swallows transport errors -- if the WS is
+                // gone the HubClient will cancel us shortly anyway.
+                sink.sendChunk(jpegBytes)
+            }
+            override fun onError(message: String) {
+                if (!failure.isCompleted) failure.complete(RuntimeException(message))
+            }
+        }
+
+        // Start the engine BEFORE stream_start so a setup failure surfaces
+        // as a normal {ok:false} response (same contract as the Python
+        // agent's op_camera_stream).
+        when (kind) {
+            StreamKind.SCREEN -> svc.startNativeScreenStream(engineSink)
+            StreamKind.CAMERA -> {
+                val facing = when (args?.optString("facing", "back")) {
+                    "front" -> CameraCharacteristics.LENS_FACING_FRONT
+                    else    -> CameraCharacteristics.LENS_FACING_BACK
+                }
+                svc.startNativeCameraStream(engineSink, facing)
+            }
+        }
+
+        sink.sendStart(contentType = "image/jpeg")
+
+        try {
+            // Either the engine reports an error first, or the surrounding
+            // coroutine gets cancelled (WS closed). Whichever fires first
+            // wins -- we await both via a tiny poll loop so the cancellation
+            // still works while we wait on `failure`.
+            while (true) {
+                if (failure.isCompleted) throw failure.getCompleted()
+                delay(100)
+            }
+        } finally {
+            when (kind) {
+                StreamKind.SCREEN -> try { svc.stopNativeScreenStream() } catch (_: Exception) {}
+                StreamKind.CAMERA -> try { svc.stopNativeCameraStream() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /** Native equivalent of the Python agent's `op_device_info` -- no
      *  Termux:API, no shells. Pure Android Build + BatteryManager. */
     private fun deviceInfo(ctx: Context): JSONObject {
         val out = JSONObject()
@@ -63,8 +137,6 @@ object Ops {
             out.put("battery_plugged", plugged != 0)
         } catch (_: Exception) { /* best-effort */ }
 
-        // Agent identity (matches the existing Python op_device_info shape
-        // closely enough that the existing UI info modal renders cleanly).
         out.put("agent", "vortex-driver-apk")
         out.put("agent_version", BuildConfig.VERSION_NAME)
         return out

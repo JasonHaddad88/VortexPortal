@@ -3,6 +3,79 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B2.2] — 2026-05-24
+
+**Native `screen_stream` + `camera_stream` in the APK.** After B2.2,
+**Termux + Termux:API are no longer required on Android** for any of
+the daily-use ops — camera, screen mirror, input, device info all
+ride the APK's own WebSocket. The loopback `StreamServer` paths stay
+in the binary for backwards-compat with phones still running the
+Python agent, but a B1-enrolled APK never touches them.
+
+### Stream-capable `OpDispatcher`
+- New `OpDispatcher.Outcome` sealed class with `Unary`, `Stream`, and
+  `Reject` variants. `classify(text)` is the new entry point — Unary
+  ops are wrapped into a single response frame as before; Stream ops
+  bubble back up to `HubClient` so it can launch + cancel them at
+  WebSocket scope.
+- New `StreamHandler` functional interface — a `suspend (args, sink)`
+  signature. Stream handlers own the lifecycle of one `id` from
+  `stream_start` to `stream_end`.
+
+### New `WsStreamSink`
+- Atomic header+binary send pair via a shared `sendLock` on the
+  `HubClient`. Same mutex serializes responses, `direct_info`, and
+  every stream's `stream_chunk_header`+binary frame, so concurrent
+  streams + unary ops can't interleave a `chunk_header` with the wrong
+  binary frame.
+- `sendStart` / `sendChunk` / `sendEnd` / `sendError` — idempotent
+  close so finally-blocks are safe to call after an engine error
+  already fired.
+
+### `HubClient` per-stream coroutines
+- Stream outcomes get `scope.launch { handler.run(args, sink) }`,
+  tracked in a `ConcurrentHashMap<rid, Job>`. On WS close / failure,
+  `cancelAllStreams()` cancels every active job — the engine `stop()`
+  calls in the handler's `finally` then release the camera /
+  projection promptly.
+- Handler failures **before** the first chunk are surfaced as a
+  normal `{ok:false}` response (matches the Python agent contract so
+  the hub returns a clean HTTP 502 instead of a half-opened MJPEG
+  body). Failures mid-stream end the stream with an error field.
+- `sendText()` helper routes every outbound text frame through the
+  same lock used by streams, so no race between an auth-ok-time
+  `direct_info` push and a concurrent `stream_chunk_header`.
+
+### `DriverService` companion + native start/stop methods
+- `@Volatile var instance: DriverService?` on the companion — set in
+  `onCreate`, cleared in `onDestroy`. The new Ops reach the engines
+  through this.
+- `startNativeScreenStream(sink)` / `stopNativeScreenStream()` /
+  `startNativeCameraStream(sink, facing)` / `stopNativeCameraStream()`
+  — wraps `ScreenEngine` + `CameraEngine` for the new ops. Screen
+  start throws `IllegalStateException` with a clear "open Vortex
+  Driver to arm screen sharing" message if MediaProjection hasn't
+  been accepted.
+- `promoteForeground()` now folds the native engines into the
+  service-type bitmask too, so Android 14+ accepts the
+  MediaProjection / camera grants for native streams.
+
+### `Ops.registerAll` adds the two stream ops
+- `screen_stream` (no args) and `camera_stream` (`{facing:"front"|"back"}`)
+  — both delegate to a shared `runNativeStream` driver that starts
+  the engine, sends `stream_start`, awaits either an engine error or
+  coroutine cancellation, and stops the engine in `finally`.
+- Same wire shape (`image/jpeg`, `stream_chunk_header` framing) as
+  the Python agent — the hub + browser need zero changes.
+
+### Notes
+- Loopback ports `5098` (screen) + `5099` (camera) still bound by the
+  legacy `StreamServer` for phones running the Python agent against
+  the APK as a helper — that mode is unchanged. The decision is per
+  enrollment: B1-enrolled APKs ignore the loopback path for their
+  own streams.
+- APK version: **0.6.0-b2.1 → 0.7.0-b2.2 (versionCode 6 → 7)**.
+
 ## [Driver-B2.1] — 2026-05-21
 
 Two things: enrollment is now **scan-and-done**, and **input** is

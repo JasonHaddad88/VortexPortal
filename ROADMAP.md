@@ -297,8 +297,20 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   one-liner to a `<details>` expander. Native `op_input` via shared
   `InputDispatch.kt` (also used by legacy InputServer) — input no
   longer needs the loopback hop on Android.
-- [ ] **B2.2** — native `screen_stream` + `camera_stream` ops via the
-  same dispatcher; retire the loopback helper for media too.
+- [x] **B2.2 — native `screen_stream` + `camera_stream`** _shipped_.
+  Stream-capable `OpDispatcher` (`Outcome.Unary | Stream | Reject`)
+  with a new `StreamHandler` suspend signature and `WsStreamSink`
+  (atomic header+binary via shared `sendLock`). `HubClient` launches
+  one coroutine per stream rid, tracks them in a `ConcurrentHashMap`,
+  and cancels all on WS close — engines `stop()` in the handler's
+  `finally` so the camera / projection release promptly. `DriverService`
+  exposes `instance` + `startNativeScreenStream` /
+  `startNativeCameraStream` wrapping the existing engines. Setup
+  errors (e.g. MediaProjection not armed) surface as `{ok:false}`
+  responses so the hub returns a clean 502, matching the Python
+  agent's contract. After B2.2, **Termux + Termux:API are no longer
+  required on Android** for camera / screen / input / device info —
+  only Theft Mode (B4) and H.264 (B5) still need future work.
 - [ ] **B3** — direct-WS server inside the APK; browser ↔ APK direct
   (hub leaves the data path on Android too).
 - [ ] **B4** — theft-mode native ops (FusedLocationProvider,

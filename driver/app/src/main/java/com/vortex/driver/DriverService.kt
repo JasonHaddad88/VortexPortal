@@ -56,10 +56,22 @@ class DriverService : Service(), CameraEngine.FrameSink {
     @Volatile private var lastError: String? = null
     @Volatile private var frameCount: Long = 0L
 
+    // ---- B2.2: native stream ops ----
+    // Independent of the loopback StreamServer pipeline -- these are owned
+    // by HubClient stream coroutines (one per inbound rid) and pump frames
+    // straight into a WsStreamSink. We keep separate engine instances so
+    // a Termux-side loopback consumer and a hub-side stream consumer can
+    // theoretically run in parallel on different cameras / sessions.
+    private var nativeCamera: CameraEngine? = null
+    private var nativeScreen: ScreenEngine? = null
+    @Volatile private var nativeCameraSink: CameraEngine.FrameSink? = null
+    @Volatile private var nativeScreenSink: CameraEngine.FrameSink? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         ensureChannel()
         // Start as data_sync only (the most permissive baseline that doesn't
         // require yet-unobtained perms). We'll add camera / mediaProjection
@@ -112,11 +124,81 @@ class DriverService : Service(), CameraEngine.FrameSink {
     override fun onDestroy() {
         try { camera?.stop() } catch (_: Exception) {}
         try { screen?.stop() } catch (_: Exception) {}
+        try { nativeCamera?.stop() } catch (_: Exception) {}
+        try { nativeScreen?.stop() } catch (_: Exception) {}
         try { cameraServer.stop() } catch (_: Exception) {}
         try { screenServer.stop() } catch (_: Exception) {}
         try { inputServer.stop() } catch (_: Exception) {}
         try { hubClient?.stop() } catch (_: Exception) {}
+        nativeCamera = null
+        nativeScreen = null
+        nativeCameraSink = null
+        nativeScreenSink = null
+        if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    // ---- B2.2 public API for Ops.screen_stream / camera_stream ----
+
+    /** Returns true if the user has accepted the MediaProjection dialog
+     *  (via ScreenSetupActivity) so a screen stream can start. */
+    fun isScreenArmed(): Boolean = screenArmed
+
+    /**
+     * Start a native screen stream pumping JPEG frames into [sink] until
+     * [stopNativeScreenStream] is called or an engine error occurs.
+     *
+     * Throws IllegalStateException if the user hasn't armed MediaProjection
+     * yet -- caller should turn that into the standard "open Vortex Driver
+     * to enable screen sharing" error message.
+     */
+    @Synchronized
+    fun startNativeScreenStream(sink: CameraEngine.FrameSink) {
+        val data = pendingScreenResultData
+        if (!screenArmed || data == null) {
+            throw IllegalStateException(
+                "Vortex Driver screen sharing is not armed -- open the Driver " +
+                "app on this device and tap 'Enable screen sharing' to accept " +
+                "the system consent dialog."
+            )
+        }
+        // Tear down any previous native session before opening a new one.
+        try { nativeScreen?.stop() } catch (_: Exception) {}
+        nativeScreen = null
+        nativeScreenSink = sink
+        // Make sure the foreground service type includes mediaProjection
+        // before we ask getMediaProjection() for a session.
+        promoteForeground()
+        nativeScreen = ScreenEngine(this, pendingScreenResultCode, data).also { it.start(sink) }
+        updateNotification()
+    }
+
+    @Synchronized
+    fun stopNativeScreenStream() {
+        try { nativeScreen?.stop() } catch (_: Exception) {}
+        nativeScreen = null
+        nativeScreenSink = null
+        promoteForeground()
+        updateNotification()
+    }
+
+    @Synchronized
+    fun startNativeCameraStream(sink: CameraEngine.FrameSink, facing: Int = CameraCharacteristics.LENS_FACING_BACK) {
+        try { nativeCamera?.stop() } catch (_: Exception) {}
+        nativeCamera = null
+        nativeCameraSink = sink
+        promoteForeground()
+        nativeCamera = CameraEngine(this, facing).also { it.start(sink) }
+        updateNotification()
+    }
+
+    @Synchronized
+    fun stopNativeCameraStream() {
+        try { nativeCamera?.stop() } catch (_: Exception) {}
+        nativeCamera = null
+        nativeCameraSink = null
+        promoteForeground()
+        updateNotification()
     }
 
     // ---- Camera lifecycle ----
@@ -244,8 +326,8 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private fun promoteForeground() {
         startForegroundCompat(
             buildNotification(),
-            includeCamera = cameraClientConnected || camera != null,
-            includeMediaProjection = screenArmed,
+            includeCamera = cameraClientConnected || camera != null || nativeCamera != null,
+            includeMediaProjection = screenArmed || nativeScreen != null,
         )
     }
 
@@ -315,6 +397,13 @@ class DriverService : Service(), CameraEngine.FrameSink {
     }
 
     companion object {
+        /** Live service instance, or null if the service isn't running.
+         *  B2.2: native stream ops (Ops.screen_stream / camera_stream)
+         *  reach the engines through this — same lifecycle as the
+         *  foreground service itself. */
+        @Volatile var instance: DriverService? = null
+            private set
+
         const val CHANNEL_ID = "vortex_driver"
         const val NOTIF_ID = 0xC0FFEE
         const val AGENT_HOST = "127.0.0.1"
