@@ -1,41 +1,71 @@
 # Vortex Hub
 
-**V4.0** — multi-user control plane for your devices. One **hub** (on your
-laptop or a phone) owns user accounts and a paired device registry. Each
-device runs a tiny **agent** that opens a persistent WebSocket out to the
-hub. From the futuristic browser dashboard you sign in once and control
-every device — no per-device public URL, no plaintext passwords on disk.
+**V5.21 + Driver-B3** — multi-user, multi-node control plane for your
+devices. One or more **hubs** (any laptop, phone, or VM) share a
+database and present the same dashboard; each device runs an **agent**
+(pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver
+APK** on Android, dials any reachable hub over a persistent WebSocket,
+and is then controllable from any node. Latency-critical paths (input,
+screen, camera) go **browser ↔ device direct** when the LAN allows,
+falling back to a transparent hub relay otherwise — no per-device
+public URL, no plaintext passwords on disk.
 
-See [CHANGELOG.md](CHANGELOG.md) for the V1 → V2 migration notes. The old
+See [CHANGELOG.md](CHANGELOG.md) for the full version history. The old
 V1.2 file `app_v1.py` is kept at the repo root for one release as a fallback.
+
+## What's new at a glance
+
+- **Multi-node** (V5.15+): run as many hubs as you like against a shared
+  Turso/libSQL or local DB; control any device from any node — hub-to-hub
+  relay is automatic.
+- **Direct connect** (V5.20–V5.21): browser ↔ device direct WebSocket for
+  both **input** and **media frames** (screen + camera). Hub leaves the
+  data path on LAN.
+- **Vortex Driver APK** (Driver-B1 → B3): standalone Android client that
+  replaces Termux + Termux:API + the Python agent for camera, screen,
+  input, and device info. Scan a QR, you're enrolled; the APK hosts its
+  own direct-WS server for browser-direct on LAN.
+- **Theft Mode + Theft Dashboard** (V5.8 / V5.10): owner anti-theft
+  (discreet photo / location / audio) with an account-wide fleet view.
 
 ## Architecture in one paragraph
 
-The hub is a FastAPI app with a SQLite database under `~/vortex/hub.db`. It
-serves the browser UI and a single WebSocket endpoint at `/ws/agent`. Each
-agent reads its `~/.vortex_agent/config.json` (created by the pairing flow),
-opens an outbound `wss://` connection to the hub, authenticates with its
-device-id + token, and serves multiplexed `stat` / `list_dir` / `read_file`
-requests. To browse a device, the hub sends commands down the WebSocket and
-streams the response back as the HTTP body. Pairing is a 6-digit code shown
-on the hub, typed into the agent's environment on first run.
+The hub is a FastAPI app with a local SQLite file at `~/vortex/hub.db`
+(optionally backed by Turso/libSQL for multi-node sharing). It serves the
+browser UI, a WebSocket endpoint at `/ws/agent` for devices, and a
+broker endpoint `GET /api/devices/{id}/direct` that hands browsers a
+direct-WS candidate list. Devices reach the hub one of two ways:
+either a **Python agent** (Termux / Linux / Windows) opens an outbound
+`wss://` connection and serves multiplexed ops over it, or the
+**Vortex Driver APK** does the same from native Android code (Camera2,
+MediaProjection, AccessibilityService). Both agent flavours speak the
+same protocol and additionally host their own local direct-WS server
+so a browser on the same LAN can dial them without the hub in the
+data path.
 
 ```
-┌────────────────────────────────────┐
-│  Hub (laptop or phone)             │
-│  - SQLite: users, devices, tokens  │
-│  - Web UI on /                     │
-│  - WebSocket on /ws/agent          │
-└──────────────┬─────────────────────┘
-               │  wss:// (TLS via Cloudflare)
-       ┌───────┴────────┐
-       │                │
-┌──────▼──────┐  ┌──────▼──────┐
-│  Agent      │  │  Agent      │
-│  (phone A)  │  │  (phone B)  │
-│  outbound,  │  │  outbound,  │
-│  no ports   │  │  no ports   │
-└─────────────┘  └─────────────┘
+                       ┌─────────────────────────┐
+                       │ Browser (dashboard)     │
+                       └────┬─────────────┬──────┘
+                            │ wss/ (hub)  │ ws/ (direct, LAN/mesh)
+                ┌───────────▼──────┐      │
+                │  Hub node(s)     │      │
+                │  FastAPI + DB    │      │
+                │  /ws/agent       │      │
+                │  hub-to-hub      │      │
+                │     relay        │      │
+                └───────┬──────────┘      │
+                wss/    │                 │
+       ┌────────────────┼─────────────────┤
+       │                │                 │
+┌──────▼──────┐  ┌──────▼──────┐  ┌───────▼──────────┐
+│ Python      │  │ Python      │  │ Vortex Driver    │
+│ agent       │  │ agent       │  │ APK (Android)    │
+│ (PC/SBC/    │  │ (Termux     │  │ Camera2 +        │
+│  IoT)       │  │  phone)     │  │ MediaProjection  │
+│  + direct   │  │  + direct   │  │  + direct WS     │
+│    WS       │  │    WS       │  │    server        │
+└─────────────┘  └─────────────┘  └──────────────────┘
 ```
 
 ## Quick start — Windows hub
@@ -70,25 +100,62 @@ To stop the hub: Ctrl+C in PowerShell.
    admin account, click **+ Self-Register this device**, then enroll
    other phones (self-register on each, or "Pair remote device").
 
-## Direct-connect mode (since V5.16)
+## Direct-connect mode (V5.20 input · V5.21 media · Driver-B3 APK)
 
-Latency-critical paths go **agent ↔ browser directly** when the
-browser is reachable to the device (same LAN or a WireGuard/Tailscale
-mesh) — the hub leaves the interactive path. The agent listens on
-`VORTEX_DIRECT_PORT` (default `8770`, set `0` to disable);
-`GET /devices/{id}/direct` hands the browser ws candidates + a ticket;
-the screen page races a direct WebSocket and routes input over it
-(shows `(direct)` when active). Falls back to the hub path
-automatically if no direct route works.
+Latency-critical paths go **device ↔ browser directly** when the
+browser can reach the device (same LAN or a WireGuard/Tailscale
+mesh) — the hub leaves the data path entirely. Both flavours of
+agent host their own direct-WS server:
 
-**Universal:** pure-Python agent — works on PC, SBC, IoT, phone (no
-APK). **Free:** LAN or the free Tailscale tier. **Phase 1 covers
-input;** camera/screen frame streams move onto the same socket in the
-next phase.
+- **Python agent** listens on `VORTEX_DIRECT_PORT` (default `8770`,
+  set `0` to disable).
+- **Vortex Driver APK** binds a kernel-assigned port automatically;
+  the hub gets `(port, hosts, ticket)` via `direct_info` on every
+  reconnect.
 
-Trust: the direct WS is `ws://` (no TLS). Only expose `:8770` on
-networks you trust (LAN/mesh); on the public internet the hub path is
-the secure one.
+`GET /api/devices/{id}/direct` hands the browser a candidate list +
+a one-shot ticket; the dashboard races a direct WebSocket and routes
+**input + screen + camera frames** over it (the page shows
+`(direct)` when active). Falls back to the transparent hub relay if
+no direct route works — same dashboard URL, no user action.
+
+**Universal:** Python agent covers PC, SBC, IoT, Termux phone; Driver
+APK covers Android without Termux. **Free:** LAN or the free
+Tailscale tier. **Phase A1 (V5.20)** = input fast-path; **Phase A2
+(V5.21)** = screen + camera frames on the same socket. **Driver-B3
+(Android)** = same protocol, in-APK.
+
+Trust: the direct WS is `ws://` (no TLS). Only expose `:8770` (or the
+APK's chosen port) on networks you trust (LAN/mesh); on the public
+internet the hub path is the secure one. Browser cannot connect to a
+direct candidate without a fresh one-shot ticket the hub just issued.
+
+## Vortex Driver APK (Android — no Termux required)
+
+Since **Driver-B1** the standalone Android client lives at
+[`driver/`](driver/). Scan the QR on **Add a Device → enrollment
+tokens** (or paste a `vortex://enroll?token=…&hub=…` link), accept
+notification + screen-share + accessibility permissions once, and the
+APK enrols itself, dials your hub, and ships native ops for:
+
+| Op | Source | Notes |
+|---|---|---|
+| `device_info` | `Build` + `BatteryManager` | No permissions beyond notifications |
+| `input` | `AccessibilityService` | Tap, long-press, swipe, system buttons |
+| `screen_stream` | `MediaProjection` → MediaCodec/JPEG | Per-request `quality` / `max_dim` / `fps_cap` |
+| `camera_stream` | `Camera2` → JPEG (MJPEG) | `{facing:"front"\|"back"}` |
+
+After **Driver-B2.2** (camera + screen native) and **Driver-B3** (the
+APK's own direct-WS server), **Termux + Termux:API are no longer
+required on Android** for daily-use ops. The CI workflow
+[`driver-build.yml`](.github/workflows/driver-build.yml) ships a debug
+APK on every push to `main`; install it from the GitHub Actions
+artifact (see [`driver/README.md`](driver/README.md) for the full
+install + permission walkthrough).
+
+Where the APK doesn't go yet: **Theft Mode** still uses Termux:API on
+Android (B4 will move it native), and video is still MJPEG until
+**B5** lands H.264 over MediaCodec for AnyDesk-grade latency.
 
 ## Multi-node control (since V5.15)
 
@@ -216,8 +283,9 @@ Microphone / Location granted.
 privacy indicator — truly invisible capture isn't possible on stock
 Android. "Keep-awake" is a CPU wake-lock only; it **cannot** block the
 lock screen or a hardware power-off without device-owner/MDM. Captures
-only happen while the device is online to the hub. Covert **video** and
-a stronger anti-lock are deferred to a Driver-APK phase.
+only happen while the device is online to the hub. Theft Mode itself
+still uses Termux:API on Android pending **Driver-B4** (FusedLocation
++ MediaRecorder + native wake-lock) — track it in [ROADMAP.md](ROADMAP.md).
 
 **Responsible use:** Theft Mode only ever targets devices paired to
 *your own* account, and media is stored under that account. Arming
@@ -276,16 +344,32 @@ Basic auth is replaced by sessions; HTTPS is provided by Cloudflare.
 ```
 hub/
   __init__.py
-  app.py            # FastAPI routes + WS endpoint
+  app.py            # FastAPI routes + WS endpoint + direct broker
   auth.py           # Sessions, password hashing, rate limit
-  db.py             # SQLite schema + queries
-  templates.py      # Inline HTML + futuristic CSS
-  ws_router.py      # AgentConnection + Registry
+  db.py             # SQLite schema + queries (libSQL embedded replica or Turso HTTP)
+  templates.py      # Inline HTML + futuristic CSS + direct-WS browser JS
+  ws_router.py      # AgentConnection + Registry + cross-node relay
 
 agent/
   __init__.py
   agent.py          # Outbound WS client + op dispatch
   pairing.py        # Enrollment: pairing-code + self-register-wait
+  direct_server.py  # Per-agent direct-WS server (V5.20) + media frames (V5.21)
+  camera_bridge.py  # Loopback bridge to Vortex Driver APK on phones
+  screen_bridge.py  # Same, for MediaProjection screen capture
+
+driver/              # Vortex Driver APK (Kotlin) — see driver/README.md
+  app/src/main/java/com/vortex/driver/
+    DriverService.kt      # Foreground service + engine owners (M1-M3)
+    EnrollActivity.kt     # Account-token enrollment + vortex://enroll deep-link
+    HubClient.kt          # Outbound WS to the hub (matches Python agent)
+    DirectServer.kt       # In-APK direct-WS server (Driver-B3)
+    OpDispatcher.kt       # Unary + Stream op routing
+    Ops.kt                # device_info / input / screen_stream / camera_stream
+    CameraEngine.kt       # Camera2 -> MJPEG
+    ScreenEngine.kt       # MediaProjection -> MJPEG
+    InputDispatch.kt      # AccessibilityService dispatch
+    Wsbackend.kt          # OkHttp + Java-WebSocket sink abstraction
 
 serve.ps1           # Windows hub launcher (+ co-located selfreg agent)
 serve.sh            # Termux launcher (default: UI + selfreg agent; MODE=agent legacy)
@@ -464,9 +548,9 @@ power policies (Xiaomi/Huawei/OnePlus) can still freeze background apps.
 - **No HTTPS termination on the hub itself**. Cloudflare terminates TLS
   externally, then forwards over its encrypted tunnel. Same threat model as
   V1; safe over the public internet, plain HTTP on LAN.
-- **WS chunks are binary frames as of V2.1** (256 KiB each). The hub still
-  accepts V2.0's base64-in-JSON form for rolling upgrades. For multi-GB
-  transfers SCP/rsync is still faster — Cloudflare's idle / max-frame
-  limits make WebSockets the wrong tool past a certain scale.
+- **WS chunks are binary frames** (256 KiB each). For multi-GB transfers
+  SCP/rsync is still faster — Cloudflare's idle / max-frame limits make
+  WebSockets the wrong tool past a certain scale. (The V2.0 base64-in-JSON
+  fallback was retired in V5.0.)
 - **Other apps' private data is invisible** on Android. Termux is just
   another Android app — sees its own sandbox + `/sdcard`, nothing else.
