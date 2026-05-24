@@ -82,6 +82,18 @@
             android:theme="@style/Theme.VortexDriver.Translucent" />
 
         <!--
+          B6: in-app sign-in (the new default enrollment path). Posts
+          /login + /api/session-enroll, saves device creds, starts the
+          service. Falls back to EnrollActivity (token paste) via a
+          link inside the activity.
+        -->
+        <activity
+            android:name=".SignInActivity"
+            android:exported="false"
+            android:label="@string/signin_title"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!--
           B1: standalone enrollment — paste an account token + hub URL,
           POST /api/enroll, save device_id+token. Launched from
           MainActivity when Prefs.isEnrolled() is false.

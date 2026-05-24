@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V5.23 + Driver-M4** — multi-user, multi-node control plane for your
+**V5.24 + Driver-B6** — multi-user, multi-node control plane for your
 devices. One or more **hubs** (any laptop, phone, or VM) share a
 database and present the same dashboard; each device runs an **agent**
 (pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver
@@ -21,14 +21,15 @@ V1.2 file `app_v1.py` is kept at the repo root for one release as a fallback.
 - **Direct connect** (V5.20–V5.21): browser ↔ device direct WebSocket for
   both **input** and **media frames** (screen + camera). Hub leaves the
   data path on LAN.
-- **Vortex Driver APK** (Driver-B1 → B5): standalone Android client that
+- **Vortex Driver APK** (Driver-B1 → B6): standalone Android client that
   replaces Termux + Termux:API + the Python agent for **every** op the
   hub knows — camera, screen, input, device info, **and** Theft Mode
-  (`location`, `record_audio`, `camera_capture`, `keepawake`). Scan a
-  QR, you're enrolled; the APK hosts its own direct-WS server for
-  browser-direct on LAN, and screen capture ships **hardware H.264**
-  (MediaCodec → WebCodecs) for AnyDesk-grade latency on supported
-  browsers.
+  (`location`, `record_audio`, `camera_capture`, `keepawake`). Open
+  the app, enter your hub URL + username + password, tap **Sign in &
+  enroll** (or scan a QR for the deep-link path); the APK hosts its own
+  direct-WS server for browser-direct on LAN, and screen + camera capture
+  both ship **hardware H.264** (MediaCodec → WebCodecs) for AnyDesk-grade
+  latency on supported browsers.
 - **Theft Mode + Theft Dashboard** (V5.8 / V5.10): owner anti-theft
   (discreet photo / location / audio) with an account-wide fleet view.
 

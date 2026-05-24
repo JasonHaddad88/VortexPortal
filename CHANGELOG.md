@@ -3,6 +3,63 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.24 / Driver-B6] — 2026-05-24
+
+**Sign in to the Vortex Driver APK like any other app.** No more
+copying a long account token out of the browser; enter your hub
+URL, username, password, and the device enrolls itself. Big UX
+unlock for first-time setup.
+
+### Hub: new `POST /api/session-enroll`
+- Session-authed via `auth.require_user`. Body: `{device_name}`.
+- Returns `{device_id, token, name, nodes}` -- identical shape to
+  `/api/enroll`, so the existing agent/client wiring needs nothing
+  new. Reuses `_live_node_urls` + `db.create_device`.
+- No account-token round-trip: the device row is created directly
+  under the signed-in user's account, no stray token left behind
+  for the user to clean up.
+
+### APK: new `SignInActivity` (default enrollment landing)
+- Fields: Hub URL, Username, Password, Device name. Single
+  **Sign in & enroll** button does everything.
+- Flow:
+  1. `POST {hub}/login` (form, with `followRedirects(false)` so
+     we can read the 303 + the Set-Cookie header).
+  2. `POST {hub}/api/session-enroll` (JSON, cookie forwarded by
+     OkHttp's CookieJar).
+  3. Save creds + start `DriverService`.
+- Distinct error paths: bad creds -> "Wrong username or password",
+  rate-limited -> "Wait a few minutes", 404 on session-enroll ->
+  "This hub doesn't support sign-in enrollment (added in V5.24)
+  -- tap 'Have an account token instead?' below for the legacy
+  flow", 5xx -> raw detail, anything else -> "Unexpected sign-in
+  response, is the Hub URL correct?".
+- In-memory cookie jar -- the `vortex_session` cookie is
+  single-use here and dropped when the activity finishes. No
+  persisted session on disk.
+- **Have an account token instead?** link opens the legacy
+  `EnrollActivity` (token paste).
+- **No account? Register in browser** link opens
+  `{hub}/register` in the system browser. (Register flow is
+  hub-side because it needs the invite-mode UI.)
+
+### Wiring
+- `MainActivity` "Enroll this device" button now opens
+  `SignInActivity` (was: `EnrollActivity`).
+- `EnrollActivity` is unchanged -- still reachable via the
+  `vortex://enroll` QR deep-link and via the "Have a token?"
+  link inside `SignInActivity`.
+- New layout `res/layout/activity_sign_in.xml` mirroring the
+  enroll layout's style.
+- New string resources `signin_*`.
+- Manifest registers `SignInActivity` (not exported).
+
+### Hub version
+- **5.23 → 5.24**.
+
+### APK version
+- **0.12.0-m4 → 0.13.0-b6 (versionCode 13 → 14)**.
+
 ## [Driver-M4] — 2026-05-24
 
 **Autostart on boot.** Removes the user-visible papercut where

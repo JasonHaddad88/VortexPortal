@@ -68,4 +68,21 @@
     <string name="enroll_label_device_name">Device name (optional)</string>
     <string name="enroll_hint_device_name">e.g. Living-room Pixel</string>
     <string name="enroll_btn">Enroll</string>
+
+    <!-- B6: in-app sign-in (the new default enrollment path). The token-
+         paste flow above stays as an "advanced" link for QR-deep-link
+         scans and headless setups. -->
+    <string name="signin_title">Sign in to Vortex</string>
+    <string name="signin_subtitle">Sign in with your Vortex account and this device will enroll itself. No long token to copy, no browser detour — username and password are all you need.</string>
+    <string name="signin_label_hub_url">Hub URL (any reachable node)</string>
+    <string name="signin_hint_hub_url">https://your-hub.trycloudflare.com</string>
+    <string name="signin_label_username">Username</string>
+    <string name="signin_hint_username">your Vortex account username</string>
+    <string name="signin_label_password">Password</string>
+    <string name="signin_hint_password">your Vortex account password</string>
+    <string name="signin_label_device_name">Device name (optional)</string>
+    <string name="signin_hint_device_name">e.g. Living-room Pixel</string>
+    <string name="signin_btn">Sign in &amp; enroll</string>
+    <string name="signin_use_token">Have an account token instead?</string>
+    <string name="signin_register">No account? Register in browser</string>
 </resources>

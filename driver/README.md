@@ -46,6 +46,7 @@ Future milestones, in order:
 | **B5** | H.264 / MediaCodec video (screen) — real low-latency video over the direct WS | _shipped_ |
 | **B5.1** | H.264 / MediaCodec for camera_stream (same wire, Camera2 → encoder Surface) | _shipped_ |
 | **M4** | Autostart on boot + (later) signed release builds + F-Droid | autostart _shipped_ |
+| **B6** | In-app **sign-in** (username + password, no token paste) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -161,6 +162,35 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B6: in-app sign-in (no token paste)
+
+The new default enrollment path. Tap **Enroll this device** in the
+Driver app → fill in **Hub URL + Username + Password + Device
+name** → tap **Sign in & enroll**. Behind the scenes:
+
+1. `POST {hub}/login` (form-encoded). Hub returns 303 + a
+   `vortex_session` cookie.
+2. `POST {hub}/api/session-enroll` (new hub endpoint, V5.24+) with
+   that cookie + the device name. Returns the same JSON shape
+   `/api/enroll` does (`{device_id, token, name, nodes}`).
+3. Save creds, start the foreground service. The device is online
+   within seconds.
+
+No long token to copy out of the browser. The legacy
+**token-paste** flow (`EnrollActivity`) still works for:
+- the `vortex://enroll` QR deep-link (untouched),
+- older hubs (pre-V5.24) without `/api/session-enroll`,
+- headless setups where you'd rather pre-mint a long-lived token.
+
+A **Have an account token instead?** link inside the sign-in screen
+opens the legacy flow if the user wants it. A **No account?
+Register in browser** link opens `{hub}/register` (registration
+needs the hub's invite-mode UI which we don't replicate in-app).
+
+The sign-in screen uses an in-memory cookie jar — the
+`vortex_session` cookie is single-use here and is dropped when the
+activity finishes, so a stolen APK install can't replay it later.
 
 ### B5.1: H.264 for `camera_stream`
 

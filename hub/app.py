@@ -756,6 +756,28 @@ async def api_enroll(request: Request):
             "nodes": _live_node_urls(request)}
 
 
+# V5.24: session-authed enrollment for the Vortex Driver APK's in-app
+# sign-in flow (Driver-B6). The APK POSTs /login (form-encoded) to
+# acquire a session cookie, then POSTs HERE with that cookie + a
+# device_name and receives the same shape /api/enroll returns. No
+# account-token round-trip, no token-bookkeeping the user would have
+# to clean up later -- the device row goes straight into the
+# signed-in user's account.
+@app.post("/api/session-enroll")
+async def api_session_enroll(request: Request,
+                             user: dict = Depends(auth.require_user)):
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    name = (body.get("device_name") or "").strip()[:80] or "Unnamed Device"
+    device_id = uuid.uuid4().hex
+    token = secrets.token_urlsafe(32)
+    db.create_device(device_id, user["id"], name, token)
+    return {"device_id": device_id, "token": token, "name": name,
+            "nodes": _live_node_urls(request)}
+
+
 @app.get("/api/nodes")
 async def api_nodes(request: Request):
     """Live node URLs for an already-enrolled agent to (re)discover where

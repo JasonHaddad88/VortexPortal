@@ -346,6 +346,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B6 — in-app sign-in** _shipped_. New `SignInActivity`
+  becomes the default "Enroll" landing: hub URL + username +
+  password + device name -> `POST /login` (form, 303 + Set-Cookie)
+  -> `POST /api/session-enroll` (new V5.24 hub endpoint) -> save
+  device creds + start service. In-memory cookie jar (single-use,
+  dropped on activity finish). Legacy token-paste flow stays
+  reachable via "Have an account token instead?" inside
+  SignInActivity AND via the `vortex://enroll` deep-link. New hub
+  route `/api/session-enroll` is session-authed via
+  `auth.require_user`; reuses `_live_node_urls` + `db.create_device`
+  so the response shape is identical to `/api/enroll`.
+
 - [x] **M4 — autostart on boot** _shipped_. New `BootReceiver`
   listens for `BOOT_COMPLETED`, `LOCKED_BOOT_COMPLETED`, and
   `MY_PACKAGE_REPLACED`; re-arms `DriverService` via

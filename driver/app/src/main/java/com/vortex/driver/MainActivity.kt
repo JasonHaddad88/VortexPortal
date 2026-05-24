@@ -52,10 +52,13 @@ class MainActivity : AppCompatActivity() {
         binding.armScreenBtn.setOnClickListener { armScreenSharing() }
         binding.disarmScreenBtn.setOnClickListener { disarmScreenSharing() }
         binding.openA11yBtn.setOnClickListener { openAccessibilitySettings() }
-        // B1: standalone enrollment (no Termux needed). Enroll button
-        // launches the activity; Forget clears creds.
+        // B6: sign-in is the new default enrollment path -- "Enroll"
+        // opens SignInActivity (username + password), which then calls
+        // /api/session-enroll under the hood. The legacy token-paste
+        // flow (EnrollActivity) is still reachable via a link inside
+        // SignInActivity AND via the vortex://enroll deep-link.
         binding.enrollBtn.setOnClickListener {
-            startActivity(Intent(this, EnrollActivity::class.java))
+            startActivity(Intent(this, SignInActivity::class.java))
         }
         binding.unenrollBtn.setOnClickListener {
             Prefs.clear(this)
