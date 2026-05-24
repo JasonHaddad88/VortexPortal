@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V5.21 + Driver-B3** — multi-user, multi-node control plane for your
+**V5.22 + Driver-B5** — multi-user, multi-node control plane for your
 devices. One or more **hubs** (any laptop, phone, or VM) share a
 database and present the same dashboard; each device runs an **agent**
 (pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver
@@ -21,10 +21,12 @@ V1.2 file `app_v1.py` is kept at the repo root for one release as a fallback.
 - **Direct connect** (V5.20–V5.21): browser ↔ device direct WebSocket for
   both **input** and **media frames** (screen + camera). Hub leaves the
   data path on LAN.
-- **Vortex Driver APK** (Driver-B1 → B3): standalone Android client that
+- **Vortex Driver APK** (Driver-B1 → B5): standalone Android client that
   replaces Termux + Termux:API + the Python agent for camera, screen,
   input, and device info. Scan a QR, you're enrolled; the APK hosts its
-  own direct-WS server for browser-direct on LAN.
+  own direct-WS server for browser-direct on LAN, and screen capture
+  now ships **hardware H.264** (MediaCodec → WebCodecs) for AnyDesk-grade
+  latency on supported browsers.
 - **Theft Mode + Theft Dashboard** (V5.8 / V5.10): owner anti-theft
   (discreet photo / location / audio) with an account-wide fleet view.
 
@@ -142,7 +144,7 @@ APK enrols itself, dials your hub, and ships native ops for:
 |---|---|---|
 | `device_info` | `Build` + `BatteryManager` | No permissions beyond notifications |
 | `input` | `AccessibilityService` | Tap, long-press, swipe, system buttons |
-| `screen_stream` | `MediaProjection` → MediaCodec/JPEG | Per-request `quality` / `max_dim` / `fps_cap` |
+| `screen_stream` | `MediaProjection` → MediaCodec H.264 (or JPEG) | `codec: "h264"\|"mjpeg"`, `quality`, `max_dim`, `fps_cap`, `bitrate` |
 | `camera_stream` | `Camera2` → JPEG (MJPEG) | `{facing:"front"\|"back"}` |
 
 After **Driver-B2.2** (camera + screen native) and **Driver-B3** (the
@@ -154,8 +156,9 @@ artifact (see [`driver/README.md`](driver/README.md) for the full
 install + permission walkthrough).
 
 Where the APK doesn't go yet: **Theft Mode** still uses Termux:API on
-Android (B4 will move it native), and video is still MJPEG until
-**B5** lands H.264 over MediaCodec for AnyDesk-grade latency.
+Android (**B4** will move it native). Screen capture went hardware
+H.264 in **B5** (MediaCodec → WebCodecs in the browser); camera +
+audio H.264 follow in **B5.1**.
 
 ## Multi-node control (since V5.15)
 

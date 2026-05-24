@@ -43,7 +43,7 @@ Future milestones, in order:
 | **B2.2** | Native `screen_stream` + `camera_stream` ops (drop the loopback helper for media) | _shipped_ |
 | **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | _shipped_ |
 | **B4** | Theft-mode native ops (location, audio, push, wake-lock) — last Termux:API dependencies gone | planned |
-| **B5** | H.264 / MediaCodec video — real low-latency video over the direct WS | planned |
+| **B5** | H.264 / MediaCodec video (screen) — real low-latency video over the direct WS | _shipped_ |
 | **M4** | Polish, autostart on boot, signed release builds, F-Droid | planned |
 
 ### B1: standalone Vortex-client role (no Termux required)
@@ -85,6 +85,49 @@ If the device is on a different network than the browser, the LAN
 IPs in the candidate list will fail to dial → the browser falls back
 to the hub relay automatically. No code change needed for that path
 — the hub broker has done the right thing since V5.20.
+
+### B5: H.264 via MediaCodec (screen)
+
+The biggest video-latency lever yet. The `screen_stream` op now
+accepts `{codec: "h264"}` (default still `"mjpeg"`); when honoured,
+the pipeline becomes `MediaProjection → VirtualDisplay → MediaCodec
+input Surface → annex-B NAL units` — entirely on the GPU/hardware
+encoder, with roughly an order of magnitude less bandwidth than the
+JPEG path at the same perceived quality and dramatically lower
+encode latency.
+
+Wire shape (additive — MJPEG callers see no changes):
+
+```
+stream_start: {
+  content_type: "video/h264",
+  codec:        "avc1.42E01E",     // for VideoDecoder.configure
+  width, height,
+  csd_base64:   "<SPS+PPS, base64>",
+}
+stream_chunk_header: { kf: bool, pts: <micros> }   // per access unit
+<binary>: annex-B NAL units
+```
+
+Browser side (hub `templates.py` screen page) negotiates by sending
+`codec: "h264"` only when `window.VideoDecoder` exists. The decoder
+configures with the SPS+PPS from `csd_base64` (so it's ready before
+the first NALU arrives), then each `(EncodedVideoChunk)` is decoded
+into a `VideoFrame` and drawn into a `<canvas>` that replaced the
+`<img>`. The MJPEG path is the fallback for the hub-relay route
+(which uses `multipart/x-mixed-replace` and is JPEG-only by design)
+and for any browser without WebCodecs.
+
+Knobs (all optional, passed via `screen_stream` args):
+
+| Arg | Default | What |
+|---|---|---|
+| `codec` | `"mjpeg"` | `"h264"` enables the MediaCodec path |
+| `max_dim` | 720 | longest side, clamped 160-1080 |
+| `fps_cap` | 30 | encoder hint; 0 means unlimited |
+| `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+Camera-H264 and audio defer to **B5.1**.
 
 ### B2.2: native `screen_stream` + `camera_stream`
 

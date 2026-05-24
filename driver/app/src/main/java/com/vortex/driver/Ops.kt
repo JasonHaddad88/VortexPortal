@@ -6,6 +6,7 @@ import android.content.IntentFilter
 import android.hardware.camera2.CameraCharacteristics
 import android.os.BatteryManager
 import android.os.Build
+import android.util.Base64
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import org.json.JSONArray
@@ -34,8 +35,15 @@ object Ops {
         }
         // B2.2: native screen + camera streams. Handler runs in a HubClient
         // coroutine; cancellation tears down the engine via the finally.
+        // B5: screen_stream also branches on args.codec="h264" -> H.264
+        // via MediaCodec instead of MJPEG. camera_stream stays JPEG for now.
         dispatcher.registerStream("screen_stream") { args, sink ->
-            runNativeStream(StreamKind.SCREEN, sink, args)
+            val codec = args?.optString("codec", "mjpeg") ?: "mjpeg"
+            if (codec.equals("h264", ignoreCase = true)) {
+                runScreenH264Stream(sink, args)
+            } else {
+                runNativeStream(StreamKind.SCREEN, sink, args)
+            }
         }
         dispatcher.registerStream("camera_stream") { args, sink ->
             runNativeStream(StreamKind.CAMERA, sink, args)
@@ -131,6 +139,88 @@ object Ops {
                 StreamKind.CAMERA -> try { svc.stopNativeCameraStream() } catch (_: Exception) {}
             }
         }
+    }
+
+    /**
+     * B5: screen_stream H.264 variant. Wire shape:
+     *
+     *   stream_start: {
+     *     content_type: "video/h264",
+     *     codec:        "avc1.42E01E",       // codec string for VideoDecoder.configure
+     *     width, height,                      // pixel dims (encoder picks)
+     *     csd_base64:   "<base64 SPS+PPS>",   // VideoDecoder.configure.description
+     *   }
+     *   stream_chunk_header: { kf: bool, pts: int }     // per access unit
+     *   <binary>: annex-B prefixed NAL units
+     *
+     * Args understood (all optional):
+     *   max_dim: longest side in px, clamped 160..1080  (default 720)
+     *   fps_cap: target fps (encoder hint)               (default 30)
+     *   bitrate: bits/s; default scales with max_dim     (default 1.5 Mbps @ 720p)
+     *
+     * Browsers without WebCodecs should not request codec=h264. The op
+     * still works for them, but they'd need a pure-JS H.264 decoder to
+     * render the frames.
+     */
+    private suspend fun runScreenH264Stream(sink: WsStreamSink, args: JSONObject?) {
+        val svc = DriverService.instance
+            ?: throw RuntimeException("Vortex Driver service is not running")
+
+        val maxDim  = (args?.optInt("max_dim", 0) ?: 0).let { if (it <= 0) 720 else it.coerceIn(160, 1080) }
+        val fpsCap  = (args?.optInt("fps_cap", -1) ?: -1).let { if (it < 0) 30 else it.coerceIn(0, 60) }
+        val bitrate = (args?.optInt("bitrate", 0) ?: 0).let {
+            if (it > 0) it.coerceIn(200_000, 8_000_000)
+            else        defaultBitrateFor(maxDim)
+        }
+
+        // Bridge from encoder callbacks back into the coroutine.
+        val failure = CompletableDeferred<Throwable>()
+        val started = CompletableDeferred<Boolean>()
+        val nalSink = object : ScreenH264Encoder.NalSink {
+            override fun onCodecConfig(csdBytes: ByteArray, width: Int, height: Int, codecString: String) {
+                val csdB64 = Base64.encodeToString(csdBytes, Base64.NO_WRAP)
+                sink.sendStartWith { m ->
+                    m.put("content_type", "video/h264")
+                    m.put("codec", codecString)
+                    m.put("width", width)
+                    m.put("height", height)
+                    m.put("csd_base64", csdB64)
+                }
+                if (!started.isCompleted) started.complete(true)
+            }
+            override fun onFrame(nalBytes: ByteArray, isKeyFrame: Boolean, ptsMicros: Long) {
+                sink.sendChunkAnnotated(nalBytes) { hdr ->
+                    hdr.put("kf", isKeyFrame)
+                    hdr.put("pts", ptsMicros)
+                }
+            }
+            override fun onError(message: String) {
+                if (!failure.isCompleted) failure.complete(RuntimeException(message))
+            }
+        }
+
+        svc.startNativeScreenStreamH264(
+            sink = nalSink,
+            maxDimension = maxDim,
+            bitrateBps = bitrate,
+            fpsCap = fpsCap,
+        )
+
+        try {
+            while (true) {
+                if (failure.isCompleted) throw failure.getCompleted()
+                delay(100)
+            }
+        } finally {
+            try { svc.stopNativeScreenStreamH264() } catch (_: Exception) {}
+        }
+    }
+
+    private fun defaultBitrateFor(maxDim: Int): Int = when {
+        maxDim >= 1080 -> 3_500_000
+        maxDim >= 900  -> 2_500_000
+        maxDim >= 600  -> 1_500_000
+        else           -> 800_000
     }
 
     /** Native equivalent of the Python agent's `op_device_info` -- no

@@ -3,6 +3,73 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.22 / Driver-B5] — 2026-05-24
+
+**Real low-latency video.** The biggest single video-quality lever
+yet: screen capture now ships H.264 NAL units from the APK's
+hardware encoder straight to the browser's WebCodecs decoder over
+the direct-WS path. Roughly an order of magnitude less bandwidth at
+the same perceived quality vs. the JPEG path, and the encode runs
+on the GPU/hardware encoder so the Java/Kotlin side spends almost
+no CPU.
+
+### APK side (Driver-B5)
+- New `ScreenH264Encoder.kt` — `MediaCodec` H.264 encoder with
+  `createInputSurface()`. `MediaProjection → VirtualDisplay →
+  Surface → MediaCodec → NAL units`. Baseline profile / level 3.1
+  for widest WebCodecs support and lowest decode latency (no
+  B-frames). 1s I-frame interval; per-resolution default bitrate
+  table (1.5 Mbps @ 720p, 3.5 Mbps @ 1080p). Macroblock-aligned
+  resolutions (multiples of 16) so encoders don't reject them.
+- `screen_stream` op now reads `args.codec` (default `"mjpeg"` for
+  back-compat). `"h264"` routes to `runScreenH264Stream` which
+  starts the encoder, waits for the codec config, sends a fat
+  `stream_start` with `csd_base64` + `codec` + `width` + `height`,
+  then forwards each NAL access unit with `kf` + `pts` on the
+  `stream_chunk_header`. `camera_stream` still MJPEG (B5.1 will
+  fold it in).
+- `WsStreamSink` gains `sendStartWith(annotate)` +
+  `sendChunkAnnotated(bytes, annotate?)` so op handlers can attach
+  arbitrary extra fields to the start frame and per-chunk header
+  text frames -- needed for H.264's codec config + keyframe flags.
+- `DriverService` gains `startNativeScreenStreamH264 /
+  stopNativeScreenStreamH264` paired with the existing JPEG
+  methods; `promoteForeground` folds the H.264 encoder into the
+  `mediaProjection` service-type bit too.
+- APK version: **0.8.0-b3 → 0.9.0-b5 (versionCode 9 → 10)**.
+
+### Browser side (templates.py)
+- Shared `_DIRECT_WS_JS` + the screen page's inline copy: the
+  `frame(ab)` handler now receives a 2nd `headerMsg` argument with
+  the full `stream_chunk_header` dict (so `kf` + `pts` are
+  visible). Existing MJPEG handlers ignore the extra arg -- back-
+  compat is preserved.
+- Screen page's `_startDirectScreen`: negotiates `codec: "h264"`
+  when `window.VideoDecoder` exists, else `"mjpeg"`. On
+  `stream_start.content_type === "video/h264"`, it creates a
+  `<canvas>` in place of the `<img>`, decodes the base64
+  `csd_base64` (SPS+PPS), configures `VideoDecoder` with
+  `optimizeForLatency: true`, and per-NALU dispatches an
+  `EncodedVideoChunk` whose `type` is `'key'` or `'delta'` from the
+  `kf` flag. The decoder's `output` callback draws each
+  `VideoFrame` to the canvas and closes it (no memory leak).
+- `stopStream` restores the `<img>` for next time and closes the
+  decoder.
+
+### Scope notes
+- **Direct-WS path only.** The hub-relay path for the screen page
+  uses `multipart/x-mixed-replace` (`<img src="…/screen/live">`)
+  which is JPEG-only by design. H.264 over the hub-relay path would
+  need a different transport entirely (MSE+fMP4 or a different WS
+  endpoint) and is out of scope for B5 -- when the browser can't
+  reach the device directly, MJPEG remains the right shape for the
+  fallback.
+- **Camera + audio defer to B5.1.** `camera_stream` is still MJPEG;
+  H.264 there will follow the same pattern (Camera2 → encoder
+  Surface → NAL units) and is a smaller delta now that the wire
+  format + WsStreamSink + browser pipeline are in place.
+- Hub version: **5.21 → 5.22**.
+
 ## [Driver-B3] — 2026-05-24
 
 **Hub leaves the data path on Android too.** The APK now hosts a

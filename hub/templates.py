@@ -2524,23 +2524,96 @@ def device_screen_page(user: dict, device: dict) -> str:
 
   // V5.21: track active direct screen stream rid + last blob URL so we
   // can shut down cleanly and not leak ObjectURLs.
+  // B5: also track WebCodecs decoder + canvas when negotiating H.264.
   let _screenDirectRid = null, _screenLastUrl = null;
+  let _screenDecoder = null, _screenCanvas = null;
 
   function _startDirectScreen(img) {{
     let firstFrame = true;
-    const rid = _directStream('screen_stream', {{}}, {{
-      start: m => {{ /* nothing — first frame will replace the src */ }},
-      frame: ab => {{
+    let mode = null;     // 'mjpeg' or 'h264'
+    let canvas = null, ctx = null;
+
+    // Negotiate: ask for H.264 if WebCodecs is available, else MJPEG.
+    // The APK falls back to MJPEG silently if it can't honour h264 too.
+    const wantCodec = (typeof window.VideoDecoder === 'function') ? 'h264' : 'mjpeg';
+
+    function setupH264(m) {{
+      // Replace the <img> with a <canvas> sized to the encoder output.
+      const w = m.width || img.naturalWidth || 1080;
+      const h = m.height || img.naturalHeight || 2400;
+      canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.style.maxWidth = '100%';
+      canvas.style.maxHeight = '100%';
+      canvas.style.objectFit = 'contain';
+      if (img.parentNode) {{
+        img.parentNode.replaceChild(canvas, img);
+        attachInput(canvas);
+      }}
+      ctx = canvas.getContext('2d', {{alpha: false, desynchronized: true}});
+      _screenCanvas = canvas;
+      let description = null;
+      try {{
+        const bin = atob(m.csd_base64 || '');
+        description = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) description[i] = bin.charCodeAt(i);
+      }} catch (e) {{}}
+      const decoder = new VideoDecoder({{
+        output: frame => {{
+          try {{ ctx.drawImage(frame, 0, 0, canvas.width, canvas.height); }}
+          finally {{ frame.close(); }}
+        }},
+        error: e => setStatus('decoder error: ' + e.message),
+      }});
+      const cfg = {{
+        codec: m.codec || 'avc1.42E01E',
+        // WebCodecs accepts an annex-B SPS+PPS blob as `description` for AVC.
+        description: description || undefined,
+        optimizeForLatency: true,
+      }};
+      try {{ decoder.configure(cfg); }} catch (e) {{
+        setStatus('h264 unsupported: ' + e.message); return false;
+      }}
+      _screenDecoder = decoder;
+      return true;
+    }}
+
+    const rid = _directStream('screen_stream', {{codec: wantCodec}}, {{
+      start: m => {{
+        if (m && m.content_type === 'video/h264') {{
+          mode = setupH264(m) ? 'h264' : null;
+        }} else {{
+          mode = 'mjpeg';
+        }}
+      }},
+      frame: (ab, hdr) => {{
+        if (mode === 'h264' && _screenDecoder) {{
+          const kf = !!(hdr && hdr.kf);
+          const ptsMicros = (hdr && typeof hdr.pts === 'number')
+                              ? hdr.pts : Math.round(performance.now() * 1000);
+          try {{
+            _screenDecoder.decode(new EncodedVideoChunk({{
+              type: kf ? 'key' : 'delta',
+              timestamp: ptsMicros,
+              data: new Uint8Array(ab),
+            }}));
+          }} catch (e) {{ setStatus('decode err: ' + e.message); }}
+          if (firstFrame) {{ firstFrame = false; setStatus('streaming (direct h264)'); }}
+          return;
+        }}
+        // MJPEG path (default, and fallback if h264 setup failed).
         const blob = new Blob([ab], {{type:'image/jpeg'}});
         const u = URL.createObjectURL(blob);
-        // Swap src first, THEN revoke the previous URL on the next
-        // tick so the browser has time to repaint without flicker.
         const old = _screenLastUrl; _screenLastUrl = u; img.src = u;
         if (old) setTimeout(() => URL.revokeObjectURL(old), 0);
         if (firstFrame) {{ firstFrame = false; setStatus('streaming (direct)'); }}
       }},
       end: m => {{
         if (_screenLastUrl) {{ URL.revokeObjectURL(_screenLastUrl); _screenLastUrl = null; }}
+        if (_screenDecoder) {{
+          try {{ _screenDecoder.close(); }} catch (_) {{}}
+          _screenDecoder = null;
+        }}
         _screenDirectRid = null;
         if (m && !m.ok) showError('Direct screen stream failed: '
             + String(m.error || '').slice(0, 200) + ' — falling back to hub.');
@@ -2594,6 +2667,17 @@ def device_screen_page(user: dict, device: dict) -> str:
     const img = stage.querySelector('img');
     if (img) img.src = '';
     if (_screenLastUrl) {{ URL.revokeObjectURL(_screenLastUrl); _screenLastUrl = null; }}
+    if (_screenDecoder) {{
+      try {{ _screenDecoder.close(); }} catch (_) {{}}
+      _screenDecoder = null;
+    }}
+    if (_screenCanvas && _screenCanvas.parentNode) {{
+      // Restore an empty <img> so the next startStream() finds one.
+      const fresh = document.createElement('img');
+      _screenCanvas.parentNode.replaceChild(fresh, _screenCanvas);
+      attachInput(fresh);
+      _screenCanvas = null;
+    }}
     setStatus('stopped');
   }}
   btn.addEventListener('click', () => {{
@@ -2622,17 +2706,19 @@ def device_screen_page(user: dict, device: dict) -> str:
   const _directPending = new Map();   // rid -> resolve+timeout       (unary)
   const _directStreams = new Map();   // rid -> {{start,frame,end}}   (streams)
   let _directBinaryRid = null;        // tag for the next binary frame
+  let _directBinaryHeader = null;     // B5: full chunk_header msg (kf/pts for h264)
 
   function _directOnMessage(ev) {{
     if (ev.data instanceof ArrayBuffer) {{
-      const rid = _directBinaryRid; _directBinaryRid = null;
+      const rid = _directBinaryRid; const hdr = _directBinaryHeader;
+      _directBinaryRid = null; _directBinaryHeader = null;
       const h = rid && _directStreams.get(rid);
-      if (h && h.frame) {{ try {{ h.frame(ev.data); }} catch (_) {{}} }}
+      if (h && h.frame) {{ try {{ h.frame(ev.data, hdr); }} catch (_) {{}} }}
       return;
     }}
     let m; try {{ m = JSON.parse(ev.data); }} catch (_) {{ return; }}
     if (m.type === 'stream_chunk_header' && m.id) {{
-      _directBinaryRid = m.id; return;
+      _directBinaryRid = m.id; _directBinaryHeader = m; return;
     }}
     if (m.type === 'stream_start' && m.id && _directStreams.has(m.id)) {{
       try {{ _directStreams.get(m.id).start && _directStreams.get(m.id).start(m); }} catch (_) {{}}
@@ -3080,17 +3166,19 @@ _DIRECT_WS_JS = r"""
   const _directPending = new Map();
   const _directStreams = new Map();
   let _directBinaryRid = null;
+  let _directBinaryHeader = null;   // B5: kf/pts threaded to frame()
 
   function _directOnMessage(ev) {
     if (ev.data instanceof ArrayBuffer) {
-      const rid = _directBinaryRid; _directBinaryRid = null;
+      const rid = _directBinaryRid; const hdr = _directBinaryHeader;
+      _directBinaryRid = null; _directBinaryHeader = null;
       const h = rid && _directStreams.get(rid);
-      if (h && h.frame) { try { h.frame(ev.data); } catch (_) {} }
+      if (h && h.frame) { try { h.frame(ev.data, hdr); } catch (_) {} }
       return;
     }
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
     if (m.type === 'stream_chunk_header' && m.id) {
-      _directBinaryRid = m.id; return;
+      _directBinaryRid = m.id; _directBinaryHeader = m; return;
     }
     if (m.type === 'stream_start' && m.id && _directStreams.has(m.id)) {
       try { _directStreams.get(m.id).start && _directStreams.get(m.id).start(m); } catch (_) {}

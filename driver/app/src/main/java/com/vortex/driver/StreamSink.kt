@@ -55,16 +55,31 @@ class WsStreamSink(
         return synchronized(sendLock) { backend.send(msg.toString()) }
     }
 
-    fun sendChunk(bytes: ByteArray): Boolean {
+    /** B5: variant that lets the op handler attach extra fields to the
+     *  stream_start frame -- needed for video/h264 streams (codec string,
+     *  width, height, base64 SPS+PPS in `csd_base64`). */
+    fun sendStartWith(annotate: (JSONObject) -> Unit): Boolean {
+        if (started || ended) return false
+        started = true
+        val msg = JSONObject().put("type", "stream_start").put("id", rid)
+        annotate(msg)
+        return synchronized(sendLock) { backend.send(msg.toString()) }
+    }
+
+    fun sendChunk(bytes: ByteArray): Boolean = sendChunkAnnotated(bytes, null)
+
+    /** B5: variant that lets the op handler attach extra fields to the
+     *  stream_chunk_header (e.g. `kf` keyframe flag + `pts` micros for
+     *  video/h264). Direct-WS browsers thread these through to their
+     *  VideoDecoder; relay-path consumers ignore them silently. */
+    fun sendChunkAnnotated(bytes: ByteArray, annotate: ((JSONObject) -> Unit)?): Boolean {
         if (ended) return false
         if (!isReady()) { framesDropped++; return false }
         if (!started) sendStart()
-        val header = JSONObject()
-            .put("type", "stream_chunk_header")
-            .put("id", rid)
-            .toString()
+        val header = JSONObject().put("type", "stream_chunk_header").put("id", rid)
+        annotate?.invoke(header)
         return synchronized(sendLock) {
-            val a = backend.send(header)
+            val a = backend.send(header.toString())
             if (!a) return@synchronized false
             val b = backend.send(bytes)
             if (b) framesSent++ else framesDropped++

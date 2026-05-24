@@ -325,8 +325,15 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `GET /api/devices/{id}/direct` + browser fallback path Just Works.
 - [ ] **B4** — theft-mode native ops (FusedLocationProvider,
   MediaRecorder, PowerManager wake-lock). Last Termux:API deps gone.
-- [ ] **B5** — H.264 / MediaCodec video over the direct WS (real
-  low-latency video, the AnyDesk-grade endgame).
+- [x] **B5 — H.264 via MediaCodec (screen)** _shipped_. New
+  `ScreenH264Encoder` wraps `MediaCodec` with an input Surface fed by
+  `VirtualDisplay`; `screen_stream` op branches on `codec: "h264"`
+  (default still `"mjpeg"`). Wire shape adds `csd_base64` (SPS+PPS) +
+  `codec`/`width`/`height` on `stream_start` and `kf`/`pts` per
+  `stream_chunk_header`. Browser side (templates.py) negotiates h264
+  when `window.VideoDecoder` exists, decodes via WebCodecs into a
+  `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
+  a B5.1.
 
 ## V5.23 — find-my-device / fleet UX (candidate, deferred)
 

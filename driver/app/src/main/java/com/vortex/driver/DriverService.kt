@@ -70,6 +70,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
     // theoretically run in parallel on different cameras / sessions.
     private var nativeCamera: CameraEngine? = null
     private var nativeScreen: ScreenEngine? = null
+    private var nativeScreenH264: ScreenH264Encoder? = null
     @Volatile private var nativeCameraSink: CameraEngine.FrameSink? = null
     @Volatile private var nativeScreenSink: CameraEngine.FrameSink? = null
 
@@ -141,6 +142,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { screen?.stop() } catch (_: Exception) {}
         try { nativeCamera?.stop() } catch (_: Exception) {}
         try { nativeScreen?.stop() } catch (_: Exception) {}
+        try { nativeScreenH264?.stop() } catch (_: Exception) {}
         try { cameraServer.stop() } catch (_: Exception) {}
         try { screenServer.stop() } catch (_: Exception) {}
         try { inputServer.stop() } catch (_: Exception) {}
@@ -209,6 +211,48 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { nativeScreen?.stop() } catch (_: Exception) {}
         nativeScreen = null
         nativeScreenSink = null
+        promoteForeground()
+        updateNotification()
+    }
+
+    /** B5: H.264 variant of [startNativeScreenStream]. Same consent
+     *  contract (MediaProjection must be armed); same lifecycle.
+     *  Different sink interface ([ScreenH264Encoder.NalSink]) so the op
+     *  handler gets codec-config + per-NAL keyframe metadata it needs
+     *  for the WebCodecs decoder on the browser side. */
+    @Synchronized
+    fun startNativeScreenStreamH264(
+        sink: ScreenH264Encoder.NalSink,
+        maxDimension: Int = 720,
+        bitrateBps: Int = 1_500_000,
+        fpsCap: Int = 30,
+    ) {
+        val data = pendingScreenResultData
+        if (!screenArmed || data == null) {
+            throw IllegalStateException(
+                "Vortex Driver screen sharing is not armed -- open the Driver " +
+                "app on this device and tap 'Enable screen sharing' to accept " +
+                "the system consent dialog."
+            )
+        }
+        try { nativeScreenH264?.stop() } catch (_: Exception) {}
+        nativeScreenH264 = null
+        promoteForeground()
+        nativeScreenH264 = ScreenH264Encoder(
+            context = this,
+            resultCode = pendingScreenResultCode,
+            resultData = data,
+            maxDimension = maxDimension,
+            bitrateBps = bitrateBps,
+            fpsCap = fpsCap,
+        ).also { it.start(sink) }
+        updateNotification()
+    }
+
+    @Synchronized
+    fun stopNativeScreenStreamH264() {
+        try { nativeScreenH264?.stop() } catch (_: Exception) {}
+        nativeScreenH264 = null
         promoteForeground()
         updateNotification()
     }
@@ -375,7 +419,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         startForegroundCompat(
             buildNotification(),
             includeCamera = cameraClientConnected || camera != null || nativeCamera != null,
-            includeMediaProjection = screenArmed || nativeScreen != null,
+            includeMediaProjection = screenArmed || nativeScreen != null || nativeScreenH264 != null,
         )
     }
 
