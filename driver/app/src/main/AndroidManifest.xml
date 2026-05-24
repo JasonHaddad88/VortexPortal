@@ -17,14 +17,37 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- M1: camera (Camera2 API). Runtime grant required. -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Internet not strictly needed (we're loopback-only), but having it
-         avoids a future manifest churn when we add direct WebSocket support. -->
+    <!-- Internet for the inbound direct-WS server (Driver-B3) + the
+         outbound hub WS (Driver-B1). -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Driver-B4: native theft-mode ops (replaces the Termux:API path on
+      Android).
+        - ACCESS_FINE/COARSE_LOCATION  -> LocationOp (LocationManager)
+        - RECORD_AUDIO                 -> RecordAudioOp (MediaRecorder)
+        - WAKE_LOCK                    -> WakeLockOp (PARTIAL_WAKE_LOCK)
+      All three are dangerous (camera/mic/location/wakelock) and need a
+      runtime grant; we surface clear error strings if missing.
+      FOREGROUND_SERVICE_* siblings are required on Android 14+ when
+      the active service-type bitmask includes the corresponding kind.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- We require *some* camera but don't pin to a specific one (front or
          back) so the APK installs on phones that only have one of them. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <!-- Optional, not required (so non-mic / no-GPS devices can still install). -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
 
     <application
         android:allowBackup="false"
@@ -82,7 +105,7 @@
         <service
             android:name=".DriverService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|camera|mediaProjection" />
+            android:foregroundServiceType="dataSync|camera|mediaProjection|microphone|location" />
 
         <!--
           M3: AccessibilityService for remote touch input. Must be exported

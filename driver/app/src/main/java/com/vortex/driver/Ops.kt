@@ -48,6 +48,67 @@ object Ops {
         dispatcher.registerStream("camera_stream") { args, sink ->
             runNativeStream(StreamKind.CAMERA, sink, args)
         }
+        // B4: native theft-mode ops -- replaces the Termux:API surface on
+        // Android. Wire shapes match the Python agent so the hub's Theft
+        // Mode UI (and Theft Dashboard) need zero changes.
+        registerB4(ctx, dispatcher)
+    }
+
+    private fun registerB4(ctx: Context, dispatcher: OpDispatcher) {
+        // keepawake: unary; PARTIAL_WAKE_LOCK acquire/release.
+        dispatcher.register("keepawake") { args ->
+            WakeLockOp.set(ctx, args.optBoolean("on", true))
+        }
+        // location: stream one JSON fix back. Same content_type the
+        // Python agent uses so the hub parses it identically.
+        dispatcher.registerStream("location") { args, sink ->
+            val hint = args.optString("provider", "").takeIf { it.isNotBlank() }
+            val fix = LocationOp.fix(ctx, hint)
+            val bytes = fix.toString().toByteArray(Charsets.UTF_8)
+            sink.sendStartWith { m ->
+                m.put("content_type", "application/json")
+                m.put("size", bytes.size)
+            }
+            sink.sendChunk(bytes)
+            // sendEnd is called by HubClient/DirectServer when this
+            // suspend handler returns -- nothing more to do.
+        }
+        // record_audio: stream the MP4/AAC bytes back in 256 KiB chunks.
+        dispatcher.registerStream("record_audio") { args, sink ->
+            val dur = args.optInt("duration", 15)
+            val file = RecordAudioOp.record(ctx, dur)
+            try {
+                sink.sendStartWith { m ->
+                    m.put("content_type", "audio/mp4")
+                    m.put("size", file.length())
+                }
+                file.inputStream().use { input ->
+                    val buf = ByteArray(256 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        val out = if (n == buf.size) buf else buf.copyOf(n)
+                        sink.sendChunk(out)
+                    }
+                }
+            } finally {
+                try { file.delete() } catch (_: Exception) {}
+            }
+        }
+        // camera_capture: one-shot JPEG; reuses CameraEngine via
+        // CameraCaptureOp.captureOne.
+        dispatcher.registerStream("camera_capture") { args, sink ->
+            val cidArg = args.optString("camera_id", "0")
+            val facing = if (cidArg == "1" || cidArg.equals("front", true))
+                            CameraCharacteristics.LENS_FACING_FRONT
+                         else CameraCharacteristics.LENS_FACING_BACK
+            val jpeg = CameraCaptureOp.captureOne(ctx, facing)
+            sink.sendStartWith { m ->
+                m.put("content_type", "image/jpeg")
+                m.put("size", jpeg.size)
+            }
+            sink.sendChunk(jpeg)
+        }
     }
 
     private enum class StreamKind { SCREEN, CAMERA }

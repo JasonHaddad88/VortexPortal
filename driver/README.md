@@ -42,7 +42,7 @@ Future milestones, in order:
 | **B2.1** | Deep-link enroll (`vortex://enroll` QR → auto-fill + auto-submit) + native `op_input` (no loopback hop for input) | _shipped_ |
 | **B2.2** | Native `screen_stream` + `camera_stream` ops (drop the loopback helper for media) | _shipped_ |
 | **B3** | Direct-WS server in the APK (browser ↔ APK direct, kills the hub from the data path on Android too) | _shipped_ |
-| **B4** | Theft-mode native ops (location, audio, push, wake-lock) — last Termux:API dependencies gone | planned |
+| **B4** | Theft-mode native ops (location, audio, camera_capture, wake-lock) — last Termux:API dependencies gone | _shipped_ |
 | **B5** | H.264 / MediaCodec video (screen) — real low-latency video over the direct WS | _shipped_ |
 | **M4** | Polish, autostart on boot, signed release builds, F-Droid | planned |
 
@@ -85,6 +85,40 @@ If the device is on a different network than the browser, the LAN
 IPs in the candidate list will fail to dial → the browser falls back
 to the hub relay automatically. No code change needed for that path
 — the hub broker has done the right thing since V5.20.
+
+### B4: native theft-mode ops (no Termux:API on Android)
+
+Brings the **Theft Mode** ops (`location`, `record_audio`,
+`camera_capture`, `keepawake`) into the APK so devices enrolled
+through Vortex Driver no longer need Termux + Termux:API for ANY
+op the hub knows. Wire shapes match the Python agent
+byte-for-byte -- the hub's Theft Mode UI and Theft Dashboard need
+zero changes.
+
+| Op | Implementation | Notes |
+|---|---|---|
+| `location` | `LocationManager` (GPS + Network race) | 30 s timeout; last-known-fix fast path; same JSON shape as `termux-location` |
+| `record_audio` | `MediaRecorder` MP4/AAC | `duration` clamped 1..120 s; 128 kbps / 44.1 kHz; `audio/mp4` |
+| `camera_capture` | One-shot via the existing `CameraEngine` | `camera_id: "0"\|"1"` or `"back"\|"front"`; default back |
+| `keepawake` | `PowerManager.PARTIAL_WAKE_LOCK` | `{on: bool}` -> `{keepawake, best_effort:true, held}` |
+
+Permission story: the four new manifest entries (`ACCESS_FINE_LOCATION`,
+`ACCESS_COARSE_LOCATION`, `RECORD_AUDIO`, `WAKE_LOCK` + the two
+`FOREGROUND_SERVICE_*` siblings) need a runtime grant on Android 6+.
+We do NOT pop a permission dialog from inside an op handler -- the
+user grants via system Settings the first time an op needs the
+permission, and ops surface a clear `RuntimeException` with the path
+("Settings → Apps → Vortex Driver → Permissions → …") so the hub's
+error toast tells the user exactly what to do.
+
+Caveats (the Theft Mode UI states these too):
+- `keepawake` is **best-effort** -- it cannot block the system lock
+  screen or a hardware power-off without device-owner / MDM, which
+  a regular app cannot opt into. The response includes
+  `best_effort: true` to surface this.
+- Android 12+ shows a privacy indicator any time the camera or mic
+  is active. Truly invisible capture is not possible on stock
+  Android.
 
 ### B5: H.264 via MediaCodec (screen)
 
@@ -219,3 +253,6 @@ What we ask for, why, and which milestone introduces it:
 | `CAMERA` + `_FOREGROUND_SERVICE_CAMERA` | Camera2 capture | M1 |
 | `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Screen capture | M2 |
 | `BIND_ACCESSIBILITY_SERVICE` (granted via system settings, not manifest) | Touch input | M3 |
+| `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` + `FOREGROUND_SERVICE_LOCATION` | `location` op (LocationManager fix) | B4 |
+| `RECORD_AUDIO` + `FOREGROUND_SERVICE_MICROPHONE` | `record_audio` op (MediaRecorder MP4/AAC) | B4 |
+| `WAKE_LOCK` | `keepawake` op (`PARTIAL_WAKE_LOCK`) | B4 |

@@ -3,6 +3,69 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B4] — 2026-05-24
+
+**Theft Mode goes native; Termux:API no longer required on Android.**
+The four remaining theft-mode ops (`location`, `record_audio`,
+`camera_capture`, `keepawake`) are now in-APK; wire shapes match
+the Python agent's `op_*` byte-for-byte so the hub Theft Mode UI
+and Theft Dashboard need zero changes. After B4 a Driver-enrolled
+Android device covers EVERY op the hub knows about with zero
+Termux footprint.
+
+### New Kotlin files
+- `LocationOp.kt` -- LocationManager fix. Fast-path on
+  `getLastKnownLocation` when < 30 s old; otherwise races GPS +
+  NETWORK with a 30 s timeout. JSON shape matches `termux-location`
+  (`latitude`, `longitude`, `accuracy`, `altitude?`, `speed?`,
+  `bearing?`, `provider`, `time`).
+- `RecordAudioOp.kt` -- `MediaRecorder` MP4/AAC, 128 kbps /
+  44.1 kHz, duration clamped 1..120 s. Uses the Android 12+
+  `MediaRecorder(Context)` ctor with a fallback to the deprecated
+  default for older platforms. Suspends via `delay()` instead of
+  `Thread.sleep` so cancellation works while the mic is hot.
+- `CameraCaptureOp.kt` -- one-shot via the existing `CameraEngine`
+  (first frame of a continuous stream wins, then `stop()`). 8 s
+  HAL-warmup timeout. `camera_id` arg accepts `"0"`/`"1"` or
+  `"back"`/`"front"`.
+- `WakeLockOp.kt` -- `PowerManager.PARTIAL_WAKE_LOCK` acquire /
+  release. Non-reference-counted so a duplicate "on" is a no-op.
+  Response includes `best_effort: true` to surface that this can't
+  block the system lock screen or hardware power-off.
+
+### Ops.kt
+- New `registerB4` registers `location`, `record_audio`,
+  `camera_capture` (all streaming ops -- 1-N binary chunks) and
+  `keepawake` (unary). Stream ops use `sendStartWith` to attach
+  `content_type` + `size` so the hub's existing relay handlers
+  don't need any new code.
+
+### AndroidManifest.xml
+- Added `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
+  `RECORD_AUDIO`, `WAKE_LOCK`, `FOREGROUND_SERVICE_LOCATION`,
+  `FOREGROUND_SERVICE_MICROPHONE`. The dangerous ones (fine
+  location, coarse location, record audio) need a runtime grant on
+  Android 6+; we don't pop a system dialog from inside an op
+  handler -- the op throws a `RuntimeException` with the exact
+  Settings path ("Settings -> Apps -> Vortex Driver -> Permissions
+  -> Location -> Allow") if the permission is missing, and the hub
+  surfaces that as the error toast.
+- `DriverService` foregroundServiceType bitmask gains
+  `microphone|location` so an active audio/location op while the
+  service is in the background passes Android 14+'s mandatory
+  service-type check.
+- New `<uses-feature android:required="false">` lines for
+  `microphone`, `location`, `location.gps`, `location.network` --
+  keeps the APK installable on devices missing any of them.
+
+### Caveats
+- `keepawake` is best-effort by design (no lock-screen / power-off
+  block; that needs device-owner / MDM).
+- Android 12+ shows a privacy indicator any time the camera or mic
+  is active. Truly invisible capture is not possible on stock
+  Android.
+- APK version: **0.9.0-b5 → 0.10.0-b4 (versionCode 10 → 11)**.
+
 ## [V5.22 / Driver-B5] — 2026-05-24
 
 **Real low-latency video.** The biggest single video-quality lever

@@ -323,8 +323,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   pushes real `direct_info` after every `auth_ok` so the hub broker
   hands browsers a candidate list — the existing
   `GET /api/devices/{id}/direct` + browser fallback path Just Works.
-- [ ] **B4** — theft-mode native ops (FusedLocationProvider,
-  MediaRecorder, PowerManager wake-lock). Last Termux:API deps gone.
+- [x] **B4 — theft-mode native ops** _shipped_. New
+  `LocationOp` (`LocationManager`, GPS + Network race, last-known
+  fast path, 30 s timeout), `RecordAudioOp` (`MediaRecorder` MP4/AAC,
+  128 kbps / 44.1 kHz), `CameraCaptureOp` (one-shot via the existing
+  `CameraEngine`), `WakeLockOp` (`PARTIAL_WAKE_LOCK`). Wire shapes
+  match the Python agent's `op_location` / `op_record_audio` /
+  `op_camera_capture` / `op_keepawake` byte-for-byte so the hub
+  Theft Mode UI + Theft Dashboard need zero changes. Manifest adds
+  `ACCESS_FINE/COARSE_LOCATION`, `RECORD_AUDIO`, `WAKE_LOCK`,
+  `FOREGROUND_SERVICE_LOCATION`, `FOREGROUND_SERVICE_MICROPHONE`;
+  ops throw a clean `RuntimeException` with the system-Settings path
+  when a runtime permission is missing. Last Termux:API dependency
+  on Android is now gone.
 - [x] **B5 — H.264 via MediaCodec (screen)** _shipped_. New
   `ScreenH264Encoder` wraps `MediaCodec` with an input Surface fed by
   `VirtualDisplay`; `screen_stream` op branches on `codec: "h264"`

@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V5.22 + Driver-B5** — multi-user, multi-node control plane for your
+**V5.22 + Driver-B5/B4** — multi-user, multi-node control plane for your
 devices. One or more **hubs** (any laptop, phone, or VM) share a
 database and present the same dashboard; each device runs an **agent**
 (pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver
@@ -22,11 +22,13 @@ V1.2 file `app_v1.py` is kept at the repo root for one release as a fallback.
   both **input** and **media frames** (screen + camera). Hub leaves the
   data path on LAN.
 - **Vortex Driver APK** (Driver-B1 → B5): standalone Android client that
-  replaces Termux + Termux:API + the Python agent for camera, screen,
-  input, and device info. Scan a QR, you're enrolled; the APK hosts its
-  own direct-WS server for browser-direct on LAN, and screen capture
-  now ships **hardware H.264** (MediaCodec → WebCodecs) for AnyDesk-grade
-  latency on supported browsers.
+  replaces Termux + Termux:API + the Python agent for **every** op the
+  hub knows — camera, screen, input, device info, **and** Theft Mode
+  (`location`, `record_audio`, `camera_capture`, `keepawake`). Scan a
+  QR, you're enrolled; the APK hosts its own direct-WS server for
+  browser-direct on LAN, and screen capture ships **hardware H.264**
+  (MediaCodec → WebCodecs) for AnyDesk-grade latency on supported
+  browsers.
 - **Theft Mode + Theft Dashboard** (V5.8 / V5.10): owner anti-theft
   (discreet photo / location / audio) with an account-wide fleet view.
 
@@ -146,19 +148,23 @@ APK enrols itself, dials your hub, and ships native ops for:
 | `input` | `AccessibilityService` | Tap, long-press, swipe, system buttons |
 | `screen_stream` | `MediaProjection` → MediaCodec H.264 (or JPEG) | `codec: "h264"\|"mjpeg"`, `quality`, `max_dim`, `fps_cap`, `bitrate` |
 | `camera_stream` | `Camera2` → JPEG (MJPEG) | `{facing:"front"\|"back"}` |
+| `camera_capture` | One-shot Camera2 → JPEG | `{camera_id:"0"\|"1"}` (B4) |
+| `location` | `LocationManager` (GPS + Network race) | last-known fast path; 30 s timeout (B4) |
+| `record_audio` | `MediaRecorder` MP4/AAC | `{duration: 1-120s}` (B4) |
+| `keepawake` | `PARTIAL_WAKE_LOCK` | `{on: bool}` — best-effort, can't block lock-screen (B4) |
 
-After **Driver-B2.2** (camera + screen native) and **Driver-B3** (the
-APK's own direct-WS server), **Termux + Termux:API are no longer
-required on Android** for daily-use ops. The CI workflow
+After **Driver-B4** (theft-mode native), **Termux + Termux:API are
+not required on Android for anything** -- a Driver-enrolled phone
+covers every op the hub knows, including Theft Mode. The CI workflow
 [`driver-build.yml`](.github/workflows/driver-build.yml) ships a debug
 APK on every push to `main`; install it from the GitHub Actions
 artifact (see [`driver/README.md`](driver/README.md) for the full
 install + permission walkthrough).
 
-Where the APK doesn't go yet: **Theft Mode** still uses Termux:API on
-Android (**B4** will move it native). Screen capture went hardware
-H.264 in **B5** (MediaCodec → WebCodecs in the browser); camera +
-audio H.264 follow in **B5.1**.
+Where the APK doesn't go yet: camera + audio over H.264 (still MJPEG /
+MP4-AAC) — the **B5.1** delta is small now that the wire format,
+sink, and browser pipeline are in place. Otherwise the APK is at
+**full parity** with the Python agent.
 
 ## Multi-node control (since V5.15)
 
@@ -286,9 +292,9 @@ Microphone / Location granted.
 privacy indicator — truly invisible capture isn't possible on stock
 Android. "Keep-awake" is a CPU wake-lock only; it **cannot** block the
 lock screen or a hardware power-off without device-owner/MDM. Captures
-only happen while the device is online to the hub. Theft Mode itself
-still uses Termux:API on Android pending **Driver-B4** (FusedLocation
-+ MediaRecorder + native wake-lock) — track it in [ROADMAP.md](ROADMAP.md).
+only happen while the device is online to the hub. Theft Mode runs
+**natively** on Driver-APK Android (B4); Termux phones still use
+Termux:API.
 
 **Responsible use:** Theft Mode only ever targets devices paired to
 *your own* account, and media is stored under that account. Arming
