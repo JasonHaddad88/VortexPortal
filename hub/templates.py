@@ -613,12 +613,17 @@ ul.dirlist li .thumb.placeholder {
   position: relative;
   overflow: hidden;
 }
-.cam-stage img {
+.cam-stage img, .cam-stage canvas {
   display: block;
   width: 100%; height: auto;
   max-height: 70vh;
   object-fit: contain;
+  transition: transform 0.2s ease;
 }
+/* B5.2 rotation styling: actual transform/dimension swap is applied
+   inline by the camera page's applyRotation() so it wins over the
+   inline styles setupH264 sets on the canvas. This rule just makes
+   sure rotation animates instead of snapping. */
 .cam-stage .placeholder {
   color: var(--muted);
   font-size: 0.85rem; padding: 3rem 1rem; text-align: center;
@@ -2394,12 +2399,37 @@ def device_camera_page(user: dict, device: dict) -> str:
       return true;
     }}
 
+    /** B5.2: apply the APK-reported camera sensor rotation. The
+     *  rotation field is the SENSOR_ORIENTATION value (0/90/180/270);
+     *  we apply it directly because that's exactly how much CW
+     *  rotation makes the captured frame upright on the user's
+     *  screen. Inline styles win over both the CSS rule and the
+     *  inline maxWidth:100% setupH264 puts on the canvas. */
+    function applyRotation(target, m) {{
+      const r = (m && Number.isInteger(m.rotation)) ? m.rotation : 0;
+      if (r === 90 || r === 180 || r === 270) {{
+        target.style.transform = 'rotate(' + r + 'deg)';
+        if (r === 90 || r === 270) {{
+          // Rotated visual is taller than wide -- swap so it fits
+          // the cam-stage's bounding box without spilling out.
+          target.style.width = 'auto';
+          target.style.height = 'auto';
+          target.style.maxWidth = '70vh';
+          target.style.maxHeight = '100%';
+        }}
+      }} else {{
+        target.style.transform = '';
+      }}
+    }}
+
     const rid = _directStream('camera_stream', {{codec: wantCodec}}, {{
       start: m => {{
         if (m && m.content_type === 'video/h264') {{
           mode = setupH264(m) ? 'h264' : null;
+          if (mode === 'h264' && canvas) applyRotation(canvas, m);
         }} else {{
           mode = 'mjpeg';
+          applyRotation(img, m);
         }}
       }},
       frame: (ab, hdr) => {{

@@ -3,6 +3,57 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.28 / Driver-B5.2] — 2026-05-25
+
+**Camera sensor-rotation: portrait phone-cameras now render
+upright.** Phones mount their camera sensor with a 90deg (back)
+or 270deg (front) rotation relative to the device's natural-
+landscape orientation. Without correction, the captured stream
+arrives at the browser tilted sideways. B5.2 fixes this end-to-
+end with one optional field on the wire.
+
+### APK side (Driver-B5.2)
+- New static `CameraEngine.sensorRotationFor(ctx, facing)`
+  helper. Queries `CameraManager.getCameraCharacteristics(id)`
+  for `SENSOR_ORIENTATION` without opening the camera. Returns
+  0 on any lookup failure (browser then leaves the stream
+  un-rotated).
+- `Ops.runNativeStream` (MJPEG `camera_stream`) and
+  `runCameraH264Stream` (H.264 path) both call it BEFORE
+  sending stream_start and put the value on
+  `stream_start.rotation` (omitted when 0 to keep the wire
+  minimal). H.264 path threads it through
+  `sendStartWith { ... put("rotation", cameraRotation) }`
+  alongside the existing `csd_base64`+`codec`+`width`+`height`
+  block.
+- `ScreenH264Encoder` + `ScreenEngine` unchanged --
+  `MediaProjection`+`VirtualDisplay` captures in the
+  user-visible orientation, no rotation correction needed.
+- APK version: **0.16.0-b9 → 0.16.1-b5.2 (versionCode 17 → 18)**.
+
+### Browser side (templates.py)
+- New `applyRotation(target, m)` helper in
+  `_startDirectCam`'s scope. Reads `m.rotation` from the
+  `stream_start` frame and applies `transform: rotate(Ndeg)`
+  INLINE to the `<img>` (MJPEG) or `<canvas>` (H.264).
+- For 90/270 (the common phone-portrait cases) it also
+  swaps width/height/max constraints to `auto/auto/70vh/100%`
+  so the rotated visual fits the `.cam-stage` flex bounding
+  box without spilling out.
+- Inline application beats the H.264 canvas's
+  `maxWidth:100%` inline style set by `setupH264`, so both
+  modes look right under rotation.
+- `.cam-stage` CSS gains a tiny `transition: transform 0.2s`
+  so rotation animates instead of snapping.
+
+### Wire format
+- New optional `rotation` field on `stream_start` (camera ops
+  only). Integer CW degrees; absent when 0. Older browsers
+  ignore unknown fields. Hub relay forwards as-is.
+
+### Hub version
+- **5.27 → 5.28**.
+
 ## [V5.27 / Driver-B9] — 2026-05-25
 
 **WebView device-manage with auth bridge.** Tapping a row in the

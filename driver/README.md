@@ -45,6 +45,7 @@ Future milestones, in order:
 | **B4** | Theft-mode native ops (location, audio, camera_capture, wake-lock) — last Termux:API dependencies gone | _shipped_ |
 | **B5** | H.264 / MediaCodec video (screen) — real low-latency video over the direct WS | _shipped_ |
 | **B5.1** | H.264 / MediaCodec for camera_stream (same wire, Camera2 → encoder Surface) | _shipped_ |
+| **B5.2** | Camera sensor-rotation on `stream_start` so portrait phone-cameras render upright | _shipped_ |
 | **M4** | Autostart on boot + (later) signed release builds + F-Droid | autostart _shipped_ |
 | **B6** | In-app **sign-in** (username + password, no token paste) | _shipped_ |
 | **B7** | In-app **register** (toggle on sign-in screen, invite-mode aware) | _shipped_ |
@@ -286,6 +287,32 @@ needs the hub's invite-mode UI which we don't replicate in-app).
 The sign-in screen uses an in-memory cookie jar — the
 `vortex_session` cookie is single-use here and is dropped when the
 activity finishes, so a stolen APK install can't replay it later.
+
+### B5.2: camera sensor-rotation metadata
+
+Phones mount their camera sensor with a 90deg (back) or 270deg
+(front) rotation relative to the device's natural-landscape
+orientation. Without correction, a portrait phone-camera stream
+arrives at the browser tilted sideways. B5.2 fixes this end-to-
+end:
+
+1. New `CameraEngine.sensorRotationFor(ctx, facing)` static
+   helper queries `CameraCharacteristics.SENSOR_ORIENTATION`
+   without opening the camera.
+2. `Ops.runNativeStream` (MJPEG) and `runCameraH264Stream`
+   (H.264) call it before sending `stream_start` and put the
+   value on `stream_start.rotation` (omitted when 0).
+3. Browser camera page's `_startDirectCam` reads `m.rotation`
+   on the start frame and applies `transform: rotate(Ndeg)`
+   inline to the `<img>` (MJPEG) or `<canvas>` (H.264). For
+   90/270 it also swaps `width`/`height`/`max*` constraints so
+   the rotated visual fits the `.cam-stage` bounding box
+   without spilling.
+
+No wire-format breakage: `rotation` is optional, the field is
+ignored by any older browser code path, and the screen page is
+unchanged (VirtualDisplay already captures in the user-visible
+orientation).
 
 ### B5.1: H.264 for `camera_stream`
 

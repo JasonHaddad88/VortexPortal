@@ -268,5 +268,37 @@ class CameraEngine(
         return out
     }
 
-    companion object { private const val TAG = "CameraEngine" }
+    companion object {
+        private const val TAG = "CameraEngine"
+
+        /**
+         * B5.2: query a camera's SENSOR_ORIENTATION without opening it.
+         *
+         * Android phones mount the camera sensor with a 90deg
+         * (back) or 270deg (front) rotation relative to the device's
+         * natural (landscape) orientation. The captured frame ships
+         * in that sensor-native orientation; rotating in-browser
+         * with a CSS transform is the cheap way to make portrait
+         * phone-camera streams render upright.
+         *
+         * Returns 0 if the device has no matching camera or the
+         * lookup fails for any reason; the browser then leaves the
+         * stream un-rotated.
+         */
+        @JvmStatic
+        fun sensorRotationFor(ctx: Context, facing: Int): Int {
+            return try {
+                val mgr = ctx.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+                    ?: return 0
+                val id = mgr.cameraIdList.firstOrNull { camId ->
+                    mgr.getCameraCharacteristics(camId)
+                        .get(CameraCharacteristics.LENS_FACING) == facing
+                } ?: return 0
+                mgr.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+            } catch (e: Throwable) {
+                Log.w(TAG, "sensorRotationFor failed: $e"); 0
+            }
+        }
+    }
 }

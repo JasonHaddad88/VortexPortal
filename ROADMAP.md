@@ -409,6 +409,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `driver/README.md`. Signed release builds + F-Droid submission
   defer (need a keystore + a CI secret the maintainer has to set up).
 
+- [x] **B5.2 — camera sensor-rotation metadata** _shipped_.
+  New static `CameraEngine.sensorRotationFor(ctx, facing)`
+  queries `CameraCharacteristics.SENSOR_ORIENTATION` without
+  opening the camera. `Ops` MJPEG + H.264 camera paths stamp
+  the result onto `stream_start.rotation` (omitted when 0).
+  Browser camera page reads it and applies a `transform:
+  rotate(Ndeg)` inline to the `<img>`/`<canvas>`, swapping
+  width/height constraints for 90/270 so the rotated visual
+  fits without spilling. No wire-format breakage; older
+  browsers ignore the field. Screen path unchanged
+  (VirtualDisplay captures in the user-visible orientation).
+
 - [x] **B5.1 — H.264 for `camera_stream`** _shipped_. New
   `CameraH264Encoder` mirrors `ScreenH264Encoder` but feeds the
   MediaCodec input Surface from a Camera2 `TEMPLATE_RECORD` capture

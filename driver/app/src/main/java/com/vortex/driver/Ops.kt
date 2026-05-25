@@ -164,6 +164,7 @@ object Ops {
         // Start the engine BEFORE stream_start so a setup failure surfaces
         // as a normal {ok:false} response (same contract as the Python
         // agent's op_camera_stream).
+        var cameraRotation = 0
         when (kind) {
             StreamKind.SCREEN -> svc.startNativeScreenStream(
                 sink = engineSink,
@@ -177,6 +178,10 @@ object Ops {
                     "front" -> CameraCharacteristics.LENS_FACING_FRONT
                     else    -> CameraCharacteristics.LENS_FACING_BACK
                 }
+                // B5.2: stamp camera sensor rotation onto stream_start
+                // so the browser can apply a CSS transform and render
+                // portrait phone-camera streams upright.
+                cameraRotation = CameraEngine.sensorRotationFor(svc, facing)
                 svc.startNativeCameraStream(
                     sink = engineSink,
                     facing = facing,
@@ -188,7 +193,14 @@ object Ops {
             }
         }
 
-        sink.sendStart(contentType = "image/jpeg")
+        if (kind == StreamKind.CAMERA && cameraRotation != 0) {
+            sink.sendStartWith { m ->
+                m.put("content_type", "image/jpeg")
+                m.put("rotation", cameraRotation)
+            }
+        } else {
+            sink.sendStart(contentType = "image/jpeg")
+        }
 
         try {
             // Either the engine reports an error first, or the surrounding
@@ -314,6 +326,10 @@ object Ops {
             "front" -> CameraCharacteristics.LENS_FACING_FRONT
             else    -> CameraCharacteristics.LENS_FACING_BACK
         }
+        // B5.2: query upfront -- the H.264 encoder buffers the SPS/PPS
+        // until its first output, and that callback is the right spot
+        // to emit stream_start. Stash rotation here so it's in scope.
+        val cameraRotation = CameraEngine.sensorRotationFor(svc, facing)
 
         val failure = CompletableDeferred<Throwable>()
         val nalSink = object : CameraH264Encoder.NalSink {
@@ -325,6 +341,7 @@ object Ops {
                     m.put("width", width)
                     m.put("height", height)
                     m.put("csd_base64", csdB64)
+                    if (cameraRotation != 0) m.put("rotation", cameraRotation)
                 }
             }
             override fun onFrame(nalBytes: ByteArray, isKeyFrame: Boolean, ptsMicros: Long) {
