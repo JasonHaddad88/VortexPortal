@@ -346,6 +346,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B8 — in-app device list** _shipped_. New `DevicesActivity`
+  opened from MainActivity once enrolled. Renders every device in
+  the account with a coloured status dot (emerald/amber/grey for
+  online/elsewhere/offline), name, "THIS DEVICE" badge, and a
+  meta line ("Online · last seen 2m ago" / "On its node (…) · …" /
+  "Offline · …"). Tap-through opens `{hub}/devices/{id}` in the
+  system browser (in-APK control of OTHER devices is its own
+  separate milestone). Auth via the device's existing
+  `X-Vortex-Device` + `X-Vortex-Token` headers -- no persistent
+  session cookie. New hub endpoint `GET /api/account/devices`
+  returns `{devices:[{id,name,online,elsewhere,last_seen,this_device}],
+  user_id}`; reuses the same device-token auth `/api/nodes` does.
+
 - [x] **B7 — in-app register** _shipped_. Same `SignInActivity`
   grew a Sign-in / Create-account toggle. On Register: reveals
   Confirm-password + conditional Invite (probed via new

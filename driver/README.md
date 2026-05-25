@@ -48,6 +48,7 @@ Future milestones, in order:
 | **M4** | Autostart on boot + (later) signed release builds + F-Droid | autostart _shipped_ |
 | **B6** | In-app **sign-in** (username + password, no token paste) | _shipped_ |
 | **B7** | In-app **register** (toggle on sign-in screen, invite-mode aware) | _shipped_ |
+| **B8** | In-app **device list** (My devices: online dots, last-seen, tap → hub page) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -163,6 +164,35 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B8: in-app device list
+
+Once enrolled, MainActivity gets a **My devices** button that
+opens `DevicesActivity` -- a one-screen list of every device in
+your account, refreshed automatically on resume + manually via
+the Refresh button.
+
+Each row shows:
+- A coloured status dot: **emerald** for online here,
+  **amber** for "On its node" (online on a different node of
+  the same account; cross-node relay handles control), **grey**
+  for offline.
+- The device name, with `THIS DEVICE` badge on the row that's
+  this APK.
+- A meta line: "Online · last seen 2m ago" / "On its node
+  (othernode.example) · last seen 5m ago" / "Offline · last
+  seen 1d ago".
+
+Tapping a row opens `{hub}/devices/{id}` in the system browser
+(the hub's existing manage page) -- in-APK control of OTHER
+devices is a separate milestone (would need the hub's full
+browser UI embedded in the APK).
+
+Auth: hits `GET /api/account/devices` with `X-Vortex-Device` +
+`X-Vortex-Token` headers (same scheme as `/api/nodes`). The
+device's own enrollment is what proves account membership -- no
+persistent session cookie on disk, no fresh sign-in needed for
+the list view.
 
 ### B7: in-app register (no browser detour)
 

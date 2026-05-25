@@ -860,6 +860,46 @@ async def api_nodes(request: Request):
     return {"nodes": _live_node_urls(request)}
 
 
+# V5.26 / Driver-B8: a device-authed view over its own account's
+# device list, so the Vortex Driver APK can show a "My devices"
+# screen without persisting a hub session cookie. Auth is the same
+# X-Vortex-Device + X-Vortex-Token pair /api/nodes uses (the device's
+# enrollment is what proves account membership). Each entry is a
+# trim subset of what the dashboard renders: id + name + online
+# + last_seen + a this_device flag the APK uses to badge "(this
+# device)" in its UI.
+@app.get("/api/account/devices")
+async def api_account_devices(request: Request):
+    did = (request.headers.get("x-vortex-device")
+           or request.query_params.get("device_id") or "").strip()
+    tok = (request.headers.get("x-vortex-token")
+           or request.query_params.get("token") or "")
+    auth_dev = db.authenticate_device(did, tok) if did else None
+    if auth_dev is None:
+        raise HTTPException(status_code=403, detail="Invalid device credentials")
+    owner_id = auth_dev["owner_id"]
+    rows = db.list_devices(owner_id)
+    online = ws_router.registry.online_ids()
+    # Cross-node presence so the APK can show "On its node" devices as
+    # reachable too (the dashboard does the same).
+    elsewhere = _elsewhere_map(owner_id, online)
+    return {
+        "devices": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "online": r["id"] in online,
+                "elsewhere": elsewhere.get(r["id"]),  # node URL or null
+                "last_seen": r.get("last_seen"),
+                "paired_at": r.get("paired_at"),
+                "this_device": (r["id"] == did),
+            }
+            for r in rows
+        ],
+        "user_id": owner_id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # V5.5: self-register — enroll THIS device (the one running the hub
 # process) straight from the logged-in browser. No pairing code: the

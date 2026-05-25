@@ -66,6 +66,12 @@ class MainActivity : AppCompatActivity() {
             stopService(Intent(this, DriverService::class.java))
             refreshEnrollStatus()
         }
+        // B8: "My devices" -- opens DevicesActivity which lists every
+        // device in this account. Authed via the device's own token, so
+        // no separate sign-in here.
+        binding.devicesBtn.setOnClickListener {
+            startActivity(Intent(this, DevicesActivity::class.java))
+        }
 
         ensureNotificationPermission()
         refreshNotifStatus()
@@ -93,10 +99,12 @@ class MainActivity : AppCompatActivity() {
             )
             binding.enrollBtn.visibility = View.GONE
             binding.unenrollBtn.visibility = View.VISIBLE
+            binding.devicesBtn.visibility = View.VISIBLE
         } else {
             binding.enrollStatus.text = getString(R.string.hub_status_not_enrolled)
             binding.enrollBtn.visibility = View.VISIBLE
             binding.unenrollBtn.visibility = View.GONE
+            binding.devicesBtn.visibility = View.GONE
         }
     }
 

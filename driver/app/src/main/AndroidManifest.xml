@@ -94,6 +94,16 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!--
+          B8: in-app device list. Reads /api/account/devices over the
+          enrolled device's own token (no session). Tap-through opens
+          the hub's per-device page in the system browser.
+        -->
+        <activity
+            android:name=".DevicesActivity"
+            android:exported="false"
+            android:label="@string/devices_title" />
+
+        <!--
           B1: standalone enrollment — paste an account token + hub URL,
           POST /api/enroll, save device_id+token. Launched from
           MainActivity when Prefs.isEnrolled() is false.

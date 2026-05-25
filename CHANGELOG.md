@@ -3,6 +3,61 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.26 / Driver-B8] — 2026-05-25
+
+**In-app device list.** Once enrolled, MainActivity gets a
+**My devices** button that opens `DevicesActivity` -- a one-screen
+view of every device in your account, with online dots, last-seen,
+and a tap-through to the hub's per-device page. No more "open
+browser just to check what's online".
+
+### Hub: new `GET /api/account/devices`
+- Authed via `X-Vortex-Device` + `X-Vortex-Token` (same scheme as
+  `/api/nodes`). The device's own enrollment proves account
+  membership -- no separate sign-in / session cookie needed.
+- Returns `{devices: [...], user_id}`. Each device entry:
+  `{id, name, online, elsewhere, last_seen, paired_at, this_device}`.
+  `elsewhere` is the node URL when the device is reachable on a
+  different node of the same account (powers the "On its node"
+  amber dot); `null` otherwise. `this_device` flags the row that
+  matches the calling X-Vortex-Device.
+- Reuses `db.list_devices`, `ws_router.registry.online_ids()`,
+  and the existing `_elsewhere_map` helper -- no new database
+  surface.
+
+### APK: new `DevicesActivity`
+- Opened from a new "My devices" button on MainActivity (only
+  visible when enrolled). Refreshes on `onResume` + a manual
+  Refresh button.
+- Renders one row per device: a coloured status dot
+  (emerald=online / amber=elsewhere / grey=offline), name + meta
+  line, optional `THIS DEVICE` badge. Rows are sorted
+  this-device > online > elsewhere > offline.
+- Meta strings: "Online · last seen 2m ago" / "On its node
+  (othernode.example) · last seen 5m ago" / "Offline · last
+  seen 1d ago" / "Never seen". Relative duration via local
+  formatter (s/m/h/d).
+- Tapping a row opens `{hub}/devices/{id}` in the system
+  browser. The hub's existing per-device page handles control;
+  in-app control of OTHER devices stays out of scope here.
+- 15 s call timeout on the HTTP fetch so a slow hub doesn't
+  pin the activity.
+
+### Layout / strings
+- New `activity_devices.xml` (title + Refresh + ScrollView +
+  empty-state text).
+- New `row_device.xml` (status dot + name/meta + this-device
+  badge), inflated via ViewBinding.
+- New `btn_devices`, `devices_*` strings.
+- `activity_main.xml`: new `devicesBtn` (outlined button) just
+  below the unenroll row; visibility tied to enrollment.
+
+### Hub version
+- **5.25 → 5.26**.
+
+### APK version
+- **0.14.0-b7 → 0.15.0-b8 (versionCode 15 → 16)**.
+
 ## [V5.25 / Driver-B7] — 2026-05-25
 
 **Register in-app.** The polished counterpart to B6's sign-in:

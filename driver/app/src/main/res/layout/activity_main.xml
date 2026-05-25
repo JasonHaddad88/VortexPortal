@@ -69,13 +69,27 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- B8: "My devices" shortcut. Only meaningful when enrolled (sets
+         X-Vortex-Device/Token headers); hidden otherwise via MainActivity. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/devicesBtn"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/btn_devices"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/unenrollBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <com.google.android.material.button.MaterialButton
         android:id="@+id/startBtn"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="24dp"
         android:text="@string/btn_start"
-        app:layout_constraintTop_toBottomOf="@id/unenrollBtn"
+        app:layout_constraintTop_toBottomOf="@id/devicesBtn"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

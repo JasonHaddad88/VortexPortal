@@ -97,4 +97,18 @@
     <string name="signin_hint_invite">required only if your hub is in invite-only mode</string>
     <string name="signin_btn_register">Create account &amp; enroll</string>
     <string name="signin_register_browser">Open hub register page in browser</string>
+
+    <!-- B8: in-app device list. Reads /api/account/devices using the
+         device's own X-Vortex-Device/Token (no session needed). -->
+    <string name="btn_devices">My devices</string>
+    <string name="devices_title">My devices</string>
+    <string name="devices_refresh">Refresh</string>
+    <string name="devices_this_device">THIS DEVICE</string>
+    <string name="devices_empty">No devices in this account yet. Enroll another device or open the hub in a browser.</string>
+    <string name="devices_loading">Loading devices…</string>
+    <string name="devices_load_error">Couldn\'t load devices: %1$s</string>
+    <string name="devices_meta_online">Online · last seen %1$s</string>
+    <string name="devices_meta_elsewhere">On its node (%1$s) · last seen %2$s</string>
+    <string name="devices_meta_offline">Offline · last seen %1$s</string>
+    <string name="devices_meta_never">Never seen</string>
 </resources>
