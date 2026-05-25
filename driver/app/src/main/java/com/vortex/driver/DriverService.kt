@@ -11,6 +11,13 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Foreground service that owns:
@@ -172,10 +179,8 @@ class DriverService : Service(), CameraEngine.FrameSink {
 
     // ---- B11.2: peer presence publisher (Turso device_peers) ----
 
-    private val peerScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
-    )
-    private var peerPublisherJob: kotlinx.coroutines.Job? = null
+    private val peerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var peerPublisherJob: Job? = null
     @Volatile private var currentTicket: String = ""
 
     /** Spin up a background coroutine that refreshes our peer-presence
@@ -191,7 +196,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
             // surrounding job is cancelled by onDestroy.
             while (true) {
                 publishPeerOnce()
-                kotlinx.coroutines.delay(60_000L)
+                delay(60_000L)
             }
         }
     }
