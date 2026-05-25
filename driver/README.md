@@ -49,6 +49,7 @@ Future milestones, in order:
 | **B6** | In-app **sign-in** (username + password, no token paste) | _shipped_ |
 | **B7** | In-app **register** (toggle on sign-in screen, invite-mode aware) | _shipped_ |
 | **B8** | In-app **device list** (My devices: online dots, last-seen, tap → hub page) | _shipped_ |
+| **B9** | In-app **WebView** for the per-device hub page (auth-bridged) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -164,6 +165,42 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B9: in-app WebView for device manage (auth bridge)
+
+Tapping a row in **My devices** now opens the hub's per-device page
+inside an embedded WebView instead of bouncing the user out to the
+system browser. The user lands on `{hub}/devices/{id}` already
+signed in -- no password prompt, no browser tab to switch back from.
+
+How the auth bridge works:
+1. APK POSTs `{hub}/api/device-session` with
+   `X-Vortex-Device` + `X-Vortex-Token` (same headers
+   `/api/account/devices` and `/api/nodes` use). The device's own
+   enrollment proves account membership.
+2. Hub validates and responds with a `Set-Cookie: vortex_session=…`
+   for the device's owner -- same shape `/login` issues.
+3. APK copies that single cookie into Android's `CookieManager`
+   keyed on the hub URL.
+4. WebView loads `{hub}/devices/{id}`; the cookie ships back
+   automatically and the hub treats it as a normal session.
+
+Security posture:
+- File access disabled on the WebView (no `file://`, no
+  cross-origin file URLs) so a hostile page can't peek at
+  app-private files.
+- Mixed content blocked -- the hub is HTTPS in production;
+  refuse downgrade.
+- External links escape to the system browser via
+  `shouldOverrideUrlLoading`.
+- Bridge only forwards the single `vortex_session` cookie the
+  hub returned; unknown cookies are not propagated.
+- Device token is sent only as an HTTP header, never in a URL.
+
+Fallback for hubs older than V5.27 (no `/api/device-session`):
+the activity shows a one-line notice on the error overlay and
+still loads the page in the WebView so the user can sign in
+manually via the hub's `/login` page inside it.
 
 ### B8: in-app device list
 

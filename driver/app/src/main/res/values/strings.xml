@@ -111,4 +111,12 @@
     <string name="devices_meta_elsewhere">On its node (%1$s) · last seen %2$s</string>
     <string name="devices_meta_offline">Offline · last seen %1$s</string>
     <string name="devices_meta_never">Never seen</string>
+
+    <!-- B9: WebView device-manage with auth bridge. -->
+    <string name="devweb_title">Manage device</string>
+    <string name="devweb_signing_in">Signing into hub…</string>
+    <string name="devweb_load_failed">Couldn\'t open the hub page: %1$s</string>
+    <string name="devweb_auth_failed">Hub didn\'t accept this device\'s session bridge: %1$s</string>
+    <string name="devweb_old_hub">This hub doesn\'t support the in-app WebView bridge (added in V5.27). The page will still work but you\'ll need to sign in via the browser.</string>
+    <string name="devweb_retry">Retry</string>
 </resources>

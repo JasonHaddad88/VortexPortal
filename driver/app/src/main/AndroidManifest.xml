@@ -104,6 +104,19 @@
             android:label="@string/devices_title" />
 
         <!--
+          B9: in-app WebView for the hub's per-device manage page.
+          Auth-bridges via POST /api/device-session (hub V5.27+) to
+          mint a vortex_session cookie for the device's owner, then
+          loads {hub}/devices/{id} in the WebView. Falls back to a
+          manual sign-in inside the WebView on older hubs.
+        -->
+        <activity
+            android:name=".DeviceWebActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:label="@string/devweb_title" />
+
+        <!--
           B1: standalone enrollment — paste an account token + hub URL,
           POST /api/enroll, save device_id+token. Launched from
           MainActivity when Prefs.isEnrolled() is false.

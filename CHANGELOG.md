@@ -3,6 +3,65 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.27 / Driver-B9] — 2026-05-25
+
+**WebView device-manage with auth bridge.** Tapping a row in the
+APK's My-devices screen now opens the hub's per-device page in an
+embedded WebView, signed in automatically. No browser detour, no
+re-entered password.
+
+### Hub: new `POST /api/device-session`
+- Authed via `X-Vortex-Device` + `X-Vortex-Token` (same scheme as
+  `/api/nodes`, `/api/account/devices`).
+- Calls `auth.login(response, dev["owner_id"])` to mint a
+  `vortex_session` cookie for the device's owner using the same
+  helper `/login` issues. Returns `{ok:true, user_id}` JSON.
+- Not an escalation: the device token already controls every
+  device in the account via `ws/agent` + `/api/account/devices`;
+  trading it for a session cookie just gives the dashboard UI the
+  same authority the API path already grants.
+
+### APK: new `DeviceWebActivity`
+- Opens from `DevicesActivity` row taps (replaces the
+  `Intent.ACTION_VIEW` -> system browser path from B8).
+- Flow: POST `/api/device-session` over OkHttp -> capture the
+  `Set-Cookie: vortex_session=…` line -> copy into
+  Android's `CookieManager` keyed on the hub URL ->
+  WebView.loadUrl(`{hub}/devices/{id}`). User lands signed in.
+- WebView config: JavaScript + DOM storage on (hub UI needs
+  both); file/content access off; mixed content blocked
+  (`MIXED_CONTENT_NEVER_ALLOW`); media autoplay allowed (screen
+  + camera pages); custom User-Agent suffix
+  `VortexDriver/{versionName}` so server logs can tell them
+  apart from a generic Chrome.
+- Same-host navigation stays inside the WebView;
+  `shouldOverrideUrlLoading` punts external links to the system
+  browser.
+- Back button navigates WebView history first (via
+  `OnBackPressedCallback`); finishes the activity only when
+  there's no back-stack left.
+- WebChromeClient drives a top-of-page progress bar (`onProgressChanged`).
+- Error overlay shows when the bridge or initial load fails;
+  Retry re-runs the bridge.
+- Graceful fallback for hubs older than V5.27 (no
+  `/api/device-session`): shows a notice and still loads the
+  page so the user can sign in manually via the hub's `/login`
+  page inside the WebView.
+
+### Layout / strings
+- `activity_device_web.xml`: progress bar + FrameLayout
+  (WebView + error overlay).
+- `AndroidManifest.xml`: new `<activity>` with
+  `configChanges="orientation|screenSize|keyboardHidden"` so
+  the WebView survives rotation without reloading.
+- New `devweb_*` strings.
+
+### Hub version
+- **5.26 → 5.27**.
+
+### APK version
+- **0.15.0-b8 → 0.16.0-b9 (versionCode 16 → 17)**.
+
 ## [V5.26 / Driver-B8] — 2026-05-25
 
 **In-app device list.** Once enrolled, MainActivity gets a

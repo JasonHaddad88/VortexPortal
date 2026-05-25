@@ -1,6 +1,5 @@
 package com.vortex.driver
 
-import android.content.Intent
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -152,12 +151,10 @@ class DevicesActivity : AppCompatActivity() {
             row.thisBadge.visibility = if (item.thisDevice) View.VISIBLE else View.GONE
             row.thisBadge.setTextColor(0xFF67E8F9.toInt())
             row.root.setOnClickListener {
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW,
-                        Uri.parse("$hubUrl/devices/${item.id}")))
-                } catch (_: Exception) {
-                    setStatus("No browser available to open this device's page.", err = true)
-                }
+                // B9: open the per-device manage page in an embedded
+                // WebView (via the /api/device-session bridge) so the
+                // user doesn't have to leave the app.
+                DeviceWebActivity.start(this, hubUrl, item.id, item.name)
             }
             b.deviceList.addView(row.root)
         }

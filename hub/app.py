@@ -900,6 +900,36 @@ async def api_account_devices(request: Request):
     }
 
 
+# V5.27 / Driver-B9: device-to-session auth bridge. The Vortex Driver
+# APK has the device's (id, token) but no hub-session cookie, and
+# the hub's per-device manage page is session-authed. This endpoint
+# accepts the device's own credentials (same header pair /api/nodes
+# and /api/account/devices use) and mints a vortex_session cookie
+# for the device's owner. The APK does this POST inside a hidden
+# OkHttp client, copies the Set-Cookie into the WebView's
+# CookieManager, then loads the manage page -- the user lands on
+# /devices/{id} already signed in, no re-auth.
+#
+# Security note: the device token already lets the holder control
+# every device in the same account (via ws/agent + /api/account/devices),
+# so trading it for a session cookie is not an escalation -- it
+# just gives the dashboard UI the same authority the API path
+# already grants. If a device is unpaired or the token rotates the
+# minted session keeps working until its own TTL expires, which is
+# fine -- that's the same property /login has.
+@app.post("/api/device-session")
+async def api_device_session(request: Request, response: Response):
+    did = (request.headers.get("x-vortex-device")
+           or request.query_params.get("device_id") or "").strip()
+    tok = (request.headers.get("x-vortex-token")
+           or request.query_params.get("token") or "")
+    dev = db.authenticate_device(did, tok) if did else None
+    if dev is None:
+        raise HTTPException(status_code=403, detail="Invalid device credentials")
+    auth.login(response, dev["owner_id"])
+    return {"ok": True, "user_id": dev["owner_id"]}
+
+
 # ---------------------------------------------------------------------------
 # V5.5: self-register — enroll THIS device (the one running the hub
 # process) straight from the logged-in browser. No pairing code: the

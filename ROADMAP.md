@@ -346,6 +346,20 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B9 — WebView device-manage + auth bridge** _shipped_.
+  New hub endpoint `POST /api/device-session` accepts
+  `X-Vortex-Device` + `X-Vortex-Token` and mints a `vortex_session`
+  cookie for the device's owner (same `auth.login` helper `/login`
+  uses; not an escalation -- the device token already controls
+  every device in the account). New APK `DeviceWebActivity` does
+  the bridge POST first, copies the resulting Set-Cookie into
+  Android's `CookieManager`, then loads `{hub}/devices/{id}` in
+  an embedded WebView. `DevicesActivity` tap-through now goes
+  here instead of `Intent.ACTION_VIEW` -> system browser. JS +
+  DOM storage on, file access off, mixed content blocked,
+  external links escape to the system browser. Falls back to a
+  manual sign-in inside the WebView for hubs older than V5.27.
+
 - [x] **B8 — in-app device list** _shipped_. New `DevicesActivity`
   opened from MainActivity once enrolled. Renders every device in
   the account with a coloured status dot (emerald/amber/grey for
