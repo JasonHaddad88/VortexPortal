@@ -346,6 +346,17 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.3 — peer client + in-app viewer** _shipped_. New
+  `PeerClient` (OkHttp WS) reads `device_peers`, races hosts,
+  handshakes ticket, routes unary ops + stream ops (binary
+  routing via `stream_chunk_header` tag, same as DirectServer).
+  New `PeerControlActivity` with Screen / Camera / Info tabs.
+  MJPEG decode to `ImageView`; facing toggle on Camera;
+  pretty-printed JSON on Info. `DevicesActivity` row tap now
+  goes here instead of the B11.2 placeholder (THIS DEVICE rows
+  show a hint instead of self-dialing). H.264 native decode +
+  Input passthrough defer to B11.4.
+
 - [x] **B11.2 — auto-enroll + peer presence** _shipped_. New
   `Auth.ensureSelfEnrolled` runs on every successful sign-in:
   INSERT (or `UPDATE last_seen`) this phone in `devices`, mint a

@@ -3,6 +3,76 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.3] — 2026-05-25
+
+**Tap a device, control it.** The final piece of the no-central-hub
+loop: a native peer-to-peer WS client in the APK and a viewer
+activity that uses it. Pick a device from My-devices, the APK dials
+its published direct-WS endpoint and renders live frames in-app.
+No webapp tab, no hub in the data path.
+
+### New PeerClient.kt
+- OkHttp WS client. Reads `device_peers` via `PeerRegistry`, races
+  each `host:port` (1.5 s handshake timeout per host), handshakes
+  `ws://…/ws/direct?ticket=…` (same protocol DirectServer + the
+  webapp speak). One listener handles both phases: until `connected`
+  flips true only `hello_ok` / `hello_fail` matter; afterwards
+  every text/binary frame is routed.
+- `unary(op, args, timeoutMs)` -> awaitable `JSONObject` result;
+  throws on `{ok:false}` / timeout / transport failure.
+- `stream(op, args, handlers)` -> registers callbacks, returns the
+  rid. `onStart(meta)`, `onFrame(bytes, header)`, `onEnd(error?)`.
+- Binary-frame routing: tracks the most recent `stream_chunk_header`
+  rid + header dict so the next binary frame is paired correctly.
+- Connection lost (failure / close) wakes every pending awaiter
+  with `{ok:false, error}` so the activity unwinds cleanly.
+
+### New PeerControlActivity.kt + activity_peer_control.xml
+- Three tabs (Screen / Camera / Info) implemented as pill buttons
+  with visibility toggles -- avoids the MaterialComponents TabLayout
+  dep for a single screen. Active tab uses the same
+  `vortex_pill_on` drawable as the Sign-in toggle.
+- **Screen** tab: sends `screen_stream` with
+  `{codec:"mjpeg", max_dim:720, fps_cap:15}`. `BitmapFactory.decode`
+  off the main thread (the 15-fps cap keeps the looper sane); decoded
+  bitmap posts back via `runOnUiThread` to the `ImageView`.
+- **Camera** tab: sends `camera_stream` with
+  `{codec:"mjpeg", facing}`. A flip button swaps `front` <-> `back`
+  on the fly (stops the current rid, sends a new request).
+- **Info** tab: unary `device_info` -> JSON pretty-printed in a
+  monospace `TextView` inside a `ScrollView`.
+- Header shows the peer's name + a tiny "Connected" status text
+  that turns emerald on success.
+- On `onDestroy` the WS closes; the peer's stream coroutines
+  (B2.2 lifecycle) cancel and release camera/MediaProjection
+  within a frame.
+
+### DevicesActivity row-tap rewire
+- Row tap goes to `PeerControlActivity` instead of the B11.2
+  placeholder / B9 WebView. THIS DEVICE rows short-circuit
+  with a "you're already here" hint so we don't self-dial.
+
+### Wire compat
+- Same protocol the webapp + DirectServer + HubClient already
+  speak. Zero changes on the peer side -- the existing
+  `Ops.registerAll(...)` handlers (B2.2 / B5 / B5.1) serve this
+  client byte-for-byte.
+
+### What's deferred to B11.4
+- H.264 native decode path (MediaCodec + SurfaceView). The MJPEG
+  default is good enough for the LAN case; H.264 wins on slow
+  links + lower CPU.
+- Input passthrough: tap on the Screen ImageView -> compute
+  phone-pixel coords -> send `input` op via the peer client.
+- File browse + theft-mode controls (more op dispatches; no new
+  infra needed).
+
+### APK version
+- **0.19.0-b11.2 → 0.20.0-b11.3 (versionCode 21 → 22)**.
+
+### Hub
+- Unchanged (still V5.28).
+
 ## [Driver-B11.2] — 2026-05-25
 
 **The plumbing that turns "I can sign in" into a working peer.**

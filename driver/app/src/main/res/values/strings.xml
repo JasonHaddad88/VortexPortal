@@ -125,6 +125,20 @@
     <string name="signin_open_setup">Database setup</string>
     <string name="dashboard_db_setup">Database setup</string>
 
+    <!-- B11.3: in-app per-device viewer. -->
+    <string name="peer_tab_screen">Screen</string>
+    <string name="peer_tab_camera">Camera</string>
+    <string name="peer_tab_info">Info</string>
+    <string name="peer_camera_flip">Flip camera</string>
+    <string name="peer_connecting">Connecting to peer…</string>
+    <string name="peer_connected">Connected</string>
+    <string name="peer_streaming">Streaming · %1$s</string>
+    <string name="peer_connect_failed">Couldn\'t connect: %1$s</string>
+    <string name="peer_loading_screen">Asking peer for screen stream…</string>
+    <string name="peer_loading_camera">Asking peer for camera stream…</string>
+    <string name="peer_loading_info">Reading device info…</string>
+    <string name="peer_stream_send_failed">Couldn\'t send the stream request — connection may have dropped.</string>
+
     <!-- B8: in-app device list. Reads /api/account/devices using the
          device's own X-Vortex-Device/Token (no session needed). -->
     <string name="btn_devices">My devices</string>

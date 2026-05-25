@@ -196,19 +196,18 @@ class DevicesActivity : AppCompatActivity() {
             row.thisBadge.visibility = if (item.thisDevice) View.VISIBLE else View.GONE
             row.thisBadge.setTextColor(0xFF67E8F9.toInt())
             row.root.setOnClickListener {
-                if (hubUrl != null) {
-                    // B9 path: open the per-device manage page in the
-                    // embedded WebView (auth-bridged). Available when
-                    // a hub is still in play (transitional deploys).
-                    DeviceWebActivity.start(this, hubUrl, item.id, item.name)
-                } else {
-                    // B11 direct-Turso deploys have no hub URL. In-app
-                    // per-device control (browse / screen / camera /
-                    // input) over the device's direct-WS port arrives
-                    // in B11.2; for now surface a hint.
-                    setStatus("In-app device control arrives in Driver-B11.2. " +
-                              "For now use the webapp.", err = false)
+                if (item.thisDevice) {
+                    // Tapping THIS device on itself would dial localhost
+                    // and just race a self-handshake. Skip with a hint;
+                    // the user is already "here".
+                    setStatus("This is the current device. Open Vortex on another " +
+                              "phone to control this one.", err = false)
+                    return@setOnClickListener
                 }
+                // B11.3: native peer viewer. Dials the device's
+                // published direct-WS endpoint from `device_peers` and
+                // renders Screen / Camera / Info in the APK.
+                PeerControlActivity.start(this, item.id, item.name)
             }
             b.deviceList.addView(row.root)
         }

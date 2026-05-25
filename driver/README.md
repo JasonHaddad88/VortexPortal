@@ -54,6 +54,7 @@ Future milestones, in order:
 | **B10** | Webapp-styled **front door**: Sign-in / Create-account is the launcher screen, dashboard is the post-login home, Device-settings moves to a kebab | _shipped_ |
 | **B11** | **No central hub**: APK talks to Turso directly. Setup screen for DB URL+token; Sign-in/Register/devices read+write the Turso tables straight | _shipped_ |
 | **B11.2** | Auto-enroll this phone + peer presence (`device_peers` table) + service auto-start on sign-in | _shipped_ |
+| **B11.3** | Peer client (OkHttp WS) + in-app per-device viewer (Screen / Camera / Info, MJPEG) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -169,6 +170,45 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B11.3: peer client + in-app per-device viewer
+
+Tap a device row in My-devices, the APK opens a native viewer
+that dials the peer's published direct-WS endpoint and renders
+the live stream. **No webapp tab, no hub in the data path.**
+
+How it works end-to-end:
+1. `PeerRegistry.listFresh()` looks up the peer's row in
+   `device_peers` (`hosts` JSON, `port`, `ticket`).
+2. `PeerClient.connectTo(deviceId)` races each `host:port`,
+   handshakes with `ws://…/ws/direct?ticket=…` (same protocol
+   `DirectServer` already speaks; ticket is the one our peer
+   armed via `armTicketValue`).
+3. Three tabs (`PeerControlActivity`):
+   - **Screen** — sends `screen_stream` with
+     `{codec:"mjpeg", max_dim:720, fps_cap:15}`. JPEG frames
+     render to an `ImageView`.
+   - **Camera** — sends `camera_stream` with
+     `{codec:"mjpeg", facing:"back"|"front"}`. Flip button
+     swaps facing on the fly.
+   - **Info** — unary `device_info` op, JSON pretty-printed.
+4. On activity destroy the WS closes; the peer's stream
+   coroutines (B2.2 lifecycle) cancel and release the
+   camera/projection within a frame.
+
+**Tapping THIS device** in the list shows a hint instead of
+dialling localhost in circles.
+
+What's deferred to **B11.4**:
+- **H.264 path**: `MediaCodec` decoder fed NAL units +
+  `SurfaceView` render. The MJPEG path stays as a fallback;
+  H.264 buys the order-of-magnitude bandwidth + latency win
+  the webapp gets via WebCodecs.
+- **Input passthrough**: tap on the screen ImageView → compute
+  phone-pixel coords → send `input` op (tap / long-press /
+  swipe) via the peer client.
+- **File browse + theft-mode controls** via the same peer
+  client (just more op dispatches; no new infra needed).
 
 ### B11.2: auto-enroll + peer presence
 

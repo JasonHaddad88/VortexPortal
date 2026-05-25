@@ -11,8 +11,8 @@ android {
         applicationId = "com.vortex.driver"
         minSdk = 26          // Android 8.0 -- foreground-service notifications + adaptive icons
         targetSdk = 34       // Android 14
-        versionCode = 21
-        versionName = "0.19.0-b11.2"
+        versionCode = 22
+        versionName = "0.20.0-b11.3"
     }
 
     buildTypes {
