@@ -51,6 +51,7 @@ Future milestones, in order:
 | **B7** | In-app **register** (toggle on sign-in screen, invite-mode aware) | _shipped_ |
 | **B8** | In-app **device list** (My devices: online dots, last-seen, tap → hub page) | _shipped_ |
 | **B9** | In-app **WebView** for the per-device hub page (auth-bridged) | _shipped_ |
+| **B10** | Webapp-styled **front door**: Sign-in / Create-account is the launcher screen, dashboard is the post-login home, Device-settings moves to a kebab | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -166,6 +167,41 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B10: webapp-matching front door (auth as the home screen)
+
+Before B10 the APK launcher landed on a tall list of buttons
+(Start service, Arm screen, Enable accessibility, Enroll, etc.) --
+useful for power-users, terrible as a first impression. B10 makes
+the **front door of the APK the same auth experience the webapp
+has**: the launcher routes through a tiny `EntryActivity` to
+`SignInActivity` (when not enrolled) or `DevicesActivity` (when
+enrolled).
+
+The auth + dashboard screens were restyled to match the webapp's
+visual language end-to-end: the same `--bg`, `--surface`,
+`--cyan`, `--purple` palette (now in `colors.xml`), the gradient
+brand logo, the centered card layout, the dark inputs with cyan
+focus glow, the purple-to-cyan primary button.
+
+Device-settings (Start/Stop service, Arm screen, Enable
+accessibility -- the original MainActivity content) is now
+reachable from:
+- A **kebab** in the dashboard topbar -> "Device settings"
+- The **foreground-service notification**'s tap action +
+  a dedicated "Device settings" action button.
+
+Naming: "Hub" is gone from user-facing strings. Vortex has been
+peer-to-peer since V5.15 (any node can control any device in the
+account; cross-node relay is automatic); the strings now reflect
+that. Login subtitle reads "This device joins your peer network --
+every device can control every other device on the same account,
+no central hub."
+
+The kebab also includes **Node settings** -- opens the node's
+`/settings` page in the embedded WebView via the B9 auth bridge.
+Admin-only on the server side; non-admins see the hub's normal
+"not allowed" page inside the WebView (same as the webapp).
 
 ### B9: in-app WebView for device manage (auth bridge)
 

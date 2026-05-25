@@ -346,6 +346,22 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B10 — webapp-matching home screen** _shipped_. The
+  APK launcher is now `EntryActivity`, a tiny no-UI router that
+  forwards to `SignInActivity` (not enrolled) or `DevicesActivity`
+  (enrolled) -- matches the webapp's `/` -> `/login` flow. Auth
+  + dashboard screens were restyled with the webapp's palette
+  (purple/cyan, dark surfaces, gradient brand logo, centered card)
+  via new `colors.xml`, `drawable/vortex_*.xml`, and `VortexLabel`
+  / `VortexInput` styles. Device-settings (Start/Stop service,
+  Arm screen, Accessibility -- the original MainActivity content)
+  moved to a kebab in the dashboard topbar + a dedicated action on
+  the foreground-service notification. New "Node settings" entry
+  opens the node's `/settings` page in the B9 WebView (admin gate
+  enforced server-side). User-facing strings rename "hub" -> "node"
+  / "Vortex" to reflect the peer-to-peer architecture that's been
+  live since V5.15.
+
 - [x] **B9 — WebView device-manage + auth bridge** _shipped_.
   New hub endpoint `POST /api/device-session` accepts
   `X-Vortex-Device` + `X-Vortex-Token` and mints a `vortex_session`

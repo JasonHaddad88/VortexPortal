@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- B10: card-styled device row matching the webapp's device cards. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
+    android:layout_marginTop="8dp"
+    android:background="@drawable/vortex_card"
+    android:foreground="?android:attr/selectableItemBackground"
     android:paddingTop="14dp"
     android:paddingBottom="14dp"
     android:paddingStart="16dp"
-    android:paddingEnd="16dp"
-    android:background="?android:attr/selectableItemBackground">
+    android:paddingEnd="16dp">
 
-    <!-- Status dot: 8dp circle, color set in code (green=online,
-         amber=elsewhere, grey=offline). -->
+    <!-- Status dot. Color set by code (vortex_success / vortex_warning
+         / vortex_text_muted). -->
     <View
         android:id="@+id/status_dot"
         android:layout_width="10dp"
@@ -29,6 +32,7 @@
             android:id="@+id/device_name"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:textColor="@color/vortex_text"
             android:textSize="16sp"
             android:textStyle="bold"/>
 
@@ -38,7 +42,7 @@
             android:layout_height="wrap_content"
             android:textSize="12sp"
             android:layout_marginTop="2dp"
-            android:textColor="?android:attr/textColorSecondary"/>
+            android:textColor="@color/vortex_text_muted"/>
     </LinearLayout>
 
     <TextView
@@ -51,8 +55,11 @@
         android:paddingTop="2dp"
         android:paddingBottom="2dp"
         android:text="@string/devices_this_device"
-        android:textSize="11sp"
+        android:textColor="@color/vortex_cyan"
+        android:textSize="10sp"
         android:textStyle="bold"
+        android:letterSpacing="0.10"
+        android:background="@drawable/vortex_pill_on"
         android:visibility="gone"/>
 
 </LinearLayout>

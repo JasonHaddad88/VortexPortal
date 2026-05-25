@@ -513,6 +513,28 @@ class DriverService : Service(), CameraEngine.FrameSink {
             parts += "Direct: :${it.port()}"
         }
         val text = parts.joinToString(" · ")
+        // B10: tapping the notification routes through EntryActivity so
+        // the user lands in the right place (Sign-in if not enrolled,
+        // Devices dashboard if enrolled). The Device-settings panel
+        // (MainActivity) is reachable from the dashboard kebab.
+        val openIntent = Intent(this, EntryActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pi = android.app.PendingIntent.getActivity(
+            this, 0, openIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        // Secondary action: jump straight to Device settings
+        // (start/stop service, arm screen, accessibility).
+        val settingsIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        val settingsPi = android.app.PendingIntent.getActivity(
+            this, 1, settingsIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.app_name))
@@ -522,6 +544,8 @@ class DriverService : Service(), CameraEngine.FrameSink {
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(pi)
+            .addAction(0, getString(R.string.dashboard_settings), settingsPi)
             .build()
     }
 

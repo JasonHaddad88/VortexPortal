@@ -62,14 +62,33 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.VortexDriver">
 
+        <!--
+          B10: the launcher is now EntryActivity, a tiny no-UI router
+          that forwards to SignInActivity (not enrolled) or
+          DevicesActivity (enrolled). Matches the webapp's flow where
+          / lands you on /login until you're authenticated.
+        -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true">
+            android:name=".EntryActivity"
+            android:exported="true"
+            android:theme="@style/Theme.VortexDriver">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          MainActivity is no longer the launcher; it now plays the
+          "Device settings" role (Start/Stop service, arm screen,
+          enable accessibility). Reachable via the foreground-service
+          notification + a Device-settings link in DevicesActivity.
+          android:label is purely cosmetic for the recents drawer.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:label="@string/dashboard_settings" />
 
         <!--
           M2: launches the system MediaProjection consent dialog. Themed

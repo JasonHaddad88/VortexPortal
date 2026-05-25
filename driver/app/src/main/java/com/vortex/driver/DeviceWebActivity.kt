@@ -69,6 +69,9 @@ class DeviceWebActivity : AppCompatActivity() {
     private var deviceName: String = ""
     private var hubUrl: String = ""
     private var hubHost: String = ""
+    /** Optional path override -- when set, we load `{hub}{landingPath}`
+     *  instead of `{hub}/devices/{id}`. Used for "Node settings" -> /settings. */
+    private var landingPath: String = ""
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,8 +82,9 @@ class DeviceWebActivity : AppCompatActivity() {
         deviceId = intent.getStringExtra(EXTRA_DEVICE_ID).orEmpty()
         deviceName = intent.getStringExtra(EXTRA_DEVICE_NAME).orEmpty()
         hubUrl = (intent.getStringExtra(EXTRA_HUB_URL).orEmpty()).trimEnd('/')
-        if (deviceId.isBlank() || hubUrl.isBlank()) {
-            showError("Missing device id or hub URL."); return
+        landingPath = intent.getStringExtra(EXTRA_LANDING_PATH).orEmpty()
+        if (hubUrl.isBlank() || (deviceId.isBlank() && landingPath.isBlank())) {
+            showError("Missing hub URL or landing path."); return
         }
         hubHost = runCatching { URI(hubUrl).host.orEmpty() }.getOrDefault("")
         if (hubHost.isBlank()) {
@@ -183,7 +187,10 @@ class DeviceWebActivity : AppCompatActivity() {
     }
 
     private fun loadManagePage() {
-        b.web.loadUrl("$hubUrl/devices/$deviceId")
+        val path = if (landingPath.isNotBlank()) {
+            if (landingPath.startsWith("/")) landingPath else "/$landingPath"
+        } else "/devices/$deviceId"
+        b.web.loadUrl("$hubUrl$path")
     }
 
     /**
@@ -238,12 +245,25 @@ class DeviceWebActivity : AppCompatActivity() {
         const val EXTRA_DEVICE_ID   = "device_id"
         const val EXTRA_DEVICE_NAME = "device_name"
         const val EXTRA_HUB_URL     = "hub_url"
+        /** B10: path override -- "/settings", "/theft", etc. */
+        const val EXTRA_LANDING_PATH = "landing_path"
 
         fun start(ctx: android.content.Context, hubUrl: String, deviceId: String, deviceName: String) {
             ctx.startActivity(Intent(ctx, DeviceWebActivity::class.java).apply {
                 putExtra(EXTRA_HUB_URL, hubUrl)
                 putExtra(EXTRA_DEVICE_ID, deviceId)
                 putExtra(EXTRA_DEVICE_NAME, deviceName)
+            })
+        }
+
+        /** B10: open a specific node-side page (not per-device).
+         *  Example: `startPath(ctx, hubUrl, "/settings", "Node settings")`
+         *  loads `{hub}/settings` after the auth bridge. */
+        fun startPath(ctx: android.content.Context, hubUrl: String, path: String, title: String) {
+            ctx.startActivity(Intent(ctx, DeviceWebActivity::class.java).apply {
+                putExtra(EXTRA_HUB_URL, hubUrl)
+                putExtra(EXTRA_LANDING_PATH, path)
+                putExtra(EXTRA_DEVICE_NAME, title)
             })
         }
     }

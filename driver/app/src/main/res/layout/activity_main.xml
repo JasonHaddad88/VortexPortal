@@ -69,15 +69,16 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- B8: "My devices" shortcut. Only meaningful when enrolled (sets
-         X-Vortex-Device/Token headers); hidden otherwise via MainActivity. -->
+    <!-- B10: "My devices" button removed from this screen. The
+         dashboard (DevicesActivity) is now reached from EntryActivity
+         and from the foreground-service notification's tap action.
+         A hidden id-only stub stays so MainActivity.kt's
+         binding.devicesBtn references still compile (the click
+         listener becomes a no-op). -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/devicesBtn"
-        style="?attr/materialButtonOutlinedStyle"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="@string/btn_devices"
+        android:layout_height="0dp"
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/unenrollBtn"
         app:layout_constraintStart_toStartOf="parent"

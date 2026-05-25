@@ -2,29 +2,78 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:orientation="vertical"
+    android:background="@color/vortex_bg">
 
+    <!-- Brand topbar (matches the webapp's .topbar). -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:padding="16dp">
+        android:paddingStart="20dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp"
+        android:background="@color/vortex_surface">
+
+        <View
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/vortex_brand_logo"/>
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="@string/devices_title"
-            android:textSize="20sp"
-            android:textStyle="bold"/>
+            android:layout_marginStart="10dp"
+            android:text="@string/brand_wordmark"
+            android:textColor="@color/vortex_text"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.16"
+            android:fontFamily="sans-serif-medium"/>
 
+        <!-- Overflow menu trigger (kebab). Tapping opens a popup
+             with Device settings / Node settings / Refresh / Sign out. -->
+        <ImageButton
+            android:id="@+id/overflow_btn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_menu_more"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/dashboard_settings"
+            android:tint="@color/vortex_cyan"/>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/vortex_border"/>
+
+    <!-- Page title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="20dp">
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/devices_title"
+            android:textColor="@color/vortex_text"
+            android:textSize="22sp"
+            android:textStyle="bold"/>
         <Button
             android:id="@+id/refresh_btn"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             style="?android:attr/buttonBarButtonStyle"
-            android:text="@string/devices_refresh"/>
+            android:text="@string/devices_refresh"
+            android:textColor="@color/vortex_cyan"
+            android:textAllCaps="false"/>
     </LinearLayout>
 
     <ProgressBar
@@ -32,37 +81,36 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
-        android:layout_marginTop="8dp"
-        android:visibility="gone"/>
+        android:layout_marginTop="4dp"
+        android:visibility="gone"
+        android:indeterminateTint="@color/vortex_cyan"/>
 
     <TextView
         android:id="@+id/status_text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
-        android:textSize="12sp"
+        android:textSize="13sp"
+        android:textColor="@color/vortex_text_muted"
         android:visibility="gone"/>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="?android:attr/dividerHorizontal"/>
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="16dp">
 
         <LinearLayout
             android:id="@+id/device_list"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:divider="?android:attr/dividerHorizontal"
-            android:showDividers="middle"/>
+            android:orientation="vertical"/>
     </ScrollView>
 
     <TextView
@@ -71,7 +119,7 @@
         android:layout_height="wrap_content"
         android:padding="24dp"
         android:gravity="center"
-        android:textColor="?android:attr/textColorSecondary"
+        android:textColor="@color/vortex_text_muted"
         android:text="@string/devices_empty"
         android:visibility="gone"/>
 

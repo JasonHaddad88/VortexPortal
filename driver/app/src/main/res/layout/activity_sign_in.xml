@@ -1,206 +1,239 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  B10: webapp-matching sign-in / register screen. The whole thing
+  reads as a single centered card (matches the webapp's /login + /register
+  card layout). Existing IDs from B6/B7 are preserved 1:1 so
+  SignInActivity.kt doesn't need a refactor -- only visuals change.
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:fillViewport="true"
+    android:background="@color/vortex_bg">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:gravity="center_horizontal"
+        android:paddingTop="40dp"
+        android:paddingBottom="40dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
 
-        <TextView
-            android:id="@+id/title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_title"
-            android:textSize="20sp"
-            android:textStyle="bold"/>
-
-        <TextView
-            android:id="@+id/subtitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_subtitle"
-            android:textSize="13sp"
-            android:layout_marginTop="6dp"
-            android:layout_marginBottom="14dp"/>
-
-        <!-- B7: mode toggle. Two equal-weight buttons; the active one
-             is bold + tinted via the activity's setMode(). -->
+        <!-- Brand: gradient logo + "VORTEX" wordmark, same as the
+             webapp's topbar. -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="10dp">
-            <Button
-                android:id="@+id/mode_signin"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/signin_mode_signin"/>
-            <Button
-                android:id="@+id/mode_register"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="@string/signin_mode_register"/>
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_label_hub_url"
-            android:textStyle="bold"
-            android:layout_marginTop="6dp"/>
-        <EditText
-            android:id="@+id/hub_url"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="textUri"
-            android:hint="@string/signin_hint_hub_url"
-            android:autofillHints="url"
-            android:layout_marginTop="4dp"/>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_label_username"
-            android:textStyle="bold"
-            android:layout_marginTop="14dp"/>
-        <EditText
-            android:id="@+id/username"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text"
-            android:hint="@string/signin_hint_username"
-            android:autofillHints="username"
-            android:layout_marginTop="4dp"/>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_label_password"
-            android:textStyle="bold"
-            android:layout_marginTop="14dp"/>
-        <EditText
-            android:id="@+id/password"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="textPassword"
-            android:hint="@string/signin_hint_password"
-            android:autofillHints="password"
-            android:layout_marginTop="4dp"/>
-
-        <!-- B7: register-only fields. Visibility toggled by setMode(). -->
-        <TextView
-            android:id="@+id/password2_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_label_password2"
-            android:textStyle="bold"
-            android:layout_marginTop="14dp"
-            android:visibility="gone"/>
-        <EditText
-            android:id="@+id/password2"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="textPassword"
-            android:hint="@string/signin_hint_password2"
-            android:autofillHints="newPassword"
-            android:layout_marginTop="4dp"
-            android:visibility="gone"/>
-
-        <TextView
-            android:id="@+id/invite_label"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_label_invite"
-            android:textStyle="bold"
-            android:layout_marginTop="14dp"
-            android:visibility="gone"/>
-        <EditText
-            android:id="@+id/invite"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text"
-            android:hint="@string/signin_hint_invite"
-            android:layout_marginTop="4dp"
-            android:visibility="gone"/>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/signin_label_device_name"
-            android:textStyle="bold"
-            android:layout_marginTop="14dp"/>
-        <EditText
-            android:id="@+id/device_name"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text"
-            android:hint="@string/signin_hint_device_name"
-            android:layout_marginTop="4dp"/>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="24dp">
-            <Button
-                android:id="@+id/signin_btn"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/signin_btn"/>
-            <Button
-                android:id="@+id/cancel_btn"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                style="?android:attr/buttonBarButtonStyle"
-                android:layout_marginStart="8dp"
-                android:text="@string/cancel"/>
-        </LinearLayout>
-
-        <ProgressBar
-            android:id="@+id/progress"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:layout_gravity="center"
-            android:visibility="gone"/>
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="24dp">
+            <View
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="@drawable/vortex_brand_logo"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/brand_wordmark"
+                android:textColor="@color/vortex_text"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.16"
+                android:fontFamily="sans-serif-medium"/>
+        </LinearLayout>
 
-        <TextView
-            android:id="@+id/status_text"
+        <!-- The card. Capped width so it looks centered on tablets too. -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:textSize="13sp"
-            android:visibility="gone"/>
+            android:orientation="vertical"
+            android:background="@drawable/vortex_card"
+            android:padding="22dp"
+            android:layout_marginTop="6dp">
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="22dp"
-            android:layout_marginBottom="6dp"
-            android:background="?android:attr/dividerHorizontal"/>
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/signin_title"
+                android:textColor="@color/vortex_text"
+                android:textSize="22sp"
+                android:textStyle="bold"/>
 
-        <Button
-            android:id="@+id/use_token_btn"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            style="?android:attr/buttonBarButtonStyle"
-            android:textAlignment="center"
-            android:text="@string/signin_use_token"/>
-        <Button
-            android:id="@+id/register_btn"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            style="?android:attr/buttonBarButtonStyle"
-            android:textAlignment="center"
-            android:text="@string/signin_register_browser"/>
+            <TextView
+                android:id="@+id/subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="20dp"
+                android:text="@string/signin_subtitle"
+                android:textColor="@color/vortex_text_muted"
+                android:textSize="13sp"/>
 
+            <!-- Toggle pills. SignInActivity.setMode() flips the background
+                 drawables to reflect the active mode. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="18dp">
+                <Button
+                    android:id="@+id/mode_signin"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/signin_mode_signin"
+                    android:textColor="@color/vortex_text"
+                    android:background="@drawable/vortex_pill_on"
+                    android:textAllCaps="false"/>
+                <Button
+                    android:id="@+id/mode_register"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:text="@string/signin_mode_register"
+                    android:textColor="@color/vortex_text_subtle"
+                    android:background="@drawable/vortex_pill_off"
+                    android:textAllCaps="false"/>
+            </LinearLayout>
+
+            <!-- Node URL -->
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/signin_label_node_url"/>
+            <EditText
+                android:id="@+id/hub_url"
+                style="@style/VortexInput"
+                android:inputType="textUri"
+                android:hint="@string/signin_hint_node_url"
+                android:autofillHints="url"/>
+
+            <!-- Username -->
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/signin_label_username"/>
+            <EditText
+                android:id="@+id/username"
+                style="@style/VortexInput"
+                android:inputType="text"
+                android:hint="@string/signin_hint_username"
+                android:autofillHints="username"/>
+
+            <!-- Password -->
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/signin_label_password"/>
+            <EditText
+                android:id="@+id/password"
+                style="@style/VortexInput"
+                android:inputType="textPassword"
+                android:hint="@string/signin_hint_password"
+                android:autofillHints="password"/>
+
+            <!-- Register-only: confirm password. -->
+            <TextView
+                android:id="@+id/password2_label"
+                style="@style/VortexLabel"
+                android:text="@string/signin_label_password2"
+                android:visibility="gone"/>
+            <EditText
+                android:id="@+id/password2"
+                style="@style/VortexInput"
+                android:inputType="textPassword"
+                android:hint="@string/signin_hint_password2"
+                android:autofillHints="newPassword"
+                android:visibility="gone"/>
+
+            <!-- Register-only: invite. Hidden when the node is in
+                 open mode or this is the bootstrap user. -->
+            <TextView
+                android:id="@+id/invite_label"
+                style="@style/VortexLabel"
+                android:text="@string/signin_label_invite"
+                android:visibility="gone"/>
+            <EditText
+                android:id="@+id/invite"
+                style="@style/VortexInput"
+                android:inputType="text"
+                android:hint="@string/signin_hint_invite"
+                android:visibility="gone"/>
+
+            <!-- Device name (so the user can label THIS phone). -->
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/signin_label_device_name"/>
+            <EditText
+                android:id="@+id/device_name"
+                style="@style/VortexInput"
+                android:inputType="text"
+                android:hint="@string/signin_hint_device_name"/>
+
+            <!-- Primary action -->
+            <Button
+                android:id="@+id/signin_btn"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="22dp"
+                android:text="@string/signin_btn"
+                android:textColor="@color/vortex_bg"
+                android:textStyle="bold"
+                android:textAllCaps="false"
+                android:background="@drawable/vortex_button_primary"/>
+
+            <Button
+                android:id="@+id/cancel_btn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/cancel"
+                android:textColor="@color/vortex_text_muted"
+                android:textAllCaps="false"/>
+
+            <ProgressBar
+                android:id="@+id/progress"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:layout_gravity="center"
+                android:visibility="gone"
+                android:indeterminateTint="@color/vortex_cyan"/>
+
+            <TextView
+                android:id="@+id/status_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:textSize="13sp"
+                android:visibility="gone"/>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="6dp"
+                android:background="@color/vortex_border"/>
+
+            <Button
+                android:id="@+id/use_token_btn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/signin_use_token"
+                android:textColor="@color/vortex_cyan"
+                android:textAllCaps="false"/>
+            <Button
+                android:id="@+id/register_btn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/signin_register_browser"
+                android:textColor="@color/vortex_text_muted"
+                android:textAllCaps="false"/>
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

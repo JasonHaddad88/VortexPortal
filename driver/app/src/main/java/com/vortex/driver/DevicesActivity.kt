@@ -1,10 +1,12 @@
 package com.vortex.driver
 
+import android.content.Intent
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
+import android.widget.PopupMenu
 import androidx.appcompat.app.AppCompatActivity
 import com.vortex.driver.databinding.ActivityDevicesBinding
 import com.vortex.driver.databinding.RowDeviceBinding
@@ -51,6 +53,45 @@ class DevicesActivity : AppCompatActivity() {
         b = ActivityDevicesBinding.inflate(layoutInflater)
         setContentView(b.root)
         b.refreshBtn.setOnClickListener { refresh() }
+        b.overflowBtn.setOnClickListener { showOverflowMenu(it) }
+    }
+
+    /** Top-right kebab. Device settings (Start/Stop service, arm
+     *  screen, accessibility) -> MainActivity. Node settings -> the
+     *  node's web /settings page in the WebView with B9's auth
+     *  bridge. Sign out clears creds + bounces to the launcher
+     *  (which lands on SignInActivity). */
+    private fun showOverflowMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(getString(R.string.dashboard_settings)).setOnMenuItemClickListener {
+            startActivity(Intent(this, MainActivity::class.java)); true
+        }
+        popup.menu.add(getString(R.string.dashboard_node_settings)).setOnMenuItemClickListener {
+            val hubUrl = pickHubUrl()
+            if (hubUrl != null) {
+                // Land directly on the node's /settings page using the
+                // B9 device-session auth bridge. Admin gate is enforced
+                // server-side; non-admin users get the same "not
+                // allowed" message they'd see in a browser.
+                DeviceWebActivity.startPath(this, hubUrl, "/settings",
+                                            getString(R.string.dashboard_node_settings))
+            }
+            true
+        }
+        popup.menu.add(getString(R.string.devices_refresh)).setOnMenuItemClickListener {
+            refresh(); true
+        }
+        popup.menu.add(getString(R.string.dashboard_sign_out)).setOnMenuItemClickListener {
+            Prefs.clear(this)
+            stopService(Intent(this, DriverService::class.java))
+            // Restart at the launcher router so we land on SignInActivity.
+            val i = Intent(this, EntryActivity::class.java)
+            i.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            startActivity(i)
+            finish()
+            true
+        }
+        popup.show()
     }
 
     override fun onResume() {

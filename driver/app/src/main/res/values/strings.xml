@@ -73,7 +73,7 @@
          paste flow above stays as an "advanced" link for QR-deep-link
          scans and headless setups. -->
     <string name="signin_title">Sign in to Vortex</string>
-    <string name="signin_subtitle">Sign in with your Vortex account and this device will enroll itself. No long token to copy, no browser detour — username and password are all you need.</string>
+    <string name="signin_subtitle">Sign in to your Vortex account. This device joins your peer network — every device can control every other device on the same account, no central hub.</string>
     <string name="signin_label_hub_url">Hub URL (any reachable node)</string>
     <string name="signin_hint_hub_url">https://your-hub.trycloudflare.com</string>
     <string name="signin_label_username">Username</string>
@@ -90,13 +90,25 @@
     <string name="signin_mode_signin">Sign in</string>
     <string name="signin_mode_register">Create account</string>
     <string name="signin_title_register">Create a Vortex account</string>
-    <string name="signin_subtitle_register">Pick a username + password, optionally enter an invite code if your hub requires one, and this device will enroll itself right after.</string>
+    <string name="signin_subtitle_register">Pick a username + password. If your node is in invite mode you\'ll also need a one-time invite code. This device enrolls into your account in the same submit.</string>
     <string name="signin_label_password2">Confirm password</string>
     <string name="signin_hint_password2">type the password again</string>
     <string name="signin_label_invite">Invite code</string>
     <string name="signin_hint_invite">required only if your hub is in invite-only mode</string>
     <string name="signin_btn_register">Create account &amp; enroll</string>
-    <string name="signin_register_browser">Open hub register page in browser</string>
+    <string name="signin_register_browser">Open node register page in browser</string>
+
+    <!-- B10: rename hub→node + new strings for the redesigned screens. -->
+    <string name="brand_wordmark">VORTEX</string>
+    <string name="signin_subtitle_v2">Sign in to your Vortex account. This device joins your peer network — every device can control every other device on the same account.</string>
+    <string name="signin_subtitle_register_v2">Pick a username + password. If your node is in invite mode, you\'ll also need a one-time invite code. This device enrolls into your account in the same submit.</string>
+    <string name="signin_label_node_url">Node URL</string>
+    <string name="signin_hint_node_url">https://any-vortex-node.example</string>
+    <string name="dashboard_brand_subtitle">Peer network</string>
+    <string name="dashboard_settings">Device settings</string>
+    <string name="dashboard_node_settings">Node settings</string>
+    <string name="dashboard_sign_out">Sign out</string>
+    <string name="dashboard_open_in_web">Open in WebView</string>
 
     <!-- B8: in-app device list. Reads /api/account/devices using the
          device's own X-Vortex-Device/Token (no session needed). -->

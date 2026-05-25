@@ -21,4 +21,34 @@
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowNoTitle">true</item>
     </style>
+
+    <!--
+      B10: webapp-matching field-label + input styles. The label is the
+      small uppercase letter-spaced text the webapp puts above its
+      `<input>` fields; the input is a dark-surface box with a faint
+      purple border that picks up a cyan glow on focus.
+    -->
+    <style name="VortexLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:text">Label</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.10</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/vortex_text_subtle</item>
+    </style>
+
+    <style name="VortexInput">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_marginTop">6dp</item>
+        <item name="android:background">@drawable/vortex_input</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:textColor">@color/vortex_text</item>
+        <item name="android:textColorHint">@color/vortex_text_muted</item>
+        <item name="android:textSize">15sp</item>
+    </style>
 </resources>

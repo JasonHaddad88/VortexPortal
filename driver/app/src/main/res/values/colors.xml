@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  B10: Vortex palette ported from hub/templates.py:CSS `:root` so the
+  APK's native screens read as the same product. Keep these in sync
+  with the webapp's CSS variables.
+-->
+<resources>
+    <color name="vortex_bg">#06060A</color>
+    <color name="vortex_surface">#0E0E18</color>
+    <color name="vortex_surface_2">#14141F</color>
+
+    <!-- Borders: webapp uses rgba(168,85,247,0.18 / 0.45). Android color
+         alpha is in the AARRGGBB high nibble. -->
+    <color name="vortex_border">#2EA855F7</color>
+    <color name="vortex_border_strong">#73A855F7</color>
+
+    <color name="vortex_text">#E2E8F0</color>
+    <color name="vortex_text_muted">#6B7280</color>
+    <color name="vortex_text_subtle">#9CA3AF</color>
+
+    <color name="vortex_purple">#A855F7</color>
+    <color name="vortex_purple_glow">#73A855F7</color>
+    <color name="vortex_cyan">#67E8F9</color>
+    <color name="vortex_cyan_glow">#66A7F9</color>
+
+    <color name="vortex_danger">#EF4444</color>
+    <color name="vortex_success">#34D399</color>
+    <color name="vortex_warning">#FBBF24</color>
+
+    <!-- Toggle pill states (sign-in / register tab look). -->
+    <color name="vortex_pill_on">#1AA855F7</color>
+    <color name="vortex_pill_off">#0DFFFFFF</color>
+</resources>

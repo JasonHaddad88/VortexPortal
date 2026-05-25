@@ -97,7 +97,22 @@ class SignInActivity : AppCompatActivity() {
     private fun setMode(m: Mode) {
         mode = m
         val isReg = (m == Mode.REGISTER)
-        // Visual: bold the active toggle so it reads as selected.
+        // Visual: swap the toggle-pill background drawables and adjust
+        // text color/weight so the active pill reads as selected.
+        b.modeSignin.setBackgroundResource(
+            if (isReg) R.drawable.vortex_pill_off else R.drawable.vortex_pill_on
+        )
+        b.modeRegister.setBackgroundResource(
+            if (isReg) R.drawable.vortex_pill_on else R.drawable.vortex_pill_off
+        )
+        b.modeSignin.setTextColor(
+            ContextCompat.getColor(this,
+                if (isReg) R.color.vortex_text_subtle else R.color.vortex_text)
+        )
+        b.modeRegister.setTextColor(
+            ContextCompat.getColor(this,
+                if (isReg) R.color.vortex_text else R.color.vortex_text_subtle)
+        )
         b.modeSignin.setTypeface(null, if (isReg) Typeface.NORMAL else Typeface.BOLD)
         b.modeRegister.setTypeface(null, if (isReg) Typeface.BOLD else Typeface.NORMAL)
         b.title.text = getString(

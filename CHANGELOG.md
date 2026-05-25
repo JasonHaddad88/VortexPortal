@@ -3,6 +3,103 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B10] — 2026-05-25
+
+**The APK's home screen is finally Sign-in, not "Enable Driver".**
+Big visual + structural overhaul: the launcher now lands on the
+auth experience (matching the webapp), the dashboard ("My
+devices") is the post-login home, and the existing native
+controls (Start/Stop service, Arm screen, Accessibility) move
+out of the way into a Device-settings panel reachable from a
+kebab + the foreground-service notification.
+
+### New launcher router
+- `EntryActivity.kt` is the new LAUNCHER. No UI; decides
+  `Prefs.isEnrolled` and forwards to `SignInActivity` (not
+  enrolled) or `DevicesActivity` (enrolled). Uses
+  `FLAG_ACTIVITY_NEW_TASK | CLEAR_TASK` so the back button from
+  the destination exits cleanly instead of bouncing through.
+- Manifest: LAUNCHER intent-filter moved from `MainActivity` to
+  `EntryActivity`. `MainActivity` keeps its old content but is
+  no longer the front door; labeled "Device settings" in the
+  recents drawer.
+
+### Restyled to match the webapp
+- New `values/colors.xml` ports the webapp CSS `:root` palette
+  (`vortex_bg`, `vortex_surface`, `vortex_cyan`, `vortex_purple`,
+  `vortex_border`, `vortex_text_*`, etc.). Keep these in sync
+  with `hub/templates.py` going forward.
+- New drawables: `vortex_card`, `vortex_input` (with focus
+  selector), `vortex_brand_logo` (the gradient-square + dark
+  center-cutout the webapp uses in its topbar),
+  `vortex_button_primary` (purple->cyan gradient with pressed
+  state + disabled state), `vortex_pill_on` / `vortex_pill_off`
+  (the toggle look used by Sign-in / Create-account).
+- New `VortexLabel` + `VortexInput` styles in `themes.xml`.
+
+### SignInActivity layout rebuilt
+- Centered card layout that mirrors the webapp's `/login` and
+  `/register` cards: brand at top (gradient logo + "VORTEX"
+  wordmark with letter-spacing), card with title + subtitle +
+  toggle pills + fields + primary button.
+- "Hub URL" -> "Node URL" label.
+- `SignInActivity.kt setMode()` swaps the pill drawables +
+  text colors to reflect active mode.
+- All B6/B7 logic preserved -- only visuals changed.
+
+### DevicesActivity layout rebuilt
+- Webapp-style topbar (gradient logo + VORTEX wordmark) with
+  a kebab on the right.
+- Page title "My devices" with the same big-bold styling as
+  the webapp's `<h1>`.
+- Device rows are now `vortex_card`-backed (rounded, faint
+  purple border) instead of bare list items.
+- `THIS DEVICE` badge gets the active-pill pink/purple look.
+
+### Kebab menu (top-right of dashboard)
+- **Device settings** -> launches `MainActivity` (the
+  Start/Stop service / Arm screen / Accessibility controls).
+- **Node settings** -> opens `{hub}/settings` in the embedded
+  WebView via the B9 auth bridge. Admin gate is enforced
+  server-side; non-admins see the hub's normal "not allowed"
+  page inside the WebView -- same UX as the webapp.
+- **Refresh** -> re-fetches `/api/account/devices`.
+- **Sign out** -> `Prefs.clear` + stops the foreground service
+  + relaunches `EntryActivity` (which routes back to Sign-in).
+
+### Notification
+- `DriverService` foreground notification now carries a
+  `contentIntent` routing through `EntryActivity` and a
+  dedicated "Device settings" action button targeting
+  `MainActivity` -- so power-users can reach the native
+  controls in one tap from the notification shade.
+
+### `DeviceWebActivity` path override
+- New `EXTRA_LANDING_PATH` + `startPath(ctx, hubUrl, path,
+  title)` companion helper so the WebView can land on
+  arbitrary node paths (`/settings`, `/theft`, etc.) via the
+  same B9 auth bridge -- not just `/devices/{id}`.
+
+### Naming
+- User-facing strings drop "hub" in favour of "node" or
+  "Vortex" (e.g. "Sign in to your Vortex account. This device
+  joins your peer network -- every device can control every
+  other device on the same account, no central hub.").
+  Architecture has been peer-to-peer since V5.15; the language
+  was lagging.
+
+### Cleanup
+- The "My devices" button on `activity_main.xml` is removed
+  (dashboard is reached from EntryActivity + notification); the
+  id stub is kept hidden so the existing `binding.devicesBtn`
+  references in `MainActivity.kt` keep compiling.
+
+### APK version
+- **0.16.1-b5.2 → 0.17.0-b10 (versionCode 18 → 19)**.
+
+### Hub
+- Unchanged (still V5.28).
+
 ## [V5.28 / Driver-B5.2] — 2026-05-25
 
 **Camera sensor-rotation: portrait phone-cameras now render
