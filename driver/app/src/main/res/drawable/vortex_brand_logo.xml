@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- B10: webapp `.brand .logo` look. Purple->cyan gradient square with
-     a dark center cut-out via layer-list (matches the CSS ::after rule
-     that paints `var(--bg)` inset 5px from the gradient edge). -->
+<!-- B10: webapp brand logo. Purple->cyan gradient square with a dark
+     center cut-out via layer-list (matches the CSS ::after rule that
+     paints the bg colour inset 5px from the gradient edge). -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">

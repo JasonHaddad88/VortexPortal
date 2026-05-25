@@ -3,7 +3,7 @@
   B10: webapp-matching sign-in / register screen. The whole thing
   reads as a single centered card (matches the webapp's /login + /register
   card layout). Existing IDs from B6/B7 are preserved 1:1 so
-  SignInActivity.kt doesn't need a refactor -- only visuals change.
+  SignInActivity.kt does not need a refactor; only visuals change.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
