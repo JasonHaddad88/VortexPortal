@@ -51,6 +51,24 @@ object Prefs {
             .apply()
     }
 
+    // ---- B11.4: optional relay URL (cross-network control). Any
+    // Vortex hub running against the same Turso DB will do: HubClient
+    // dials it, and DeviceWebActivity falls back to its /devices/{id}
+    // page when the direct LAN connection isn't reachable. Empty
+    // means LAN-only; the peer-to-peer direct path still works on a
+    // shared Wi-Fi without any relay.
+    fun relayUrl(ctx: Context): String? =
+        prefs(ctx).getString(K_BOOTSTRAP_URL, null)
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+    fun saveRelay(ctx: Context, url: String) {
+        val trimmed = url.trim().trimEnd('/')
+        prefs(ctx).edit().putString(K_BOOTSTRAP_URL, trimmed).apply()
+    }
+    fun clearRelay(ctx: Context) {
+        prefs(ctx).edit().remove(K_BOOTSTRAP_URL).apply()
+    }
+
     // ---- B11: signed-in user (after sign-in / register). ----
     fun userId(ctx: Context): Long =
         prefs(ctx).getLong(K_USER_ID, -1L)

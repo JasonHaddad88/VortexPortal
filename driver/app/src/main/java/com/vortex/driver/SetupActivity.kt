@@ -42,6 +42,7 @@ class SetupActivity : AppCompatActivity() {
         // Pre-fill if the user is reconfiguring an existing Turso setup.
         b.tursoUrl.setText(Prefs.tursoUrl(this) ?: "")
         b.tursoToken.setText(Prefs.tursoToken(this) ?: "")
+        b.relayUrl.setText(Prefs.relayUrl(this) ?: "")
         b.saveBtn.setOnClickListener { onSave() }
         b.testBtn.setOnClickListener { onTest() }
     }
@@ -50,6 +51,10 @@ class SetupActivity : AppCompatActivity() {
 
     private fun onSave() {
         val (url, token) = readForm() ?: return
+        val relay = b.relayUrl.text.toString().trim().trimEnd('/')
+        if (relay.isNotEmpty() && !relay.startsWith("http://") && !relay.startsWith("https://")) {
+            setStatus("Relay URL must start with http:// or https://", err = true); return
+        }
         setBusy(true)
         setStatus("Verifying connection…", err = false)
         scope.launch {
@@ -57,6 +62,8 @@ class SetupActivity : AppCompatActivity() {
             setBusy(false)
             if (r == null) {
                 Prefs.saveTurso(this@SetupActivity, url, token)
+                if (relay.isNotEmpty()) Prefs.saveRelay(this@SetupActivity, relay)
+                else                    Prefs.clearRelay(this@SetupActivity)
                 setStatus("Connected. Saved.", err = false)
                 // Forward to sign-in; clear-task so back doesn't bounce
                 // back into Setup until the user explicitly Resets.

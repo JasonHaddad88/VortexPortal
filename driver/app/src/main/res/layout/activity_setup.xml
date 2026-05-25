@@ -92,6 +92,27 @@
                 android:hint="@string/setup_hint_token"
                 android:autofillHints="password"/>
 
+            <!-- B11.4: optional relay URL for cross-network control. -->
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/setup_label_relay"
+                android:layout_marginTop="20dp"/>
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:layout_marginBottom="2dp"
+                android:textColor="@color/vortex_text_muted"
+                android:textSize="12sp"
+                android:text="@string/setup_relay_help"
+                android:lineSpacingExtra="2dp"/>
+            <EditText
+                android:id="@+id/relay_url"
+                style="@style/VortexInput"
+                android:inputType="textUri"
+                android:hint="@string/setup_hint_relay"
+                android:autofillHints="url"/>
+
             <Button
                 android:id="@+id/save_btn"
                 android:layout_width="match_parent"

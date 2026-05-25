@@ -346,6 +346,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.4 — optional relay URL** _shipped_. NAT traversal is a
+  physics problem; cross-network needs *some* server in the middle.
+  New optional Relay URL field in Setup -- any Vortex hub running
+  against the same Turso DB works. Saved into `K_BOOTSTRAP_URL`
+  which `Prefs.saveDevice` already merges into the nodes list, so
+  `HubClient` (dormant since B11) lights back up after sign-in.
+  `PeerControlActivity` falls back to `DeviceWebActivity` at
+  `{relay}/devices/{id}` when the direct LAN connect fails; the B9
+  auth bridge lands the user signed in. Architecturally pure
+  peer-to-peer model preserved for LAN-only deploys (no relay
+  configured).
+
 - [x] **B11.3 — peer client + in-app viewer** _shipped_. New
   `PeerClient` (OkHttp WS) reads `device_peers`, races hosts,
   handshakes ticket, routes unary ops + stream ops (binary

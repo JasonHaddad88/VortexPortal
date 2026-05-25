@@ -90,10 +90,33 @@ class PeerControlActivity : AppCompatActivity() {
                 )
                 switchTab(currentTab)
             }.onFailure { e ->
-                showError(getString(R.string.peer_connect_failed,
-                                    "${e.javaClass.simpleName}: ${e.message ?: ""}"))
+                // B11.4: direct LAN connection failed. If the user
+                // configured a relay URL in Setup, fall back to the
+                // embedded WebView pointed at relay/devices/{id}.
+                // That path uses the B9 auth bridge (POST
+                // /api/device-session) to land signed-in, and the
+                // hub-side WebSocket relay handles NAT traversal so
+                // we don't have to. If no relay is configured we
+                // just show the original direct-connection error.
+                val relay = Prefs.relayUrl(this@PeerControlActivity)
+                if (relay != null) {
+                    setStatus(getString(R.string.peer_falling_back_to_relay))
+                    // Hand off to DeviceWebActivity; finish this
+                    // activity so back lands on Devices, not a
+                    // half-failed connect screen.
+                    DeviceWebActivity.start(this@PeerControlActivity,
+                                            relay, deviceId, deviceName)
+                    finish()
+                } else {
+                    showError(getString(R.string.peer_connect_failed_no_relay,
+                                        "${e.javaClass.simpleName}: ${e.message ?: ""}"))
+                }
             }
         }
+    }
+
+    private fun setStatus(text: String) {
+        b.placeholderText.text = text
     }
 
     // ---- tab routing ---------------------------------------------------

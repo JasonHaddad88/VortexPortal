@@ -3,6 +3,69 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.4] — 2026-05-25
+
+**Cross-network control via optional relay URL.** NAT traversal is
+a physics problem -- two phones behind separate NATs cannot reach
+each other's LAN IPs without help from public infrastructure.
+B11.4 adds an optional "Relay server URL" field in Setup; point it
+at any Vortex hub running against the same Turso DB and the APK
+falls back through it whenever a direct LAN connection isn't
+possible.
+
+### Setup screen: optional Relay URL
+- New 3rd field below the Turso URL + token. Explanatory caption:
+  "Without a relay, devices can only control each other on the SAME
+  Wi-Fi. To control across networks, run a Vortex hub somewhere
+  reachable (Cloudflare Tunnel, $4/mo VM, etc.) pointed at the
+  SAME database above, and paste its URL here."
+- Empty = LAN-only (current B11.3 behaviour). The peer-to-peer
+  direct path still works on a shared Wi-Fi without any relay.
+- Saved into the existing `K_BOOTSTRAP_URL` slot in
+  SharedPreferences -- this lets `Prefs.saveDevice` (called by
+  `Auth.ensureSelfEnrolled`) automatically merge it into the
+  nodes list, which `HubClient` reads to dial the relay.
+
+### Wire-up summary
+- User pastes relay URL -> `Prefs.saveRelay` -> next sign-in calls
+  `Auth.ensureSelfEnrolled` -> `Prefs.saveDevice` merges bootstrap
+  URL into nodes -> `Prefs.isEnrolled` flips true -> next
+  `DriverService.onCreate` starts `HubClient` -> the device
+  registers with the relay over the existing `ws/agent` channel.
+  No new transport code needed; the existing B1-B9 hub-client
+  pipeline (dormant in B11) lights back up.
+
+### PeerControlActivity fallback
+- On `PeerClient.connectTo()` failure (peer offline locally, or
+  reachable hosts list returns 0, or all hosts timeout), if a
+  relay URL is configured, hand off to `DeviceWebActivity`
+  pointed at `{relay}/devices/{id}`. The B9 auth bridge (POST
+  `/api/device-session`) lands the user signed in; the relay
+  hub's existing `/devices/{id}/screen|cameras|input` routes
+  handle the actual control traffic over its WS to the peer.
+- If no relay is configured, the error message now tells the
+  user exactly what's missing instead of just "couldn't reach".
+
+### Architecture: still no central hub
+- The relay is OPTIONAL and self-hostable. The DB is still the
+  source of truth (shared Turso). The relay is just a WebSocket
+  pipe + a per-page HTTP renderer; any number of relays could
+  run against the same DB and any of them works for cross-network
+  fallback. There's no "the hub" -- just "a relay you trust to
+  see your data in transit."
+- LAN-only deploys (no relay configured) keep the architecturally-
+  pure peer-to-peer model from B11.3 -- frames flow device A's
+  DirectServer -> device B's PeerClient with no third party in
+  the path.
+
+### APK version
+- **0.20.1-b11.3.1 → 0.21.0-b11.4 (versionCode 23 → 24)**.
+
+### Hub
+- Unchanged (still V5.28). Any V5.27+ hub works as a relay; the
+  cross-network bridge uses the existing `/api/device-session`
+  + `/devices/{id}` infrastructure from B9 / V5.27.
+
 ## [Driver-B11.3.1] — 2026-05-25
 
 **Bugfix release for B11.3.** User reports: devices couldn't connect

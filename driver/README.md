@@ -55,6 +55,7 @@ Future milestones, in order:
 | **B11** | **No central hub**: APK talks to Turso directly. Setup screen for DB URL+token; Sign-in/Register/devices read+write the Turso tables straight | _shipped_ |
 | **B11.2** | Auto-enroll this phone + peer presence (`device_peers` table) + service auto-start on sign-in | _shipped_ |
 | **B11.3** | Peer client (OkHttp WS) + in-app per-device viewer (Screen / Camera / Info, MJPEG) | _shipped_ |
+| **B11.4** | Optional relay URL in Setup — cross-network control by falling back through any Vortex hub | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 

@@ -122,6 +122,13 @@
     <string name="setup_btn_save">Save &amp; continue</string>
     <string name="setup_btn_test">Test connection</string>
     <string name="setup_help">Tip: create a free Turso database at turso.tech, then run `turso db tokens create &lt;db&gt;` to mint a token. Both values are stored only on this phone (private SharedPreferences).</string>
+
+    <!-- B11.4: optional relay URL for cross-network control. -->
+    <string name="setup_label_relay">Relay server URL (optional)</string>
+    <string name="setup_hint_relay">https://your-vortex-relay.example</string>
+    <string name="setup_relay_help">Without a relay, devices can only control each other on the SAME Wi-Fi. To control across networks, run a Vortex hub somewhere reachable (Cloudflare Tunnel, $4/mo VM, etc.) pointed at the SAME database above, and paste its URL here.</string>
+    <string name="peer_falling_back_to_relay">Direct LAN connect failed — switching to relay…</string>
+    <string name="peer_connect_failed_no_relay">Couldn\'t reach this device on the LAN, and no relay URL is configured. Add one in Setup to control devices on other networks. (Direct error: %1$s)</string>
     <string name="signin_open_setup">Database setup</string>
     <string name="dashboard_db_setup">Database setup</string>
 
