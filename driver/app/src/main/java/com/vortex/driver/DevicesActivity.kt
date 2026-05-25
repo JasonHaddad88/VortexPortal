@@ -136,24 +136,26 @@ class DevicesActivity : AppCompatActivity() {
                 ?: throw RuntimeException("Turso URL not set")
             val tok = Prefs.tursoToken(this@DevicesActivity)
                 ?: throw RuntimeException("Turso token not set")
-            val rows = TursoClient(url, tok).execute(
+            val client = TursoClient(url, tok)
+            val rows = client.execute(
                 "SELECT id, name, last_seen, paired_at " +
                 "FROM devices WHERE owner_id = ? ORDER BY paired_at DESC",
                 listOf(userId),
             ).rows
-            // Cross-node presence (B11.2 will wire this once peer
-            // discovery moves into Turso); for now leave online=false
-            // and elsewhere=null. The webapp populates these via the
-            // ws_router registry, which the APK doesn't have visibility
-            // into without a hub.
+            // B11.2: cross-reference against device_peers for live
+            // presence (fresh row within STALE_AFTER_SEC means online).
+            // The webapp's `device_presence` table is hub-written and
+            // would be empty for direct-Turso deploys, so we don't read
+            // it here.
+            val presence = PeerRegistry.listFresh(client)
             val thisDeviceId = Prefs.deviceId(this@DevicesActivity)
             rows.map { r ->
                 val id = r["id"] as? String ?: ""
                 DeviceItem(
                     id = id,
                     name = (r["name"] as? String) ?: "Unnamed",
-                    online = false,           // B11.2: read device_presence table
-                    elsewhere = null,
+                    online = presence.containsKey(id),
+                    elsewhere = null,            // single-DB peer model: no "elsewhere"
                     lastSeen = r["last_seen"] as? Long,
                     thisDevice = (thisDeviceId == id),
                 )

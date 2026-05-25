@@ -152,10 +152,28 @@ class SignInActivity : AppCompatActivity() {
                         username = result.username,
                         isAdmin = result.isAdmin,
                     )
-                    // Stash the device-name preference so DevicesActivity
-                    // / future enrollment can use it as the default.
-                    val p = Prefs.prefs(this@SignInActivity)
-                    p.edit().putString("device_name", devName).apply()
+                    // B11.2: auto-enroll THIS phone into the `devices`
+                    // table (or refresh last_seen if already enrolled for
+                    // this owner). Failure here is non-fatal: the user is
+                    // signed in either way; the device just won't appear
+                    // in My-devices until the next attempt succeeds.
+                    val enrollOk = runCatching {
+                        Auth.ensureSelfEnrolled(this@SignInActivity, result.userId, devName)
+                    }.getOrNull()
+                    if (enrollOk == null) {
+                        setStatus(
+                            "Signed in, but couldn't auto-enroll this phone " +
+                            "(check your Turso permissions or schema).",
+                            err = true,
+                        )
+                    }
+                    // B11.2: kick the foreground service so the
+                    // DirectServer comes up and other devices can dial
+                    // this one. Service is now gated on isSignedIn,
+                    // not isEnrolled-to-hub.
+                    val svc = Intent(this@SignInActivity, DriverService::class.java)
+                    ContextCompat.startForegroundService(this@SignInActivity, svc)
+
                     val verb = if (mode == Mode.REGISTER) "Registered" else "Signed in"
                     setStatus("$verb as ${result.username}.", err = false)
                     val i = Intent(this@SignInActivity, DevicesActivity::class.java)

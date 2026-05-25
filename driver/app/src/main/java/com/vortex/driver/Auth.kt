@@ -1,8 +1,12 @@
 package com.vortex.driver
 
 import android.content.Context
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.UUID
 
 /**
  * Auth orchestration against Turso directly. Mirrors the shape
@@ -135,5 +139,81 @@ object Auth {
         val url = Prefs.tursoUrl(ctx)?.takeIf { it.isNotBlank() } ?: return null
         val tok = Prefs.tursoToken(ctx)?.takeIf { it.isNotBlank() } ?: return null
         return TursoClient(url, tok)
+    }
+
+    /**
+     * B11.2: ensure THIS phone has a row in the `devices` table for the
+     * given owner.
+     *
+     * Idempotent: if Prefs already has a (deviceId, deviceToken) pair
+     * AND the row still exists in `devices` for this owner, we keep
+     * those creds and update `last_seen`. Otherwise we mint a fresh
+     * UUID + 32-byte URL-safe token, hash the token with SHA-256
+     * (matching `hub/db.py::hash_token`), INSERT, and persist the
+     * plaintext token locally so the device can sign in with it
+     * later (peer auth, future cross-node verify).
+     *
+     * Called from SignInActivity on successful sign-in / register.
+     */
+    suspend fun ensureSelfEnrolled(
+        ctx: Context,
+        ownerId: Long,
+        deviceName: String,
+    ): String? = withContext(Dispatchers.IO) {
+        val client = clientOrFail(ctx) ?: return@withContext null
+
+        val existingId = Prefs.deviceId(ctx)
+        val existingTok = Prefs.deviceToken(ctx)
+        val now = System.currentTimeMillis() / 1000L
+
+        // Fast path: creds present + row exists for this owner -> touch
+        // last_seen and exit. Cross-owner reuse is forbidden (a phone
+        // that switched accounts must enroll fresh under the new one).
+        if (!existingId.isNullOrBlank() && !existingTok.isNullOrBlank()) {
+            try {
+                val rows = client.execute(
+                    "SELECT owner_id FROM devices WHERE id = ?",
+                    listOf(existingId),
+                ).rows
+                val existingOwner = (rows.firstOrNull()?.get("owner_id") as? Long)
+                if (existingOwner == ownerId) {
+                    try {
+                        client.execute(
+                            "UPDATE devices SET last_seen = ? WHERE id = ?",
+                            listOf(now, existingId),
+                        )
+                    } catch (_: TursoError) { /* best-effort */ }
+                    return@withContext existingId
+                }
+            } catch (_: TursoError) { /* table missing? fall through to insert */ }
+        }
+
+        // Fresh enroll. Mint UUID + 32-byte token (url-safe, matches
+        // hub's secrets.token_urlsafe(32) length), hash the token with
+        // SHA-256 the same way hub/db.py::hash_token does.
+        val newId = UUID.randomUUID().toString().replace("-", "")
+        val rawToken = ByteArray(32).also { SecureRandom().nextBytes(it) }.let { bytes ->
+            android.util.Base64.encodeToString(
+                bytes,
+                android.util.Base64.NO_WRAP or android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING,
+            )
+        }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(rawToken.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val name = deviceName.ifBlank { Build.MODEL ?: "Android" }
+        try {
+            client.execute(
+                "INSERT INTO devices (id, owner_id, name, token_hash, paired_at, last_seen) " +
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                listOf(newId, ownerId, name, hash, now, now),
+            )
+        } catch (e: TursoError) {
+            // INSERT failed (schema mismatch? unlikely): leave Prefs
+            // untouched so the caller can show a clear error.
+            throw RuntimeException("Couldn't enroll device: ${e.message}")
+        }
+        Prefs.saveDevice(ctx, deviceId = newId, deviceToken = rawToken, name = name, nodes = emptyList())
+        newId
     }
 }

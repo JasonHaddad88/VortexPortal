@@ -3,6 +3,82 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.2] — 2026-05-25
+
+**The plumbing that turns "I can sign in" into a working peer.**
+After B11 the APK could authenticate against Turso but had no
+row in `devices` and no way for other peers to discover its
+direct-WS endpoint. B11.2 ships the missing wires.
+
+### `Auth.ensureSelfEnrolled`
+- Runs on every successful sign-in / register. If
+  `Prefs.deviceId/Token` already point at a `devices` row owned
+  by THIS user, just UPDATE last_seen. Otherwise mint a fresh
+  UUID + 32-byte URL-safe token, SHA-256 the token to match
+  `hub/db.py::hash_token`, INSERT, persist plaintext token to
+  Prefs. The phone now shows up in its own My-devices list with
+  the THIS DEVICE badge.
+- Cross-owner switch: a phone signing in under a different
+  account ignores the old creds and inserts fresh.
+
+### New PeerRegistry
+- Owns the `device_peers` table (lazily CREATEd; the webapp's
+  hub-written `device_presence` stays untouched):
+    device_id PK, hosts TEXT (JSON), port INTEGER, ticket TEXT,
+    updated_at INTEGER.
+- `publish(client, deviceId, hosts, port, ticket)` UPSERTs the
+  row with a fresh updated_at. `retract(client, deviceId)`
+  DELETEs on sign-out / shutdown. `listFresh(client)` returns
+  the map for rows within STALE_AFTER_SEC (90 s). `newTicket()`
+  mints 192 bits of URL-safe entropy.
+
+### `DriverService` peer publisher
+- New `startPeerPublisher()` coroutine refreshes our row every
+  60 s on a dedicated IO scope. Schema is ensured once at start
+  (idempotent via CREATE TABLE IF NOT EXISTS).
+- `publishPeerOnce()` collects LAN IPs from
+  `DeviceHosts.reachableIps()`, our DirectServer port, mints a
+  fresh ticket, calls `DirectServer.armTicketValue` so the
+  server-side handshake accepts it, then writes the row.
+- `retractPeerSync()` runs on `onDestroy` (fire-and-forget
+  thread so service shutdown isn't blocked on a network call).
+
+### Service gating
+- `DriverService.onCreate` now starts the DirectServer on
+  `Prefs.isSignedIn()` OR the legacy `Prefs.isEnrolled()`. No
+  separate "Start service" tap required after sign-in.
+- `HubClient` only dials when `isEnrolled` AND `nodes` is
+  non-empty -- direct-Turso deploys never reach for it (no
+  reconnect storms against a hub that doesn't exist).
+
+### DirectServer
+- New `armTicketValue(value)` registers a SPECIFIC ticket value
+  instead of minting a random one. Same TTL + one-shot consume
+  rules as `armTicket()`. Used by the peer publisher so the
+  published ticket matches the one the server will accept.
+
+### DevicesActivity
+- Cross-references `PeerRegistry.listFresh()` to set the online
+  dot. Devices with fresh `device_peers` rows show emerald;
+  stale or absent rows stay grey. The webapp's `device_presence`
+  table isn't read here (direct-Turso deploys have no hub to
+  write it).
+
+### What's deferred to B11.3
+- In-app per-device viewers (open a peer's camera / screen
+  natively via the discovered endpoint + ticket + WebCodecs).
+- Optional: a small "Reset device enrollment" button in Device
+  settings so the user can mint a new (id, token) without
+  signing out of Turso entirely.
+
+### APK version
+- **0.18.0-b11 → 0.19.0-b11.2 (versionCode 20 → 21)**.
+
+### Hub
+- Unchanged (still V5.28). Still useful for browser-based
+  dashboard + theft media file storage. The new
+  `device_peers` table is APK-specific; the webapp ignores it.
+
 ## [Driver-B11] — 2026-05-25
 
 **No central hub.** The APK now talks to Turso directly — same

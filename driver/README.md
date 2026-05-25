@@ -53,6 +53,7 @@ Future milestones, in order:
 | **B9** | In-app **WebView** for the per-device hub page (auth-bridged) | _shipped_ |
 | **B10** | Webapp-styled **front door**: Sign-in / Create-account is the launcher screen, dashboard is the post-login home, Device-settings moves to a kebab | _shipped_ |
 | **B11** | **No central hub**: APK talks to Turso directly. Setup screen for DB URL+token; Sign-in/Register/devices read+write the Turso tables straight | _shipped_ |
+| **B11.2** | Auto-enroll this phone + peer presence (`device_peers` table) + service auto-start on sign-in | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -168,6 +169,56 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B11.2: auto-enroll + peer presence
+
+After B11 the APK could sign in but didn't show up in its own
+My-devices list (no row in `devices`) and other devices had no
+way to discover its direct-WS endpoint. B11.2 fixes both with
+the missing plumbing:
+
+- `Auth.ensureSelfEnrolled(ctx, ownerId, name)` runs on every
+  successful sign-in. If `Prefs.deviceId/Token` already point at
+  a `devices` row owned by this user it just `UPDATE`s
+  `last_seen`; otherwise it mints a fresh UUID + 32-byte URL-safe
+  token, hashes the token with SHA-256 (matching
+  `hub/db.py::hash_token`), INSERTs, and stashes the plaintext
+  token in `Prefs`.
+
+- New `PeerRegistry` owns a small `device_peers` table (created
+  lazily; the webapp's hub-written `device_presence` table stays
+  untouched):
+  ```sql
+  CREATE TABLE IF NOT EXISTS device_peers (
+    device_id  TEXT PRIMARY KEY,
+    hosts      TEXT NOT NULL,   -- JSON array of "host:port"
+    port       INTEGER,
+    ticket     TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  ```
+  `DriverService.startPeerPublisher()` refreshes our row every
+  60 s with the LAN IPs from `DeviceHosts.reachableIps()`, the
+  `DirectServer` port, and a freshly-minted ticket
+  (`armTicketValue` on the server side keeps that ticket valid
+  for the same 5 min TTL one-shot window the hub-bridge tickets
+  used). On `onDestroy` we DELETE the row so other devices flip
+  to offline immediately.
+
+- `DriverService` now starts on `Prefs.isSignedIn()`, not just
+  the legacy `isEnrolled`. The DirectServer comes up the moment
+  you sign in; no separate "Start service" tap needed.
+  `HubClient` only starts when both `isEnrolled` AND a node URL
+  is present (i.e. a transitional deploy still pointed at a
+  hub) -- direct-Turso deploys never dial.
+
+- `DevicesActivity` cross-references `device_peers` so the
+  emerald/grey online dot actually reflects reality. The webapp's
+  `device_presence` table (hub-written) is no longer read here.
+
+What's still deferred to **B11.3**:
+- The in-app per-device viewers (open a peer's camera/screen
+  natively via the discovered endpoint + ticket).
 
 ### B11: direct Turso backend (no central hub)
 

@@ -346,6 +346,22 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.2 — auto-enroll + peer presence** _shipped_. New
+  `Auth.ensureSelfEnrolled` runs on every successful sign-in:
+  INSERT (or `UPDATE last_seen`) this phone in `devices`, mint a
+  fresh device id + token, hash token with SHA-256 the way
+  `hub/db.py::hash_token` does. New `PeerRegistry` owns a lazily-
+  created `device_peers` table (LAN IPs, direct-WS port, ticket,
+  updated_at); `DriverService.startPeerPublisher` refreshes our
+  row every 60 s and DELETEs it on shutdown. `DriverService` now
+  starts on `isSignedIn` (not `isEnrolled`); `DirectServer` is up
+  the moment you sign in, no separate "Start service" tap. New
+  `DirectServer.armTicketValue(ticket)` lets the publisher
+  register a SPECIFIC ticket value (the same one written to
+  Turso) instead of the random one `armTicket()` mints.
+  `DevicesActivity` reads `device_peers` for the online dot.
+  In-app per-device viewers defer to B11.3.
+
 - [x] **B11 — direct Turso backend** _shipped_. **No central hub.**
   New `SetupActivity` for first-run DB URL + token. New
   `TursoClient` (Hrana-over-HTTP `/v2/pipeline`) + `Pbkdf2`

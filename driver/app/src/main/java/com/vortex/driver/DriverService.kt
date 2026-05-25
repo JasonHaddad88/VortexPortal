@@ -103,13 +103,13 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // without needing to also be streaming video.
         inputServer = InputServer(this, port = INPUT_PORT).also { it.start() }
 
-        // B1: if the user has enrolled this device, dial the hub
-        // directly (skipping the Termux Python agent entirely). The
-        // service stays useful in helper-mode (Termux still on the
-        // phone) when not enrolled — these two paths coexist.
-        if (Prefs.isEnrolled(this)) {
-            // B3: spin up the direct-WS server BEFORE HubClient so the
-            // first auth_ok already has a real port + ticket to push.
+        // B11.2: the DirectServer is what other devices dial to control
+        // this one (peer-to-peer, no hub). Bring it up as soon as the
+        // user is signed in to Turso. HubClient (outbound WS to a hub)
+        // is gated on the legacy Prefs.isEnrolled() pair so it only
+        // dials when a hub URL is present in the saved nodes list --
+        // direct-Turso deploys never start it.
+        if (Prefs.isSignedIn(this) || Prefs.isEnrolled(this)) {
             try {
                 directServerImpl = DirectServer(this, requestedPort = 0).also { it.start() }
                 Log.i(TAG, "DirectServer started")
@@ -117,11 +117,17 @@ class DriverService : Service(), CameraEngine.FrameSink {
                 Log.w(TAG, "DirectServer failed to start: ${t.javaClass.simpleName}: ${t.message}")
                 directServerImpl = null
             }
+        }
+        if (Prefs.isEnrolled(this) && Prefs.nodes(this).isNotEmpty()) {
             hubClient = HubClient(this) { s ->
                 hubStatus = s
                 updateNotification()
             }.also { it.start() }
         }
+        // B11.2: publish this device's direct-WS endpoint to the Turso
+        // `device_peers` table so other peers can find us. Periodic
+        // refresh (60 s) inside startPeerPublisher().
+        startPeerPublisher()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -150,6 +156,11 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { inputServer.stop() } catch (_: Exception) {}
         try { hubClient?.stop() } catch (_: Exception) {}
         try { directServerImpl?.shutdown() } catch (_: Exception) {}
+        try { peerPublisherJob?.cancel() } catch (_: Exception) {}
+        try { peerScope.cancel() } catch (_: Exception) {}
+        // Best-effort retract our peer row so other devices see us
+        // offline immediately instead of waiting for the stale TTL.
+        retractPeerSync()
         directServerImpl = null
         nativeCamera = null
         nativeScreen = null
@@ -157,6 +168,65 @@ class DriverService : Service(), CameraEngine.FrameSink {
         nativeScreenSink = null
         if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    // ---- B11.2: peer presence publisher (Turso device_peers) ----
+
+    private val peerScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
+    private var peerPublisherJob: kotlinx.coroutines.Job? = null
+    @Volatile private var currentTicket: String = ""
+
+    /** Spin up a background coroutine that refreshes our peer-presence
+     *  row every 60 s. Idempotent: a second call is a no-op. */
+    private fun startPeerPublisher() {
+        if (peerPublisherJob != null) return
+        if (!Prefs.isSignedIn(this)) return
+        peerPublisherJob = peerScope.launch {
+            // Ensure the schema once; harmless to re-run.
+            val cli = tursoClientFrom(this@DriverService) ?: return@launch
+            try { PeerRegistry.ensureSchema(cli) } catch (_: TursoError) { /* try again next pass */ }
+            // delay() is cancellable -- the loop exits cleanly when the
+            // surrounding job is cancelled by onDestroy.
+            while (true) {
+                publishPeerOnce()
+                kotlinx.coroutines.delay(60_000L)
+            }
+        }
+    }
+
+    private fun publishPeerOnce() {
+        val deviceId = Prefs.deviceId(this) ?: return
+        val server = directServerImpl ?: return
+        val port = server.port()
+        if (port <= 0) return
+        val ips = DeviceHosts.reachableIps()
+        if (ips.isEmpty()) return
+        val hosts = ips.map { "$it:$port" }
+        val ticket = PeerRegistry.newTicket()
+        currentTicket = ticket
+        // Also register the ticket with the DirectServer so the WS
+        // handshake accepts it. The server's existing armTicket()
+        // path expects a one-shot consumption; we re-arm at every
+        // refresh so the published ticket stays valid.
+        try { server.armTicketValue(ticket) } catch (_: Throwable) { /* ignore */ }
+        val cli = tursoClientFrom(this) ?: return
+        try {
+            PeerRegistry.publish(cli, deviceId, hosts, port, ticket)
+        } catch (e: TursoError) {
+            android.util.Log.w(TAG, "peer publish failed: ${e.message}")
+        }
+    }
+
+    private fun retractPeerSync() {
+        val deviceId = Prefs.deviceId(this) ?: return
+        val cli = tursoClientFrom(this) ?: return
+        // Fire-and-forget on a thread so service shutdown doesn't block
+        // on the network call.
+        Thread {
+            try { PeerRegistry.retract(cli, deviceId) } catch (_: Throwable) {}
+        }.apply { isDaemon = true; start() }
     }
 
     // ---- B2.2 public API for Ops.screen_stream / camera_stream ----

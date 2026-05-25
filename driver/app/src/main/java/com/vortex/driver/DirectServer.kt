@@ -79,6 +79,17 @@ class DirectServer(
         return t
     }
 
+    /** B11.2: register a SPECIFIC ticket value (e.g. one that was
+     *  published to the Turso `device_peers` table). Same TTL +
+     *  one-shot consume rules as [armTicket]. Idempotent: re-arming
+     *  the same value just refreshes its expiry. */
+    fun armTicketValue(value: String) {
+        if (value.isBlank()) return
+        val now = System.currentTimeMillis()
+        tickets.entries.removeIf { it.value < now }
+        tickets[value] = now + ticketTtlMs
+    }
+
     override fun onStart() {
         // Java-WebSocket sets the bound port AFTER onStart fires.
         // Re-read from the address it actually listens on.
