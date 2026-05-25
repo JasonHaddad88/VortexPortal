@@ -110,6 +110,21 @@
     <string name="dashboard_sign_out">Sign out</string>
     <string name="dashboard_open_in_web">Open in WebView</string>
 
+    <!-- B11: direct Turso backend (no hub server). The APK reads/writes
+         the same users + devices tables the webapp uses; setup is just
+         pasting the Turso URL and a token. -->
+    <string name="setup_title">Connect your database</string>
+    <string name="setup_subtitle">Vortex stores accounts and devices in a Turso database that every device of yours can read directly. Paste your database URL and a token to continue — no server in the middle.</string>
+    <string name="setup_label_url">Database URL</string>
+    <string name="setup_hint_url">libsql://your-db.turso.io</string>
+    <string name="setup_label_token">Database token</string>
+    <string name="setup_hint_token">paste the JWT from `turso db tokens create`</string>
+    <string name="setup_btn_save">Save &amp; continue</string>
+    <string name="setup_btn_test">Test connection</string>
+    <string name="setup_help">Tip: create a free Turso database at turso.tech, then run `turso db tokens create &lt;db&gt;` to mint a token. Both values are stored only on this phone (private SharedPreferences).</string>
+    <string name="signin_open_setup">Database setup</string>
+    <string name="dashboard_db_setup">Database setup</string>
+
     <!-- B8: in-app device list. Reads /api/account/devices using the
          device's own X-Vortex-Device/Token (no session needed). -->
     <string name="btn_devices">My devices</string>

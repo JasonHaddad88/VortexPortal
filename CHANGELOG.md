@@ -3,6 +3,100 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11] — 2026-05-25
+
+**No central hub.** The APK now talks to Turso directly — same
+Hrana-over-HTTP `/v2/pipeline` endpoint the webapp's pure-Python
+HTTP backend uses. No FastAPI server in between; no "Hub URL" to
+configure. First-run flow is **Setup (DB URL + token) → Sign-in /
+Create account → My devices**.
+
+### New SetupActivity (first run)
+- Paste a libsql:// (or https://) URL + a JWT from `turso db
+  tokens create <db>`. The APK probes with `SELECT 1` before
+  saving so a typo or expired token fails here, not later. Both
+  values live in private SharedPreferences on this phone.
+- Webapp-styled card layout (brand at top, gradient primary
+  button, dark surface + cyan accents) so it reads as part of
+  the same flow as Sign-in.
+
+### New TursoClient.kt
+- ~200 LOC OkHttp + JSON Hrana client. `execute(sql, args)` +
+  batch `pipeline(stmts)`. Same wire shape as
+  `hub/db.py::_TursoHttpBackend` (text/integer/float/null/blob
+  arg wrappers, last_insert_rowid + affected_row_count parsing).
+- Caller throws [TursoError] on any transport/protocol/SQL
+  failure with a clear message.
+
+### New Pbkdf2.kt
+- `pbkdf2_sha256${iters}${salt-hex}${digest-hex}` matching
+  `hub/db.py::hash_password` byte-for-byte. 200_000 iterations,
+  16-byte salt, 32-byte digest. Pure Android stdlib
+  `PBKDF2WithHmacSHA256` (API 26+; our minSdk).
+- Constant-time `verify` for the comparison.
+
+### New Auth.kt
+- `signIn(ctx, username, password)` → SELECT users + PBKDF2
+  verify → `Auth.Result.Ok(userId, username, isAdmin)`.
+- `register(ctx, username, password, invite)` → COUNT users for
+  bootstrap detection + invite check + INSERT user + best-effort
+  invite consume. Bootstrap (first user) becomes admin; matches
+  the webapp's behaviour.
+
+### EntryActivity routing tree (B11)
+- `!Prefs.isTursoConfigured` → SetupActivity
+- `!Prefs.isSignedIn` → SignInActivity
+- else → DevicesActivity
+
+### SignInActivity rewritten (B11)
+- Node URL field gone (hidden stub keeps the binding compiling
+  until B11.2). Submit goes through `Auth.signIn` / `Auth.register`
+  — no OkHttp-to-hub, no cookie-jar plumbing, no
+  `/api/session-enroll` round-trip. Errors surface verbatim from
+  Turso ("Invalid credentials", "Username already taken",
+  "Invalid or already-used invite code", etc.).
+- After success: `Prefs.saveSession(userId, username, isAdmin)`
+  → land on DevicesActivity (no foreground service auto-start;
+  HubClient is gated by isEnrolled which is unset here, B11.2
+  will rewire that).
+- The "Database setup" link at the bottom re-opens
+  SetupActivity for re-editing creds.
+
+### DevicesActivity (B11)
+- Reads the `devices` table directly:
+  `SELECT id, name, last_seen, paired_at FROM devices WHERE
+  owner_id = ?`. No `/api/account/devices` HTTP call, no
+  X-Vortex-Device/Token headers.
+- Kebab menu cleaned up: **Device settings** (MainActivity) +
+  **Database setup** (SetupActivity) + **Refresh** + **Sign
+  out**. "Node settings" only appears when a legacy hub URL
+  is still in Prefs (transitional). Sign-out clears the user
+  session but keeps Turso creds + device row.
+- In-app per-device control (row tap) shows a B11.2 placeholder
+  hint when no hub URL is available. With a legacy hub URL,
+  the B9 WebView still works.
+
+### Wire compat with the webapp
+- Users / sessions / devices tables are shared. A user created
+  in the webapp signs in via the APK and vice versa. PBKDF2
+  hashes are interchangeable. The hub stays useful for the
+  browser dashboard + theft media storage; this commit just
+  means the APK no longer requires it.
+
+### What's deferred to B11.2
+- In-app per-device control (peer discovery via
+  `device_presence` + direct-WS to the peer's port).
+- Auto-enrollment of THIS phone as a row in `devices` on
+  first sign-in.
+- HubClient cleanup (kept dormant in this commit).
+
+### APK version
+- **0.17.0-b10 → 0.18.0-b11 (versionCode 19 → 20)**.
+
+### Hub
+- Unchanged (still V5.28). Still useful for browser-based
+  dashboard + theft media file storage.
+
 ## [Driver-B10] — 2026-05-25
 
 **The APK's home screen is finally Sign-in, not "Enable Driver".**

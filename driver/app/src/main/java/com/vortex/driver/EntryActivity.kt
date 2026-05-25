@@ -24,10 +24,14 @@ import androidx.appcompat.app.AppCompatActivity
 class EntryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val next = if (Prefs.isEnrolled(this)) {
-            Intent(this, DevicesActivity::class.java)
-        } else {
-            Intent(this, SignInActivity::class.java)
+        // B11 routing tree:
+        //   1. No Turso URL+token yet  -> SetupActivity (paste DB creds)
+        //   2. Not signed in            -> SignInActivity
+        //   3. Signed in                -> DevicesActivity
+        val next = when {
+            !Prefs.isTursoConfigured(this) -> Intent(this, SetupActivity::class.java)
+            !Prefs.isSignedIn(this)         -> Intent(this, SignInActivity::class.java)
+            else                            -> Intent(this, DevicesActivity::class.java)
         }
         // Clear-task on the new front door so the back button from
         // either destination exits the app cleanly instead of

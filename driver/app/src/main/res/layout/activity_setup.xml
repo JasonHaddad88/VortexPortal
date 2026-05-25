@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  B11: first-run database setup. The APK talks to Turso directly;
+  this is where the user pastes the libsql:// URL and JWT they got
+  from `turso db tokens create`. Same look as SignInActivity (brand
+  at top, centered card, gradient submit) so it reads as part of
+  the same flow.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="@color/vortex_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingTop="40dp"
+        android:paddingBottom="40dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="24dp">
+            <View
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="@drawable/vortex_brand_logo"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/brand_wordmark"
+                android:textColor="@color/vortex_text"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.16"
+                android:fontFamily="sans-serif-medium"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/vortex_card"
+            android:padding="22dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_title"
+                android:textColor="@color/vortex_text"
+                android:textSize="22sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="20dp"
+                android:text="@string/setup_subtitle"
+                android:textColor="@color/vortex_text_muted"
+                android:textSize="13sp"/>
+
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/setup_label_url"/>
+            <EditText
+                android:id="@+id/turso_url"
+                style="@style/VortexInput"
+                android:inputType="textUri"
+                android:hint="@string/setup_hint_url"
+                android:autofillHints="url"/>
+
+            <TextView
+                style="@style/VortexLabel"
+                android:text="@string/setup_label_token"/>
+            <EditText
+                android:id="@+id/turso_token"
+                style="@style/VortexInput"
+                android:layout_height="wrap_content"
+                android:minHeight="80dp"
+                android:gravity="top|start"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:scrollHorizontally="false"
+                android:hint="@string/setup_hint_token"
+                android:autofillHints="password"/>
+
+            <Button
+                android:id="@+id/save_btn"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="22dp"
+                android:text="@string/setup_btn_save"
+                android:textColor="@color/vortex_bg"
+                android:textStyle="bold"
+                android:textAllCaps="false"
+                android:background="@drawable/vortex_button_primary"/>
+
+            <Button
+                android:id="@+id/test_btn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/setup_btn_test"
+                android:textColor="@color/vortex_cyan"
+                android:textAllCaps="false"/>
+
+            <ProgressBar
+                android:id="@+id/progress"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:layout_gravity="center"
+                android:visibility="gone"
+                android:indeterminateTint="@color/vortex_cyan"/>
+
+            <TextView
+                android:id="@+id/status_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:textSize="13sp"
+                android:visibility="gone"/>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="6dp"
+                android:background="@color/vortex_border"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_help"
+                android:textSize="12sp"
+                android:textColor="@color/vortex_text_muted"
+                android:lineSpacingExtra="2dp"/>
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

@@ -21,9 +21,57 @@ object Prefs {
     private const val K_DEVICE_TOKEN  = "device_token"
     private const val K_DEVICE_NAME   = "device_name"
     private const val K_NODES         = "nodes"   // JSON array of urls
+    // B11: direct Turso backend (no hub server).
+    private const val K_TURSO_URL     = "turso_url"      // libsql:// or https://
+    private const val K_TURSO_TOKEN   = "turso_token"    // bearer JWT
+    private const val K_USER_ID       = "user_id"        // signed-in user PK
+    private const val K_USERNAME      = "username"
+    private const val K_IS_ADMIN      = "is_admin"
 
     fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+
+    // ---- B11: Turso DB credentials (Setup screen). ----
+    fun tursoUrl(ctx: Context): String? =
+        prefs(ctx).getString(K_TURSO_URL, null)
+    fun tursoToken(ctx: Context): String? =
+        prefs(ctx).getString(K_TURSO_TOKEN, null)
+    fun isTursoConfigured(ctx: Context): Boolean =
+        !tursoUrl(ctx).isNullOrBlank() && !tursoToken(ctx).isNullOrBlank()
+
+    fun saveTurso(ctx: Context, url: String, token: String) {
+        prefs(ctx).edit()
+            .putString(K_TURSO_URL,   url.trim())
+            .putString(K_TURSO_TOKEN, token.trim())
+            .apply()
+    }
+    fun clearTurso(ctx: Context) {
+        prefs(ctx).edit()
+            .remove(K_TURSO_URL).remove(K_TURSO_TOKEN)
+            .apply()
+    }
+
+    // ---- B11: signed-in user (after sign-in / register). ----
+    fun userId(ctx: Context): Long =
+        prefs(ctx).getLong(K_USER_ID, -1L)
+    fun username(ctx: Context): String? =
+        prefs(ctx).getString(K_USERNAME, null)
+    fun isAdmin(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(K_IS_ADMIN, false)
+    fun isSignedIn(ctx: Context): Boolean = userId(ctx) > 0
+
+    fun saveSession(ctx: Context, userId: Long, username: String, isAdmin: Boolean) {
+        prefs(ctx).edit()
+            .putLong(K_USER_ID, userId)
+            .putString(K_USERNAME, username)
+            .putBoolean(K_IS_ADMIN, isAdmin)
+            .apply()
+    }
+    fun clearSession(ctx: Context) {
+        prefs(ctx).edit()
+            .remove(K_USER_ID).remove(K_USERNAME).remove(K_IS_ADMIN)
+            .apply()
+    }
 
     fun isEnrolled(ctx: Context): Boolean =
         !deviceId(ctx).isNullOrBlank() && !deviceToken(ctx).isNullOrBlank()

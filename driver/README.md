@@ -52,6 +52,7 @@ Future milestones, in order:
 | **B8** | In-app **device list** (My devices: online dots, last-seen, tap → hub page) | _shipped_ |
 | **B9** | In-app **WebView** for the per-device hub page (auth-bridged) | _shipped_ |
 | **B10** | Webapp-styled **front door**: Sign-in / Create-account is the launcher screen, dashboard is the post-login home, Device-settings moves to a kebab | _shipped_ |
+| **B11** | **No central hub**: APK talks to Turso directly. Setup screen for DB URL+token; Sign-in/Register/devices read+write the Turso tables straight | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
@@ -167,6 +168,54 @@ Knobs (all optional, passed via `screen_stream` args):
 | `max_dim` | 720 | longest side, clamped 160-1080 |
 | `fps_cap` | 30 | encoder hint; 0 means unlimited |
 | `bitrate` | scaled with max_dim | bps; 200 kbps - 8 Mbps |
+
+### B11: direct Turso backend (no central hub)
+
+**There is no "Hub URL" anymore.** The APK speaks Hrana-over-HTTP
+to Turso directly -- same `/v2/pipeline` endpoint the webapp's
+pure-Python HTTP backend uses. First-run flow:
+
+1. **Setup**: paste the libsql:// URL + a token from
+   `turso db tokens create <db>`. The APK probes with `SELECT 1`,
+   saves both to private SharedPreferences on this phone, and
+   forwards you to Sign-in.
+2. **Sign-in / Create account**: the form reads/writes the same
+   `users` table the webapp uses. PBKDF2-SHA256 with 200k
+   iterations matches `hub/db.py::hash_password` byte-for-byte,
+   so a user created in either client lives in the same row of
+   the same database.
+3. **Devices**: the dashboard reads the `devices` table directly
+   (`SELECT id, name, last_seen, paired_at FROM devices WHERE
+   owner_id = ?`) -- no `/api/account/devices` round-trip.
+
+New Kotlin pieces:
+
+- `TursoClient.kt` -- Hrana-over-HTTP client with `execute(sql,
+  args)` + batch `pipeline(stmts)`. Same wire shape as the
+  hub's Python backend; ~200 LOC of OkHttp + JSON.
+- `Pbkdf2.kt` -- `pbkdf2_sha256$200000$salt$digest` matching the
+  hub format byte-for-byte. Uses Android's stdlib
+  `PBKDF2WithHmacSHA256` (API 26+; our minSdk).
+- `Auth.kt` -- `signIn` / `register` orchestration. Bootstrap
+  user (first row in `users`) becomes admin; non-bootstrap with
+  an invite code consumes it the same way the webapp does.
+- `SetupActivity.kt` -- the new first-run screen.
+- `EntryActivity` routing tree:
+  `!isTursoConfigured -> SetupActivity ->
+  !isSignedIn -> SignInActivity -> DevicesActivity`.
+
+What's deferred to **B11.2**:
+- **In-app per-device control** (browse files, view screen,
+  camera, input). Needs peer discovery via Turso's
+  `device_presence` table + the device's own direct-WS endpoint;
+  the WebView path from B9 keeps working when a legacy hub URL
+  is still in play.
+- **Hub-Mode toggle** for users who want to keep a FastAPI hub
+  around for browser-based control + the dashboard CSS-grid view.
+
+If you previously ran a hub: nothing breaks. The APK and the
+hub share the same Turso DB; a user created here can sign in to
+the webapp and vice versa.
 
 ### B10: webapp-matching front door (auth as the home screen)
 

@@ -113,6 +113,17 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!--
+          B11: first-run database setup. The APK talks to Turso
+          directly; this is where the user pastes the libsql:// URL
+          and JWT. Forwards to SignInActivity on success.
+        -->
+        <activity
+            android:name=".SetupActivity"
+            android:exported="false"
+            android:label="@string/setup_title"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!--
           B8: in-app device list. Reads /api/account/devices over the
           enrolled device's own token (no session). Tap-through opens
           the hub's per-device page in the system browser.

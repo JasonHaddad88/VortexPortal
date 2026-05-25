@@ -16,10 +16,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 /**
  * B8: in-app device list. Shows every device in the signed-in user's
@@ -42,11 +38,6 @@ class DevicesActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityDevicesBinding
     private val scope = CoroutineScope(Dispatchers.Main + Job())
-    private val http: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .callTimeout(15, TimeUnit.SECONDS)
-            .build()
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,35 +47,35 @@ class DevicesActivity : AppCompatActivity() {
         b.overflowBtn.setOnClickListener { showOverflowMenu(it) }
     }
 
-    /** Top-right kebab. Device settings (Start/Stop service, arm
-     *  screen, accessibility) -> MainActivity. Node settings -> the
-     *  node's web /settings page in the WebView with B9's auth
-     *  bridge. Sign out clears creds + bounces to the launcher
-     *  (which lands on SignInActivity). */
+    /** Top-right kebab. B11: cleanly separates DB config (Turso URL +
+     *  token, lives across sessions) from user session (clears on
+     *  sign-out). "Node settings" only shows when a legacy hub URL is
+     *  still in play. */
     private fun showOverflowMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(getString(R.string.dashboard_settings)).setOnMenuItemClickListener {
             startActivity(Intent(this, MainActivity::class.java)); true
         }
-        popup.menu.add(getString(R.string.dashboard_node_settings)).setOnMenuItemClickListener {
-            val hubUrl = pickHubUrl()
-            if (hubUrl != null) {
-                // Land directly on the node's /settings page using the
-                // B9 device-session auth bridge. Admin gate is enforced
-                // server-side; non-admin users get the same "not
-                // allowed" message they'd see in a browser.
+        popup.menu.add(getString(R.string.dashboard_db_setup)).setOnMenuItemClickListener {
+            startActivity(Intent(this, SetupActivity::class.java)); true
+        }
+        val hubUrl = pickHubUrl()
+        if (hubUrl != null) {
+            popup.menu.add(getString(R.string.dashboard_node_settings)).setOnMenuItemClickListener {
                 DeviceWebActivity.startPath(this, hubUrl, "/settings",
                                             getString(R.string.dashboard_node_settings))
+                true
             }
-            true
         }
         popup.menu.add(getString(R.string.devices_refresh)).setOnMenuItemClickListener {
             refresh(); true
         }
         popup.menu.add(getString(R.string.dashboard_sign_out)).setOnMenuItemClickListener {
-            Prefs.clear(this)
+            // B11: clear the user session only. DB creds + device
+            // enrollment stay so the user can sign in with a different
+            // account against the same Turso, or just sign back in.
+            Prefs.clearSession(this)
             stopService(Intent(this, DriverService::class.java))
-            // Restart at the launcher router so we land on SignInActivity.
             val i = Intent(this, EntryActivity::class.java)
             i.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             startActivity(i)
@@ -105,18 +96,22 @@ class DevicesActivity : AppCompatActivity() {
     }
 
     private fun refresh() {
-        val deviceId = Prefs.deviceId(this)
-        val token = Prefs.deviceToken(this)
-        val hubUrl = pickHubUrl()
-        if (deviceId.isNullOrBlank() || token.isNullOrBlank() || hubUrl.isNullOrBlank()) {
-            setStatus("Not enrolled yet -- sign in first.", err = true)
-            renderList(emptyList())
-            return
+        // B11: read directly from Turso for the signed-in user. No hub
+        // /api/account/devices round-trip; the device's enrollment is
+        // implicit (any row in `devices` with owner_id == userId).
+        if (!Prefs.isTursoConfigured(this)) {
+            setStatus("Database not configured -- open Setup.", err = true)
+            renderList(emptyList()); return
+        }
+        val userId = Prefs.userId(this)
+        if (userId <= 0L) {
+            setStatus("Not signed in.", err = true)
+            renderList(emptyList()); return
         }
         setBusy(true)
         setStatus(getString(R.string.devices_loading), err = false)
         scope.launch {
-            val result = runCatching { fetchList(hubUrl, deviceId, token) }
+            val result = runCatching { fetchListFromTurso(userId) }
             setBusy(false)
             result.onSuccess { items ->
                 renderList(items)
@@ -135,6 +130,36 @@ class DevicesActivity : AppCompatActivity() {
         }
     }
 
+    private suspend fun fetchListFromTurso(userId: Long): List<DeviceItem> =
+        withContext(Dispatchers.IO) {
+            val url = Prefs.tursoUrl(this@DevicesActivity)
+                ?: throw RuntimeException("Turso URL not set")
+            val tok = Prefs.tursoToken(this@DevicesActivity)
+                ?: throw RuntimeException("Turso token not set")
+            val rows = TursoClient(url, tok).execute(
+                "SELECT id, name, last_seen, paired_at " +
+                "FROM devices WHERE owner_id = ? ORDER BY paired_at DESC",
+                listOf(userId),
+            ).rows
+            // Cross-node presence (B11.2 will wire this once peer
+            // discovery moves into Turso); for now leave online=false
+            // and elsewhere=null. The webapp populates these via the
+            // ws_router registry, which the APK doesn't have visibility
+            // into without a hub.
+            val thisDeviceId = Prefs.deviceId(this@DevicesActivity)
+            rows.map { r ->
+                val id = r["id"] as? String ?: ""
+                DeviceItem(
+                    id = id,
+                    name = (r["name"] as? String) ?: "Unnamed",
+                    online = false,           // B11.2: read device_presence table
+                    elsewhere = null,
+                    lastSeen = r["last_seen"] as? Long,
+                    thisDevice = (thisDeviceId == id),
+                )
+            }
+        }
+
     /** Pick the URL to hit. Bootstrap was saved on enrollment; node list
      *  is the failover. If both empty, refuse. */
     private fun pickHubUrl(): String? {
@@ -143,42 +168,19 @@ class DevicesActivity : AppCompatActivity() {
         return Prefs.nodes(this).firstOrNull { it.startsWith("http") }?.trimEnd('/')
     }
 
-    private suspend fun fetchList(
-        hubUrl: String, deviceId: String, token: String,
-    ): List<DeviceItem> = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$hubUrl/api/account/devices")
-            .header("X-Vortex-Device", deviceId)
-            .header("X-Vortex-Token", token)
-            .build()
-        http.newCall(req).execute().use { rsp ->
-            val text = rsp.body?.string().orEmpty()
-            if (rsp.code == 404) throw RuntimeException(
-                "This hub doesn't expose /api/account/devices (added in V5.26)."
-            )
-            if (!rsp.isSuccessful) {
-                val detail = try { JSONObject(text).optString("detail", text) }
-                             catch (_: Exception) { text }
-                throw RuntimeException("HTTP ${rsp.code}: ${detail.take(200)}")
-            }
-            val arr = JSONObject(text).optJSONArray("devices") ?: return@use emptyList()
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                DeviceItem(
-                    id = o.optString("id"),
-                    name = o.optString("name", "Unnamed"),
-                    online = o.optBoolean("online", false),
-                    elsewhere = o.optString("elsewhere", "").takeIf { it.isNotBlank() },
-                    lastSeen = if (o.isNull("last_seen")) null else o.optLong("last_seen"),
-                    thisDevice = o.optBoolean("this_device", false),
-                )
-            }
-        }
-    }
+    // B11: fetchList(hub) was the old hub-relay path. Now we read
+    // straight from Turso (fetchListFromTurso above). The OkHttp + JSON
+    // hub-API client is no longer needed here.
 
     private fun renderList(items: List<DeviceItem>) {
         b.deviceList.removeAllViews()
-        val hubUrl = pickHubUrl() ?: return
+        // B11: in-app per-device control is a B11.2 milestone (it'll
+        // dial the device's direct-WS port discovered via the
+        // device_presence table in Turso). Until then, a tap shows
+        // a status hint. The hubUrl may be null when no hub is in
+        // play (Turso-direct deploy); WebView tap-through only fires
+        // when there's a hub URL available from a previous session.
+        val hubUrl = pickHubUrl()
         // Sort: this-device first, then online, then elsewhere, then offline.
         val sorted = items.sortedWith(compareByDescending<DeviceItem> { it.thisDevice }
             .thenByDescending { it.online }
@@ -192,10 +194,19 @@ class DevicesActivity : AppCompatActivity() {
             row.thisBadge.visibility = if (item.thisDevice) View.VISIBLE else View.GONE
             row.thisBadge.setTextColor(0xFF67E8F9.toInt())
             row.root.setOnClickListener {
-                // B9: open the per-device manage page in an embedded
-                // WebView (via the /api/device-session bridge) so the
-                // user doesn't have to leave the app.
-                DeviceWebActivity.start(this, hubUrl, item.id, item.name)
+                if (hubUrl != null) {
+                    // B9 path: open the per-device manage page in the
+                    // embedded WebView (auth-bridged). Available when
+                    // a hub is still in play (transitional deploys).
+                    DeviceWebActivity.start(this, hubUrl, item.id, item.name)
+                } else {
+                    // B11 direct-Turso deploys have no hub URL. In-app
+                    // per-device control (browse / screen / camera /
+                    // input) over the device's direct-WS port arrives
+                    // in B11.2; for now surface a hint.
+                    setStatus("In-app device control arrives in Driver-B11.2. " +
+                              "For now use the webapp.", err = false)
+                }
             }
             b.deviceList.addView(row.root)
         }

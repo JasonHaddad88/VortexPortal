@@ -101,16 +101,16 @@
                     android:textAllCaps="false"/>
             </LinearLayout>
 
-            <!-- Node URL -->
-            <TextView
-                style="@style/VortexLabel"
-                android:text="@string/signin_label_node_url"/>
+            <!-- B11: Node URL field is gone. The APK talks to Turso
+                 directly, the user pastes DB creds in SetupActivity
+                 (not here). Hidden stub id stays so SignInActivity.kt's
+                 binding.hubUrl references keep compiling until B11.2
+                 cleans them up. -->
             <EditText
                 android:id="@+id/hub_url"
-                style="@style/VortexInput"
-                android:inputType="textUri"
-                android:hint="@string/signin_hint_node_url"
-                android:autofillHints="url"/>
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone"/>
 
             <!-- Username -->
             <TextView

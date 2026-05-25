@@ -346,6 +346,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11 — direct Turso backend** _shipped_. **No central hub.**
+  New `SetupActivity` for first-run DB URL + token. New
+  `TursoClient` (Hrana-over-HTTP `/v2/pipeline`) + `Pbkdf2`
+  (`pbkdf2_sha256$200000$...` matching `hub/db.py` byte-for-byte)
+  + `Auth` (signIn / register against the `users` table).
+  `EntryActivity` routes Setup → Sign-in → Devices.
+  `SignInActivity` rewritten to drop the Node URL field and call
+  `Auth.*` directly. `DevicesActivity` reads the `devices` table
+  for the signed-in user without a hub round-trip. Wire-compat
+  with the webapp: users / sessions / devices tables are shared,
+  hashes are interchangeable. In-app per-device control + APK
+  self-enrollment-as-row defer to B11.2.
+
 - [x] **B10 — webapp-matching home screen** _shipped_. The
   APK launcher is now `EntryActivity`, a tiny no-UI router that
   forwards to `SignInActivity` (not enrolled) or `DevicesActivity`
