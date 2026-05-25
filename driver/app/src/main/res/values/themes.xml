@@ -10,6 +10,29 @@
         <item name="android:statusBarColor">#06060A</item>
         <item name="android:navigationBarColor">#06060A</item>
         <item name="android:windowBackground">#06060A</item>
+
+        <!-- B11.3.1: kill the default UPPERCASE button text globally
+             so capitalization is consistent across the auth screen,
+             the device list, the per-device viewer, and the device-
+             settings panel. Also pin a single button style so filled
+             + outlined variants don't differ in vertical padding. -->
+        <item name="materialButtonStyle">@style/Widget.Vortex.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.Vortex.Button.Outlined</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Vortex.Button" parent="Widget.Material3.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+    </style>
+
+    <style name="Widget.Vortex.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
     </style>
 
     <!-- Used by ScreenSetupActivity. Fully transparent + no animation so

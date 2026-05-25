@@ -3,6 +3,68 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.3.1] — 2026-05-25
+
+**Bugfix release for B11.3.** User reports: devices couldn't connect
+to each other, services weren't persistent, UI had capitalization +
+size inconsistencies. Root causes traced and fixed.
+
+### Peer connect: publisher race
+- The peer publisher coroutine fired its first `publishPeerOnce()`
+  immediately after `DriverService.startPeerPublisher()`. But
+  `DirectServer.start()` is async (Java-WebSocket spawns the bind
+  thread), so `directServer.port()` returned 0 on that first pass,
+  `publishPeerOnce()` bailed, and the device sat invisible for a
+  full 60 s before the next attempt. Devices on a fresh install
+  couldn't see each other until the first publish landed.
+- Fix: the publisher coroutine now waits up to ~15 s
+  (`delay(500) x 30`) for `port()` to become non-zero before its
+  first publish. Refresh cadence also shortened from 60 s -> 30 s
+  so a stale row expires faster when the user backgrounds the app.
+
+### Service persistence: onTaskRemoved + battery-opt opt-out
+- New `onTaskRemoved` override re-asserts foreground via
+  `promoteForeground()`. Some OEM Android skins (MIUI, ColorOS,
+  HyperOS, OneUI) stop the FGS when the user swipes the app out
+  of Recents -- even with `START_STICKY` + an ongoing
+  notification. The re-foreground call inside the callback keeps
+  the service alive in the cases where the OEM gives the system
+  a chance to run our handler before killing us.
+- New `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission +
+  "Disable battery optimization" button in Device settings
+  (MainActivity). Tapping launches the system dialog;
+  if the user has already opted out, it falls back to the
+  per-app battery settings page. This is the single biggest
+  lever a non-root app has against Doze killing the service
+  after a few minutes idle.
+
+### UI: capitalization + button consistency
+- Theme override sets `android:textAllCaps=false` globally +
+  pins all MaterialButton (filled + outlined) to a new
+  `Widget.Vortex.Button[.Outlined]` style with
+  `minHeight=48dp` and matching vertical padding. The old
+  default forced UPPERCASE on Device settings + some other
+  screens while the Sign-in + Devices screens were mixed case
+  (because they manually overrode textAllCaps); now everything's
+  uniform.
+- New `ic_kebab.xml` vector replaces
+  `@android:drawable/ic_menu_more` (which renders very small +
+  legacy-looking on modern Android) in the dashboard topbar.
+
+### Republish kebab entry
+- New "Republish this device" option in the dashboard kebab.
+  Calls `DriverService.publishPeerNow()` (new public wrapper
+  over `publishPeerOnce`) for an out-of-cadence refresh, then
+  re-runs the device list. Useful when the user has just joined
+  a new Wi-Fi and wants to be reachable immediately instead of
+  waiting up to 30 s for the periodic cycle.
+
+### APK version
+- **0.20.0-b11.3 → 0.20.1-b11.3.1 (versionCode 22 → 23)**.
+
+### Hub
+- Unchanged.
+
 ## [Driver-B11.3] — 2026-05-25
 
 **Tap a device, control it.** The final piece of the no-central-hub

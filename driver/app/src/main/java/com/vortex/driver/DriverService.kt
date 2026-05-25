@@ -151,6 +151,22 @@ class DriverService : Service(), CameraEngine.FrameSink {
         return START_STICKY
     }
 
+    /**
+     * B11.3.1: some OEM Android skins (MIUI, ColorOS, HyperOS) stop
+     * the foreground service when the user swipes the app card out of
+     * Recents -- even with `START_STICKY` + a sticky notification.
+     * Re-assert our foreground state here so we survive the swipe;
+     * the system will not kill an actively-foreground service.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        try {
+            promoteForeground()
+        } catch (t: Throwable) {
+            Log.w(TAG, "onTaskRemoved re-foreground failed: $t")
+        }
+    }
+
     override fun onDestroy() {
         try { camera?.stop() } catch (_: Exception) {}
         try { screen?.stop() } catch (_: Exception) {}
@@ -184,22 +200,40 @@ class DriverService : Service(), CameraEngine.FrameSink {
     @Volatile private var currentTicket: String = ""
 
     /** Spin up a background coroutine that refreshes our peer-presence
-     *  row every 60 s. Idempotent: a second call is a no-op. */
+     *  row every 30 s. Idempotent: a second call is a no-op.
+     *
+     *  B11.3.1: wait for `DirectServer.port()` to bind before the
+     *  FIRST publish (Java-WebSocket's start() is async). Without
+     *  this, the initial pass would run with port=0 -> publishPeerOnce
+     *  bails -> the device is invisible for the first full 60 s.
+     *  Also shortened the refresh cadence so a stale row expires
+     *  quickly when the user backgrounds the app.
+     */
     private fun startPeerPublisher() {
         if (peerPublisherJob != null) return
         if (!Prefs.isSignedIn(this)) return
         peerPublisherJob = peerScope.launch {
-            // Ensure the schema once; harmless to re-run.
             val cli = tursoClientFrom(this@DriverService) ?: return@launch
-            try { PeerRegistry.ensureSchema(cli) } catch (_: TursoError) { /* try again next pass */ }
-            // delay() is cancellable -- the loop exits cleanly when the
+            try { PeerRegistry.ensureSchema(cli) } catch (_: TursoError) { /* retry next pass */ }
+            // Wait up to ~15 s for the kernel-assigned port to land.
+            var attempts = 0
+            while ((directServerImpl?.port() ?: 0) <= 0 && attempts < 30) {
+                delay(500L); attempts++
+            }
+            // delay() is cancellable -- loop exits cleanly when the
             // surrounding job is cancelled by onDestroy.
             while (true) {
                 publishPeerOnce()
-                delay(60_000L)
+                delay(30_000L)
             }
         }
     }
+
+    /** B11.3.1: public so DevicesActivity's "Republish this device"
+     *  kebab entry can trigger an out-of-cadence refresh -- useful
+     *  when the user has just joined a new Wi-Fi and wants to be
+     *  reachable immediately instead of waiting up to 30 s. */
+    fun publishPeerNow() = publishPeerOnce()
 
     private fun publishPeerOnce() {
         val deviceId = Prefs.deviceId(this) ?: return

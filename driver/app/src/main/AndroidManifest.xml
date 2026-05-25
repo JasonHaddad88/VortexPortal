@@ -36,6 +36,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- B11.3.1: lets the Device-settings screen launch
+         ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS so the user can
+         opt this app out of Doze in one tap. Required to even SHOW
+         that intent on Android 12+ targeting our manifest. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 

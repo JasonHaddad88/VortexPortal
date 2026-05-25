@@ -144,6 +144,20 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- B11.3.1: battery-optimization opt-out. Most service-killed-
+         after-a-while reports trace back to Doze; this is the only
+         system-level switch a non-root app can flip. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/batteryOptBtn"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/btn_battery_opt"
+        app:layout_constraintTop_toBottomOf="@id/openA11yBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <TextView
         android:id="@+id/a11yStatus"
         android:layout_width="0dp"
@@ -153,7 +167,7 @@
         android:textColor="#A855F7"
         android:fontFamily="monospace"
         android:text="@string/a11y_status_disabled"
-        app:layout_constraintTop_toBottomOf="@id/openA11yBtn"
+        app:layout_constraintTop_toBottomOf="@id/batteryOptBtn"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

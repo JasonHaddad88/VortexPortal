@@ -70,6 +70,22 @@ class DevicesActivity : AppCompatActivity() {
         popup.menu.add(getString(R.string.devices_refresh)).setOnMenuItemClickListener {
             refresh(); true
         }
+        popup.menu.add(getString(R.string.dashboard_republish)).setOnMenuItemClickListener {
+            // Force an out-of-cadence peer publish so a freshly-joined
+            // Wi-Fi or just-rotated IP is visible to peers immediately.
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    try { DriverService.instance?.publishPeerNow(); true }
+                    catch (e: Throwable) { setStatus(getString(R.string.republish_failed,
+                        "${e.javaClass.simpleName}: ${e.message ?: ""}"), err = true); false }
+                }
+                if (ok) {
+                    setStatus(getString(R.string.republish_done), err = false)
+                    refresh()
+                }
+            }
+            true
+        }
         popup.menu.add(getString(R.string.dashboard_sign_out)).setOnMenuItemClickListener {
             // B11: clear the user session only. DB creds + device
             // enrollment stay so the user can sign in with a different

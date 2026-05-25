@@ -1,6 +1,7 @@
 package com.vortex.driver
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         binding.armScreenBtn.setOnClickListener { armScreenSharing() }
         binding.disarmScreenBtn.setOnClickListener { disarmScreenSharing() }
         binding.openA11yBtn.setOnClickListener { openAccessibilitySettings() }
+        binding.batteryOptBtn.setOnClickListener { openBatteryOptimization() }
         // B6: sign-in is the new default enrollment path -- "Enroll"
         // opens SignInActivity (username + password), which then calls
         // /api/session-enroll under the hood. The legacy token-paste
@@ -105,6 +107,38 @@ class MainActivity : AppCompatActivity() {
             binding.enrollBtn.visibility = View.VISIBLE
             binding.unenrollBtn.visibility = View.GONE
             binding.devicesBtn.visibility = View.GONE
+        }
+    }
+
+    /**
+     * B11.3.1: opt this app out of Doze battery optimization. Without
+     * this, OEM Android skins (MIUI / ColorOS / HyperOS / OneUI etc.)
+     * routinely kill the foreground service after a few minutes. We
+     * launch the system dialog if the user hasn't already granted; if
+     * they've already granted, fall back to the per-app battery
+     * settings page so they can verify.
+     */
+    private fun openBatteryOptimization() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val ignored = pm.isIgnoringBatteryOptimizations(packageName)
+            if (ignored) {
+                // Already opted out -- open the per-app battery settings
+                // so the user can see the current state + tweak it.
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:$packageName")))
+            } else {
+                val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:$packageName"))
+                startActivity(i)
+            }
+        } catch (e: Throwable) {
+            // Some custom ROMs strip this intent. Fall back to the
+            // app-info screen so the user can find Battery -> Unrestricted.
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:$packageName")))
+            } catch (_: Exception) { /* nothing else to do */ }
         }
     }
 
