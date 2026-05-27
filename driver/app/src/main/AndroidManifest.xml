@@ -48,7 +48,7 @@
          per-media-type permissions; we request the common three so a
          peer can browse the user's gallery + downloads. General
          non-media file access on 13+ still needs MANAGE_EXTERNAL_STORAGE
-         which Google Play restricts -- we don't ask for it here, the
+         which Google Play restricts; we do not ask for it here. The
          user can grant it themselves from system Settings if they
          want full filesystem access. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
