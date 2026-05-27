@@ -156,6 +156,9 @@
 
     <!-- B11.3.1 -->
     <string name="btn_battery_opt">Disable battery optimization</string>
+    <!-- B11.5.1 -->
+    <string name="btn_all_files">Grant all-files access (file browser)</string>
+    <string name="btn_all_files_granted">All-files access granted ✓</string>
     <string name="dashboard_republish">Republish this device</string>
     <string name="republish_done">Re-published peer info.</string>
     <string name="republish_failed">Couldn\'t republish: %1$s</string>

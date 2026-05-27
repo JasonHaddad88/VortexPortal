@@ -158,6 +158,22 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- B11.5.1: All-files access deep-link. Required for the file
+         browser on Android 11+ to see non-media folders (Documents,
+         Android/, etc.). Hidden on Android <= 10 where the legacy
+         READ_EXTERNAL_STORAGE already covers everything. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/allFilesBtn"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/btn_all_files"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/batteryOptBtn"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <TextView
         android:id="@+id/a11yStatus"
         android:layout_width="0dp"
@@ -167,7 +183,7 @@
         android:textColor="#A855F7"
         android:fontFamily="monospace"
         android:text="@string/a11y_status_disabled"
-        app:layout_constraintTop_toBottomOf="@id/batteryOptBtn"
+        app:layout_constraintTop_toBottomOf="@id/allFilesBtn"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 

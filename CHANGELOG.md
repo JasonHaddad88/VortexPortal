@@ -3,6 +3,43 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.5.1] — 2026-05-27
+
+**One-tap "Grant all-files access".** The B11.5 file browser
+needed the user to dig into system Settings on Android 11+ to see
+non-media folders; this commit wires a deep-link button so they
+don't have to.
+
+### Manifest
+- New `MANAGE_EXTERNAL_STORAGE` permission. Google Play restricts
+  publishing apps with it; we sideload via GitHub Actions so it's
+  fine. `tools:ignore="ScopedStorage"` suppresses the lint
+  warning the tooling raises when an app declares it.
+- Added the `xmlns:tools` namespace on the manifest root so the
+  ignore attribute parses.
+
+### MainActivity (Device settings)
+- New "Grant all-files access (file browser)" outlined button
+  under "Disable battery optimization". Hidden on Android <= 10
+  where the legacy `READ_EXTERNAL_STORAGE` already covers
+  everything.
+- On Android 11+, three-tier intent fallback:
+  1. `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` with
+     `package:<us>` URI -- one tap, lands on our toggle.
+  2. `ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION` -- generic list;
+     user finds our app.
+  3. `ACTION_APPLICATION_DETAILS_SETTINGS` -- last-resort
+     app-info screen.
+- `refreshAllFilesButton()` on `onCreate` + `onResume` updates
+  the label: shows "All-files access granted ✓" + disables the
+  button once `Environment.isExternalStorageManager()` is true.
+
+### APK version
+- **0.22.0-b11.5 → 0.22.1-b11.5.1 (versionCode 25 → 26)**.
+
+### Hub
+- Unchanged.
+
 ## [Driver-B11.5] — 2026-05-26
 
 **Native file browser + README hub-setup guide.** Two

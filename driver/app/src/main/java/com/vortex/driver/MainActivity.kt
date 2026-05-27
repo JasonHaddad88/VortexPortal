@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         binding.disarmScreenBtn.setOnClickListener { disarmScreenSharing() }
         binding.openA11yBtn.setOnClickListener { openAccessibilitySettings() }
         binding.batteryOptBtn.setOnClickListener { openBatteryOptimization() }
+        binding.allFilesBtn.setOnClickListener { openAllFilesAccess() }
         // B6: sign-in is the new default enrollment path -- "Enroll"
         // opens SignInActivity (username + password), which then calls
         // /api/session-enroll under the hood. The legacy token-paste
@@ -79,6 +80,7 @@ class MainActivity : AppCompatActivity() {
         refreshNotifStatus()
         refreshA11yStatus()
         refreshEnrollStatus()
+        refreshAllFilesButton()
     }
 
     override fun onResume() {
@@ -88,6 +90,9 @@ class MainActivity : AppCompatActivity() {
         refreshA11yStatus()
         // Also catches a fresh enrollment from EnrollActivity finishing.
         refreshEnrollStatus()
+        // B11.5.1: refresh All-files-access label after returning from
+        // the system grant page.
+        refreshAllFilesButton()
     }
 
     /** B1: reflect whether this device has been enrolled into a Vortex
@@ -140,6 +145,51 @@ class MainActivity : AppCompatActivity() {
                     android.net.Uri.parse("package:$packageName")))
             } catch (_: Exception) { /* nothing else to do */ }
         }
+    }
+
+    /**
+     * B11.5.1: deep-link the system "All files access" toggle for this
+     * app. Required on Android 11+ for the native file browser
+     * (FileBrowserOps) to see non-media folders. On Android 10 and
+     * older we keep the button hidden -- the legacy READ_EXTERNAL_STORAGE
+     * already covers everything there.
+     *
+     * Two paths into the system page:
+     *   1. ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION with a
+     *      package:<our> URI -- one tap, lands directly on our toggle.
+     *   2. If the OEM stripped that intent, fall back to the generic
+     *      ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION list (user finds
+     *      our app from there).
+     *   3. If even that's missing, app-info screen as a last resort.
+     */
+    private fun openAllFilesAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val pkgUri = android.net.Uri.parse("package:$packageName")
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkgUri))
+            return
+        } catch (_: Exception) {}
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            return
+        } catch (_: Exception) {}
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri))
+        } catch (_: Exception) { /* nothing else to do */ }
+    }
+
+    /** Refresh the All-files button: hidden on <= API 29, shows the
+     *  grant state on 30+ via Environment.isExternalStorageManager(). */
+    private fun refreshAllFilesButton() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            binding.allFilesBtn.visibility = View.GONE; return
+        }
+        binding.allFilesBtn.visibility = View.VISIBLE
+        val granted = android.os.Environment.isExternalStorageManager()
+        binding.allFilesBtn.text = getString(
+            if (granted) R.string.btn_all_files_granted else R.string.btn_all_files
+        )
+        binding.allFilesBtn.isEnabled = !granted
     }
 
     /** Deep-link to Settings -> Accessibility. We can't take the user any

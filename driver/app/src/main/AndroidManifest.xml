@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
         Permissions roadmap: M0 = service+notifications, M1 = camera,
@@ -56,6 +57,14 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- B11.5.1: All-files access. Required to browse non-media files
+         (Documents, app-private folders, etc.) on Android 11+. Google
+         Play restricts publishing apps with this permission; we ship
+         via GitHub Actions sideload so this is fine. The Device-
+         settings screen exposes a one-tap deep-link to the system
+         grant page (ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
