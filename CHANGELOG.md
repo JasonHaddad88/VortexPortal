@@ -3,6 +3,49 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.6] — 2026-05-27
+
+**Input passthrough.** The Screen tab in PeerControlActivity goes
+from "viewer" to "remote control": tap on the streamed image and
+the peer phone gets the tap. Long-press, swipe, and a hardware-key
+row (Back / Home / Recents) round it out -- the gap between "I can
+watch" and "I can drive" is closed.
+
+### Touch translation
+- New `attachInputToFrame()` installs an `OnTouchListener` on the
+  Screen ImageView. Same drag-vs-tap discriminator the webapp
+  uses (8 px threshold): below threshold + short = `tap`, below
+  threshold + 500 ms+ = `long_press`, above threshold = `swipe`
+  with `from`/`to`/`duration_ms`.
+- `toPeerCoords(viewX, viewY)` honours `fitCenter` letterboxing:
+  taps on the black bars are suppressed (returns null) so we
+  don't send out-of-range coords.
+- Coord scaling uses the peer's reported screen dimensions when
+  available (queried via `input` op's `screen_size` sub-command
+  on connect), falling back to the current bitmap's intrinsic
+  dims if `screen_size` hasn't replied yet.
+
+### System-key row
+- New floating pill at the bottom of the Screen stage with
+  Back (◁) / Home (○) / Recents (□). Visible only on the Screen
+  tab; each button dispatches the matching `input` sub-command
+  (`back` / `home` / `recents`).
+
+### Error handling
+- `sendInput()` surfaces a Toast on failure. When the peer
+  reports a missing AccessibilityService, the message points the
+  user to "open Vortex Driver on that device and follow the
+  prompt" -- the gesture is recognised on this side but the peer
+  hasn't been granted the system permission yet.
+
+### APK version
+- **0.22.1-b11.5.1 → 0.23.0-b11.6 (versionCode 26 → 27)**.
+
+### Hub
+- Unchanged. Wire-compatible with the existing `input` op
+  registered in `Ops.kt` (B2.1), so the peer side needs zero
+  changes.
+
 ## [Driver-B11.5.1] — 2026-05-27
 
 **One-tap "Grant all-files access".** The B11.5 file browser

@@ -346,6 +346,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.6 — input passthrough** _shipped_. Touch listener
+  on the Screen ImageView with webapp-style drag-vs-tap
+  discrimination (8 px threshold; tap / long_press / swipe).
+  `toPeerCoords` honours `fitCenter` letterboxing so taps on
+  black bars are suppressed. Floating Back / Home / Recents pill
+  in the Screen stage. `screen_size` fetched via the existing
+  `input` op so coords scale to the peer's real screen
+  dimensions instead of guesstimating from bitmap intrinsics.
+  Errors surface as a Toast pointing the user at the peer's
+  AccessibilityService toggle. Zero peer-side changes -- uses
+  the `input` op registered in B2.1.
+
 - [x] **B11.5 — native file browser + README hub guide** _shipped_.
   New `FileBrowserOps` registers `stat`/`list_dir`/`read_file_stream`
   on the peer side; wire shape matches `agent/agent.py` byte-for-byte

@@ -57,6 +57,7 @@ Future milestones, in order:
 | **B11.3** | Peer client (OkHttp WS) + in-app per-device viewer (Screen / Camera / Info, MJPEG) | _shipped_ |
 | **B11.4** | Optional relay URL in Setup — cross-network control by falling back through any Vortex hub | _shipped_ |
 | **B11.5** | Native file browser (`Files` tab) + main-README hub-setup guide | _shipped_ |
+| **B11.6** | Input passthrough in the Screen tab — tap/long-press/swipe + Back/Home/Recents | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 

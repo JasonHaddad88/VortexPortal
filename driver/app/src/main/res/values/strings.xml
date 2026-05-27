@@ -137,6 +137,12 @@
     <string name="peer_files_dir">Folder</string>
     <string name="peer_files_downloading">Downloading %1$s…</string>
     <string name="peer_files_downloaded">Saved %1$s (%2$s) to Downloads/Vortex</string>
+
+    <!-- B11.6: input passthrough. -->
+    <string name="peer_key_back">◁  Back</string>
+    <string name="peer_key_home">○  Home</string>
+    <string name="peer_key_recents">□  Recents</string>
+    <string name="peer_input_needs_a11y">Tap recognised, but the peer\'s Accessibility service isn\'t enabled. Open Vortex Driver on that device and follow the prompt.</string>
     <string name="signin_open_setup">Database setup</string>
     <string name="dashboard_db_setup">Database setup</string>
 

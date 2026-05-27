@@ -60,6 +60,13 @@ class PeerControlActivity : AppCompatActivity() {
      *  the photos folder; etc. We send to the peer as `args.path`. */
     private var filesPath: String = ""
 
+    /** B11.6: peer's actual screen dimensions (in phone pixels), used
+     *  to translate our ImageView touch coords back to coords that
+     *  make sense to the peer's AccessibilityService. Filled on the
+     *  first successful `screen_size` reply; null until then. */
+    @Volatile private var peerScreenW: Int = 0
+    @Volatile private var peerScreenH: Int = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         b = ActivityPeerControlBinding.inflate(layoutInflater)
@@ -74,6 +81,15 @@ class PeerControlActivity : AppCompatActivity() {
         b.tabFiles.setOnClickListener   { switchTab(Tab.FILES) }
         b.tabInfo.setOnClickListener    { switchTab(Tab.INFO) }
         b.filesUpBtn.setOnClickListener { filesGoUp() }
+
+        // B11.6: input passthrough. Touch listener on the frame; the
+        // peer's screen_size answer drives coord translation. System
+        // keys map to the same `input` sub-commands the agent's
+        // InputDispatch handles (back / home / recents).
+        attachInputToFrame()
+        b.keyBack.setOnClickListener    { sendInput(JSONObject().put("type", "back")) }
+        b.keyHome.setOnClickListener    { sendInput(JSONObject().put("type", "home")) }
+        b.keyRecents.setOnClickListener { sendInput(JSONObject().put("type", "recents")) }
         b.cameraFlipBtn.setOnClickListener {
             cameraFacing = if (cameraFacing == "back") "front" else "back"
             // Re-open the camera stream with the new facing.
@@ -105,6 +121,10 @@ class PeerControlActivity : AppCompatActivity() {
                 b.connStatus.setTextColor(
                     ContextCompat.getColor(this@PeerControlActivity, R.color.vortex_success)
                 )
+                // B11.6: pull the peer's actual screen dims so taps can
+                // be translated. Best-effort; viewer still works
+                // without it, taps will just use a reasonable default.
+                fetchPeerScreenSize()
                 switchTab(currentTab)
             }.onFailure { e ->
                 // B11.4: direct LAN connection failed. If the user
@@ -152,13 +172,14 @@ class PeerControlActivity : AppCompatActivity() {
         b.infoScroll.visibility = View.GONE
         b.filesPane.visibility = View.GONE
         b.cameraFlipBtn.visibility = View.GONE
+        b.sysKeys.visibility = View.GONE
         b.placeholder.visibility = if (peer.isOpen) View.GONE else View.VISIBLE
         b.errorText.visibility = View.GONE
 
         if (!peer.isOpen) return  // wait for connect
 
         when (t) {
-            Tab.SCREEN -> startScreenStream()
+            Tab.SCREEN -> { b.sysKeys.visibility = View.VISIBLE; startScreenStream() }
             Tab.CAMERA -> { b.cameraFlipBtn.visibility = View.VISIBLE; startCameraStream() }
             Tab.FILES  -> { b.filesPane.visibility = View.VISIBLE; loadFiles(filesPath) }
             Tab.INFO   -> { b.infoScroll.visibility = View.VISIBLE; loadInfo() }
@@ -254,6 +275,128 @@ class PeerControlActivity : AppCompatActivity() {
         b.errorText.text = msg
         b.errorText.visibility = View.VISIBLE
         b.placeholder.visibility = View.GONE
+    }
+
+    // ---- B11.6: input passthrough ------------------------------------
+
+    /** Ask the peer for its current screen dimensions via the existing
+     *  `input` op's `screen_size` sub-command. Best-effort -- on
+     *  failure we leave `peerScreenW/H` at 0 and the touch handler
+     *  falls back to the peer phone's reported `naturalWidth`. */
+    private fun fetchPeerScreenSize() {
+        scope.launch {
+            val res = runCatching {
+                peer.unary(
+                    "input",
+                    JSONObject().put("command", JSONObject().put("type", "screen_size")),
+                    timeoutMs = 3_000,
+                )
+            }
+            res.onSuccess { r ->
+                peerScreenW = r.optInt("w", 0)
+                peerScreenH = r.optInt("h", 0)
+            }
+            // Silent failure -- we don't want a transient screen_size
+            // timeout to bubble up to the user; taps will just use
+            // 1080x2400 defaults until a fresh fetch succeeds.
+        }
+    }
+
+    /** Wire mouse-style + tap gestures on the Screen ImageView. */
+    private fun attachInputToFrame() {
+        var downCoords: IntArray? = null
+        var downAtMs: Long = 0L
+        val dragThreshPx = 8
+        b.frame.setOnTouchListener { _, ev ->
+            // Only meaningful on the Screen tab; ignore on Camera +
+            // others. (The flip + sys-key buttons are above this
+            // view in the z-order so they intercept their own taps.)
+            if (currentTab != Tab.SCREEN) return@setOnTouchListener false
+            when (ev.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downCoords = toPeerCoords(ev.x, ev.y)
+                    downAtMs = System.currentTimeMillis()
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val down = downCoords ?: return@setOnTouchListener true
+                    val up = toPeerCoords(ev.x, ev.y) ?: down
+                    val dx = up[0] - down[0]; val dy = up[1] - down[1]
+                    val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble())
+                    val elapsed = (System.currentTimeMillis() - downAtMs).toInt().coerceAtLeast(50)
+                    if (dist >= dragThreshPx) {
+                        sendInput(JSONObject()
+                            .put("type", "swipe")
+                            .put("from", JSONArray().put(down[0]).put(down[1]))
+                            .put("to",   JSONArray().put(up[0]).put(up[1]))
+                            .put("duration_ms", elapsed.coerceIn(80, 800)))
+                    } else if (elapsed >= 500) {
+                        sendInput(JSONObject()
+                            .put("type", "long_press")
+                            .put("x", down[0]).put("y", down[1])
+                            .put("duration_ms", 600))
+                    } else {
+                        sendInput(JSONObject()
+                            .put("type", "tap")
+                            .put("x", down[0]).put("y", down[1]))
+                    }
+                    downCoords = null
+                    true
+                }
+                android.view.MotionEvent.ACTION_CANCEL -> { downCoords = null; true }
+                else -> false
+            }
+        }
+    }
+
+    /** Translate (viewX, viewY) on the ImageView into peer-pixel
+     *  coords. Honors `fitCenter` letterboxing -- a tap on the black
+     *  bars returns null and is suppressed. */
+    private fun toPeerCoords(viewX: Float, viewY: Float): IntArray? {
+        val drawable = b.frame.drawable ?: return null
+        val viewW = b.frame.width.toFloat()
+        val viewH = b.frame.height.toFloat()
+        if (viewW <= 0 || viewH <= 0) return null
+        val intrW = drawable.intrinsicWidth.toFloat()
+        val intrH = drawable.intrinsicHeight.toFloat()
+        if (intrW <= 0 || intrH <= 0) return null
+        // fitCenter: scale uniformly to fit, centered.
+        val scale = kotlin.math.min(viewW / intrW, viewH / intrH)
+        val drawnW = intrW * scale; val drawnH = intrH * scale
+        val offX = (viewW - drawnW) / 2f; val offY = (viewH - drawnH) / 2f
+        val xInImg = viewX - offX; val yInImg = viewY - offY
+        if (xInImg < 0 || yInImg < 0 || xInImg > drawnW || yInImg > drawnH) return null
+        val xFrac = xInImg / drawnW; val yFrac = yInImg / drawnH
+        // Prefer the peer's reported screen size; fall back to the
+        // current bitmap's intrinsic dims (close enough for most
+        // phones, off-by-status-bar at worst).
+        val targetW = if (peerScreenW > 0) peerScreenW else intrW.toInt()
+        val targetH = if (peerScreenH > 0) peerScreenH else intrH.toInt()
+        return intArrayOf((xFrac * targetW).toInt(), (yFrac * targetH).toInt())
+    }
+
+    /** Send one `input` op to the peer. Errors get surfaced as a tiny
+     *  toast so the user knows the gesture didn't land (typically
+     *  because the peer hasn't enabled the Vortex AccessibilityService). */
+    private fun sendInput(command: JSONObject) {
+        scope.launch {
+            val res = runCatching {
+                peer.unary(
+                    "input",
+                    JSONObject().put("command", command),
+                    timeoutMs = 4_000,
+                )
+            }
+            res.onFailure { e ->
+                val msg = e.message ?: ""
+                val hint = if (msg.contains("Accessibility", ignoreCase = true) ||
+                               msg.contains("a11y", ignoreCase = true))
+                    getString(R.string.peer_input_needs_a11y)
+                else
+                    msg.take(120)
+                Toast.makeText(this@PeerControlActivity, hint, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // ---- B11.5: file browser -----------------------------------------

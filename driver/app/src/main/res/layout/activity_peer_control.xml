@@ -226,6 +226,59 @@
             android:textAllCaps="false"
             android:background="@drawable/vortex_pill_off"
             android:visibility="gone"/>
+
+        <!-- B11.6: hardware-key row floats at the bottom of the screen
+             stage. Shown only on the Screen tab so the user can drive
+             Back / Home / Recents on the peer phone. Frame is the
+             touch-input target itself, so this row needs clickable
+             children to stop the gestures from leaking through. -->
+        <LinearLayout
+            android:id="@+id/sys_keys"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_margin="14dp"
+            android:orientation="horizontal"
+            android:padding="6dp"
+            android:background="@drawable/vortex_pill_on"
+            android:visibility="gone">
+            <Button
+                android:id="@+id/key_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/peer_key_back"
+                android:textColor="@color/vortex_text"
+                android:textAllCaps="false"/>
+            <Button
+                android:id="@+id/key_home"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/peer_key_home"
+                android:textColor="@color/vortex_text"
+                android:textAllCaps="false"/>
+            <Button
+                android:id="@+id/key_recents"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/peer_key_recents"
+                android:textColor="@color/vortex_text"
+                android:textAllCaps="false"/>
+        </LinearLayout>
     </FrameLayout>
 
     <TextView
