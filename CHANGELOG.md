@@ -3,6 +3,69 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.5] — 2026-05-26
+
+**Native file browser + README hub-setup guide.** Two
+user-requested deliverables: the main README now walks through
+standing up a relay end-to-end, and PeerControlActivity gains a
+**Files** tab that lists + downloads a peer's shared storage
+without leaving the APK.
+
+### README: "Cross-network control: run your own relay"
+- New section in `README.md` right after the Vortex Driver APK
+  intro, covering:
+  - **Option A** -- laptop / desktop / Termux + Cloudflare quick
+    tunnel (free, ephemeral URL; fastest for testing).
+  - **Option B** -- same machine + named Cloudflare tunnel (free
+    if you own a domain; URL stays stable).
+  - **Option C** -- always-on cloud VM (Oracle Free Tier,
+    Fly.io, Hetzner CPX11 ~$4/mo, or a Pi at home).
+  - How to point the APK at the relay (Kebab -> Database setup
+    -> Relay server URL).
+  - How to verify (foreground-service notification line +
+    browser dashboard + a cross-network test recipe).
+
+### Native file browser
+- New `FileBrowserOps.kt` registers three peer-side ops:
+  `stat`, `list_dir`, `read_file_stream`. Wire shape matches
+  `agent/agent.py::op_*` byte-for-byte, so the webapp's existing
+  `/devices/{id}/browse` page also Just Works against a Driver
+  APK -- no hub-side changes.
+- Browsable root: `Environment.getExternalStorageDirectory()`
+  (`/storage/emulated/0` on most phones). Falls back to
+  `getExternalFilesDir(null)` on devices where the broad path
+  isn't readable.
+- Path-safety: a Python-agent-style `safeResolve(rel)`
+  canonicalises the requested path and refuses anything that
+  escapes the browsable root.
+- Manifest gains `READ_EXTERNAL_STORAGE`
+  (`maxSdkVersion="32"`) + `READ_MEDIA_IMAGES / VIDEO / AUDIO`
+  for Android 13+. General non-media filesystem read on 13+
+  still needs `MANAGE_EXTERNAL_STORAGE`; we don't ask (Google
+  Play restricts it), but the error string points the user at
+  the system Settings switch.
+
+### Files tab in PeerControlActivity
+- New `Files` pill in the tab row, breadcrumb path + Up button
+  + scrollable list. Folder rows have a purple `▸`, files have
+  a cyan `·` and a human-readable size meta line ("3.2 MB",
+  "412 KB", etc.).
+- Tap a folder -> `loadFiles(joinedPath)`. Tap a file ->
+  streams `read_file_stream` into the Downloads/Vortex folder
+  via MediaStore (Android 10+) or `DIRECTORY_DOWNLOADS` on
+  older Android. Toast on start + completion ("Saved foo.jpg
+  (3.2 MB) to Downloads/Vortex").
+- Up button trims one path segment; at root it's a no-op.
+- New `row_file.xml` layout.
+
+### APK version
+- **0.21.0-b11.4 → 0.22.0-b11.5 (versionCode 24 → 25)**.
+
+### Hub
+- Unchanged (still V5.28). The new file ops use the existing
+  `stat`/`list_dir`/`read_file_stream` wire format the webapp
+  already exposes.
+
 ## [Driver-B11.4] — 2026-05-25
 
 **Cross-network control via optional relay URL.** NAT traversal is

@@ -57,6 +57,12 @@ object Ops {
         // Android. Wire shapes match the Python agent so the hub's Theft
         // Mode UI (and Theft Dashboard) need zero changes.
         registerB4(ctx, dispatcher)
+        // B11.5: file browser ops so peer APKs can list + download
+        // each other's shared storage natively. Same wire shape as
+        // agent/agent.py op_stat / op_list_dir / op_read_file_stream,
+        // so the existing webapp file browser also Just Works against
+        // a Driver APK without any changes.
+        FileBrowserOps.register(ctx, dispatcher)
     }
 
     private fun registerB4(ctx: Context, dispatcher: OpDispatcher) {

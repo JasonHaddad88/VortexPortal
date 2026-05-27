@@ -346,6 +346,17 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.5 — native file browser + README hub guide** _shipped_.
+  New `FileBrowserOps` registers `stat`/`list_dir`/`read_file_stream`
+  on the peer side; wire shape matches `agent/agent.py` byte-for-byte
+  so the webapp file browser also works against a Driver APK. New
+  Files tab in PeerControlActivity with breadcrumb + Up button,
+  folder/file rows, tap-to-navigate and tap-to-download via
+  MediaStore. Manifest gains `READ_EXTERNAL_STORAGE` (<=API 32) +
+  `READ_MEDIA_*` (13+). Main README gains a "Cross-network
+  control: run your own relay" section covering quick tunnel /
+  named tunnel / always-on VM + how to point the APK at it.
+
 - [x] **B11.4 — optional relay URL** _shipped_. NAT traversal is a
   physics problem; cross-network needs *some* server in the middle.
   New optional Relay URL field in Setup -- any Vortex hub running

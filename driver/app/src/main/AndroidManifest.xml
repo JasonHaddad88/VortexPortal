@@ -41,6 +41,21 @@
          opt this app out of Doze in one tap. Required to even SHOW
          that intent on Android 12+ targeting our manifest. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- B11.5: native file-browser ops (FileBrowserOps).
+         Pre-Android-13 path: READ_EXTERNAL_STORAGE covers everything
+         under /storage/emulated/0. Android 13+ split this into
+         per-media-type permissions; we request the common three so a
+         peer can browse the user's gallery + downloads. General
+         non-media file access on 13+ still needs MANAGE_EXTERNAL_STORAGE
+         which Google Play restricts -- we don't ask for it here, the
+         user can grant it themselves from system Settings if they
+         want full filesystem access. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 

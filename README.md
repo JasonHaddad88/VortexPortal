@@ -168,6 +168,132 @@ WebCodecs) on the direct-WS LAN route. The APK is otherwise at
 is still MP4/AAC (the H.264 video pipeline doesn't carry an audio
 track today — that's a future Opus-over-WS delta).
 
+## Cross-network control (Driver-B11.4): run your own relay
+
+In the **Turso-direct** model (Driver-B11) the APK reads/writes
+accounts + devices directly to Turso, so on the **same Wi-Fi** every
+device finds every other device peer-to-peer with no server in the
+middle. On **different networks**, NAT physically prevents direct
+device-to-device dialling — *something* needs to bridge the two
+sides. Driver-B11.4 adds an optional "Relay server URL" field in
+the APK's Setup screen for exactly that.
+
+Any Vortex hub running against the **same Turso DB** as your APKs
+works as a relay; the APK auto-falls-back through it whenever a
+direct LAN connection isn't reachable. Here's how to stand one up:
+
+### Option A — laptop / desktop + Cloudflare quick tunnel (fastest, free, ephemeral URL)
+
+Best for trying it out. The URL changes on every restart; fine for
+testing, annoying for daily use.
+
+**Windows (PowerShell):**
+```powershell
+# in the repo directory
+$env:VORTEX_SYNC_URL  = "libsql://your-db.turso.io"   # SAME url the APKs use
+$env:VORTEX_SYNC_TOKEN = "<paste-the-same-turso-jwt>" # SAME token the APKs use
+.\serve.ps1
+```
+
+**macOS / Linux:**
+```bash
+export VORTEX_SYNC_URL="libsql://your-db.turso.io"
+export VORTEX_SYNC_TOKEN="<jwt>"
+bash serve.sh
+```
+
+**Termux phone (acts as the relay):**
+```bash
+cd "$HOME/storage/downloads/VortexPortal"
+bash setup.sh                  # one-time
+export VORTEX_SYNC_URL="libsql://your-db.turso.io"
+export VORTEX_SYNC_TOKEN="<jwt>"
+bash ~/server/serve.sh         # MODE=hub is the default
+```
+
+`serve.{sh,ps1}` builds a venv, downloads `cloudflared` if needed,
+starts uvicorn on `127.0.0.1:8000`, opens a Cloudflare quick tunnel,
+and prints a line like:
+
+```
+==> Public URL: https://random-words.trycloudflare.com
+```
+
+### Option B — same machine, stable Cloudflare named tunnel (free if you own a domain)
+
+```bash
+cloudflared tunnel login                          # browser; pick a domain
+cloudflared tunnel create vortex
+cloudflared tunnel route dns vortex vortex.yourdomain.com
+
+# ~/.cloudflared/config.yml:
+# tunnel: vortex
+# credentials-file: /home/you/.cloudflared/<uuid>.json
+# ingress:
+#   - hostname: vortex.yourdomain.com
+#     service: http://127.0.0.1:8000
+#   - service: http_status:404
+
+cloudflared tunnel run vortex &
+VORTEX_SYNC_URL=libsql://... VORTEX_SYNC_TOKEN=... bash serve.sh
+```
+
+Now the URL is `https://vortex.yourdomain.com` forever — paste once
+into the APK, done.
+
+### Option C — always-on cloud VM
+
+For a setup that survives your laptop sleeping. Cheapest reliable
+options as of writing:
+
+- **Oracle Cloud Always Free** — ARM Ampere VM, 4 cores, 24 GB RAM,
+  actually free (sign-up requires a credit card but it's not billed).
+- **Fly.io** free tier — small always-on VM, built-in HTTPS.
+- **Hetzner CPX11** (~$4/mo) — best price/performance if free tiers
+  don't fit.
+- **A Raspberry Pi at home** with a Cloudflare named tunnel — zero
+  recurring cost.
+
+Minimal Debian-ish recipe:
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv git
+git clone https://github.com/JasonHaddad88/VortexPortal.git
+cd VortexPortal && python3 -m venv .venv && . .venv/bin/activate
+pip install fastapi uvicorn httpx python-multipart
+export VORTEX_SYNC_URL="libsql://..."
+export VORTEX_SYNC_TOKEN="..."
+bash serve.sh
+# (add a systemd unit if you want it on boot)
+```
+
+### Point the APK at it
+
+On every device running the Vortex Driver APK:
+
+1. **Kebab** (⋮ in the dashboard topbar) → **Database setup**.
+2. Paste the relay's public URL into **Relay server URL**.
+3. **Save & continue** → sign in again.
+
+From then on, tapping a device row tries the direct LAN connection
+first; if that fails (different network) the APK opens the embedded
+WebView pointed at `{relay}/devices/{id}`, auth-bridged through the
+device's own token. No second sign-in.
+
+### Verifying it works
+
+- **Foreground notification** on the APK should show
+  `Hub: connected as <device name>` a few seconds after sign-in.
+- **In a browser**: open the relay URL, sign in with the same
+  username/password, the dashboard lists all your devices —
+  confirms the relay sees the shared Turso DB.
+- **Cross-network test**: turn off Wi-Fi on phone A (so it's on
+  mobile data), keep phone B on a different Wi-Fi. Tap A from B —
+  LAN connect fails fast, WebView falls back via the relay and
+  loads the device page.
+
+If the hub's terminal prints WS errors, paste them into a GitHub
+issue and we'll triage.
+
 ## Multi-node control (since V5.15)
 
 Run as many nodes as you like against the shared DB. A device's live

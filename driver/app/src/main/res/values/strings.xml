@@ -129,6 +129,14 @@
     <string name="setup_relay_help">Without a relay, devices can only control each other on the SAME Wi-Fi. To control across networks, run a Vortex hub somewhere reachable (Cloudflare Tunnel, $4/mo VM, etc.) pointed at the SAME database above, and paste its URL here.</string>
     <string name="peer_falling_back_to_relay">Direct LAN connect failed — switching to relay…</string>
     <string name="peer_connect_failed_no_relay">Couldn\'t reach this device on the LAN, and no relay URL is configured. Add one in Setup to control devices on other networks. (Direct error: %1$s)</string>
+
+    <!-- B11.5: native file browser tab. -->
+    <string name="peer_tab_files">Files</string>
+    <string name="peer_files_up">↑ Up</string>
+    <string name="peer_files_empty">(empty folder)</string>
+    <string name="peer_files_dir">Folder</string>
+    <string name="peer_files_downloading">Downloading %1$s…</string>
+    <string name="peer_files_downloaded">Saved %1$s (%2$s) to Downloads/Vortex</string>
     <string name="signin_open_setup">Database setup</string>
     <string name="dashboard_db_setup">Database setup</string>
 
