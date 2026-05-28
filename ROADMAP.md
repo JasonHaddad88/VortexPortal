@@ -346,6 +346,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.7 — H.264 native decode** _shipped_. New
+  `ScreenH264Decoder` (MediaCodec async callbacks +
+  HandlerThread + non-blocking `feed(nalBytes, kf)`). New
+  SurfaceView in the stage. `startScreenStream` negotiates
+  `codec:"h264"`; `screenHandlers()` flips between H.264
+  SurfaceView render and MJPEG ImageView blit based on
+  `stream_start.content_type`. `sizeSurfaceAspect` resizes
+  the SurfaceView to the H.264 frame's aspect so touch math
+  stays linear. B11.6 input passthrough still works on both
+  views via `toPeerCoordsForView`. Fallback to MJPEG on
+  decoder config failure.
+
 - [x] **B11.8 — theft-mode controls tab** _shipped_. New Theft
   pill in PeerControlActivity surfaces the four B4 ops as
   native cards: location (with `geo:` map deep-link),

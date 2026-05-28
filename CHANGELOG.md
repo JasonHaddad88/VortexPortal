@@ -3,6 +3,65 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.7] — 2026-05-28
+
+**H.264 native decode in the Screen tab.** The biggest
+latency/bandwidth win left on the table. Encoder side already
+shipped in B5; this commit adds the inbound decoder so the APK
+viewer renders the H.264 stream natively instead of decoding
+JPEG-per-frame through `BitmapFactory`. Roughly an order of
+magnitude less bandwidth at equivalent quality and no per-frame
+Java/Kotlin allocation.
+
+### New ScreenH264Decoder
+- MediaCodec async-callback decoder configured from
+  `stream_start.csd_base64` (the SPS+PPS the encoder ships). Pin
+  the output to the provided `Surface` so frames render direct
+  on the GPU -- no CPU copy through Bitmap.
+- `feed(nalBytes, isKeyFrame)` is non-blocking: if MediaCodec's
+  input queue is full, the frame is dropped rather than
+  backpressuring the WS reader. Latency over completeness.
+- Dedicated HandlerThread so MediaCodec callbacks don't
+  serialise through the WS dispatch thread.
+
+### activity_peer_control.xml
+- New `frame_video` SurfaceView next to the existing `frame`
+  ImageView in the stage FrameLayout. Only one is visible at a
+  time, picked by `stream_start.content_type`.
+
+### PeerControlActivity
+- `startScreenStream()` now requests `codec:"h264"` first (with
+  `max_dim:720, fps_cap:30, bitrate:2_000_000` defaults). The
+  shared `screenHandlers()` flips mode on `stream_start`:
+  - `content_type == "video/h264"` -> configure
+    ScreenH264Decoder against the SurfaceView's surface, hide
+    ImageView, show + aspect-fit the SurfaceView.
+  - anything else (older peer that fell back to MJPEG) -> swap
+    to the existing MJPEG ImageView path.
+- `sizeSurfaceAspect(w, h)` resizes the SurfaceView to match
+  the H.264 frame's aspect ratio inside the stage, so no
+  letterboxing inside the surface itself and touch math stays
+  linear (no `fitCenter` correction needed for SurfaceView).
+- Input passthrough (B11.6): the touch listener is attached to
+  BOTH `frame` and `frame_video`; `toPeerCoordsForView()`
+  picks the right source dims (drawable intrinsics for
+  ImageView, video width/height for SurfaceView).
+- Decoder torn down on tab switch + activity destroy.
+
+### Fallback path
+- If `MediaCodec.configure()` throws (unsupported codec /
+  surface invalid / etc.), the H.264 handler stops the
+  half-configured decoder, swaps back to the ImageView, and
+  reopens the stream with `codec:"mjpeg"`. The user sees a
+  ~1 s blank during the renegotiation but never an error.
+
+### APK version
+- **0.24.0-b11.8 → 0.25.0-b11.7 (versionCode 28 → 29)**.
+
+### Hub
+- Unchanged. The peer-side ScreenH264Encoder (B5) handles the
+  encode; this commit is purely consumer-side.
+
 ## [Driver-B11.8] — 2026-05-27
 
 **Theft-mode controls.** New Theft tab in PeerControlActivity

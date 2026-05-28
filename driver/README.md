@@ -59,6 +59,7 @@ Future milestones, in order:
 | **B11.5** | Native file browser (`Files` tab) + main-README hub-setup guide | _shipped_ |
 | **B11.6** | Input passthrough in the Screen tab — tap/long-press/swipe + Back/Home/Recents | _shipped_ |
 | **B11.8** | Theft-mode controls tab — location / record audio / capture photo / keep awake | _shipped_ |
+| **B11.7** | H.264 native decode (MediaCodec + SurfaceView) in the Screen tab | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 

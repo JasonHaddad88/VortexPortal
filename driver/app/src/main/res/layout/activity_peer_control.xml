@@ -119,14 +119,24 @@
         android:layout_margin="12dp"
         android:background="@drawable/vortex_card">
 
-        <!-- Screen / Camera live frame. ImageView for the MJPEG path
-             (B11.4 will add a SurfaceView + MediaCodec for H.264). -->
+        <!-- Screen / Camera live frame. ImageView for MJPEG (default
+             on Camera, fallback on Screen) + SurfaceView for H.264
+             native decode (B11.7, Screen-only). Only one is visible
+             at a time; PeerControlActivity flips them on the
+             stream_start.content_type. Both have the same touch
+             listener so input passthrough (B11.6) works either way. -->
         <ImageView
             android:id="@+id/frame"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:scaleType="fitCenter"
             android:contentDescription="@string/peer_tab_screen"
+            android:visibility="gone"/>
+        <SurfaceView
+            android:id="@+id/frame_video"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
             android:visibility="gone"/>
 
         <!-- Info tab: pretty-printed device_info JSON in a scrollable text view. -->

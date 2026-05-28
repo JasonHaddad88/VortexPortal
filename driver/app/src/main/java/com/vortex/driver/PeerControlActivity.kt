@@ -72,6 +72,15 @@ class PeerControlActivity : AppCompatActivity() {
     @Volatile private var peerScreenW: Int = 0
     @Volatile private var peerScreenH: Int = 0
 
+    /** B11.7: native H.264 decoder + video frame dims. Both are null
+     *  while we're in MJPEG mode (older peer, or H.264 setup failed
+     *  and we fell back). The Screen tab uses the SurfaceView when
+     *  decoder is non-null; the touch coord helper picks the source
+     *  dims accordingly. */
+    @Volatile private var screenH264: ScreenH264Decoder? = null
+    @Volatile private var videoW: Int = 0
+    @Volatile private var videoH: Int = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         b = ActivityPeerControlBinding.inflate(layoutInflater)
@@ -134,6 +143,7 @@ class PeerControlActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopCurrentStream()
+        screenH264?.stop(); screenH264 = null
         peer.close()
         scope.cancel()
         super.onDestroy()
@@ -201,11 +211,16 @@ class PeerControlActivity : AppCompatActivity() {
         // Visibility reset.
         b.frame.visibility = View.GONE
         b.frame.setImageDrawable(null)
+        b.frameVideo.visibility = View.GONE
         b.infoScroll.visibility = View.GONE
         b.filesPane.visibility = View.GONE
         b.theftPane.visibility = View.GONE
         b.cameraFlipBtn.visibility = View.GONE
         b.sysKeys.visibility = View.GONE
+        // B11.7: tear down any active H.264 decoder when leaving the
+        // Screen tab so its MediaCodec releases the surface.
+        screenH264?.stop(); screenH264 = null
+        videoW = 0; videoH = 0
         b.placeholder.visibility = if (peer.isOpen) View.GONE else View.VISIBLE
         b.errorText.visibility = View.GONE
 
@@ -233,16 +248,127 @@ class PeerControlActivity : AppCompatActivity() {
     // ---- ops -----------------------------------------------------------
 
     private fun startScreenStream() {
-        b.frame.visibility = View.VISIBLE
+        // B11.7: ask for h264 first; the handler factory below
+        // routes by stream_start.content_type. If the peer is older
+        // (or chose to honour mjpeg) we transparently fall back.
         b.placeholder.visibility = View.VISIBLE
         b.placeholderText.setText(R.string.peer_loading_screen)
         currentStreamRid = peer.stream(
             "screen_stream",
-            // Always MJPEG for now; H.264 needs MediaCodec on this side (B11.4).
-            JSONObject().put("codec", "mjpeg").put("max_dim", 720).put("fps_cap", 15),
-            mjpegHandlers("Screen"),
+            JSONObject()
+                .put("codec", "h264")
+                .put("max_dim", 720)
+                .put("fps_cap", 30)
+                .put("bitrate", 2_000_000),
+            screenHandlers(),
         )
         if (currentStreamRid == null) showError(getString(R.string.peer_stream_send_failed))
+    }
+
+    /** Hybrid handler: switches between H.264 SurfaceView decode and
+     *  MJPEG ImageView blit based on what the peer actually sent in
+     *  stream_start.content_type. */
+    private fun screenHandlers() = object : PeerClient.StreamHandlers {
+        @Volatile private var mode: String = "?"  // "h264" | "mjpeg"
+        @Volatile private var firstFrame = true
+
+        override fun onStart(meta: JSONObject) {
+            runOnUiThread {
+                val ct = meta.optString("content_type", "")
+                if (ct == "video/h264") {
+                    val csdB64 = meta.optString("csd_base64", "")
+                    val csd = try {
+                        android.util.Base64.decode(csdB64, android.util.Base64.NO_WRAP)
+                    } catch (_: Throwable) { ByteArray(0) }
+                    val w = meta.optInt("width", 0)
+                    val h = meta.optInt("height", 0)
+                    val dec = ScreenH264Decoder()
+                    b.frameVideo.visibility = View.VISIBLE
+                    b.frame.visibility = View.GONE
+                    sizeSurfaceAspect(w, h)
+                    val surface = b.frameVideo.holder.surface
+                    val ok = surface != null && csd.isNotEmpty() &&
+                             dec.configure(surface, csd, w, h)
+                    if (ok) {
+                        screenH264 = dec
+                        videoW = w; videoH = h
+                        mode = "h264"
+                        b.placeholder.visibility = View.GONE
+                        b.connStatus.text = getString(R.string.peer_streaming, "Screen (H.264)")
+                    } else {
+                        // Surface not ready yet OR MediaCodec choked.
+                        // Drop to MJPEG by stopping this stream and
+                        // requesting one without the h264 hint.
+                        dec.stop()
+                        b.frameVideo.visibility = View.GONE
+                        b.frame.visibility = View.VISIBLE
+                        currentStreamRid = peer.stream(
+                            "screen_stream",
+                            JSONObject().put("codec", "mjpeg")
+                                .put("max_dim", 720).put("fps_cap", 15),
+                            mjpegHandlers("Screen"),
+                        )
+                        mode = "mjpeg"
+                    }
+                } else {
+                    // Peer fell back to MJPEG (older agent or codec
+                    // unsupported). Use the ImageView path.
+                    b.frame.visibility = View.VISIBLE
+                    b.frameVideo.visibility = View.GONE
+                    mode = "mjpeg"
+                    b.placeholder.visibility = View.GONE
+                    b.connStatus.text = getString(R.string.peer_streaming, "Screen")
+                }
+            }
+        }
+
+        override fun onFrame(bytes: ByteArray, header: JSONObject?) {
+            when (mode) {
+                "h264" -> {
+                    val dec = screenH264 ?: return
+                    val kf = header?.optBoolean("kf", false) ?: false
+                    dec.feed(bytes, kf)
+                    if (firstFrame) {
+                        firstFrame = false
+                        runOnUiThread { b.placeholder.visibility = View.GONE }
+                    }
+                }
+                "mjpeg" -> {
+                    val bmp = try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                              catch (_: Throwable) { null } ?: return
+                    runOnUiThread { b.frame.setImageBitmap(bmp) }
+                }
+                else -> { /* pre-handshake junk, ignore */ }
+            }
+        }
+
+        override fun onEnd(error: JSONObject?) {
+            currentStreamRid = null
+            runOnUiThread {
+                screenH264?.stop(); screenH264 = null
+                if (error != null) {
+                    showError("Screen stream ended: ${error.optString("error", "")}")
+                }
+            }
+        }
+    }
+
+    /** Resize the SurfaceView so the H.264 frame fills the stage with
+     *  the right aspect ratio. Without this the surface either
+     *  stretches to fill (ugly) or shows letterboxing inside the
+     *  surface (also ugly + breaks touch math). */
+    private fun sizeSurfaceAspect(w: Int, h: Int) {
+        if (w <= 0 || h <= 0) return
+        val parentW = (b.frameVideo.parent as? View)?.width ?: return
+        val parentH = (b.frameVideo.parent as? View)?.height ?: return
+        if (parentW <= 0 || parentH <= 0) return
+        val scale = kotlin.math.min(parentW / w.toFloat(), parentH / h.toFloat())
+        val targetW = (w * scale).toInt()
+        val targetH = (h * scale).toInt()
+        val lp = b.frameVideo.layoutParams
+        lp.width = targetW
+        lp.height = targetH
+        b.frameVideo.layoutParams = lp
     }
 
     private fun startCameraStream() {
@@ -517,25 +643,25 @@ class PeerControlActivity : AppCompatActivity() {
         }
     }
 
-    /** Wire mouse-style + tap gestures on the Screen ImageView. */
+    /** Wire mouse-style + tap gestures on the Screen tab's visible
+     *  view (ImageView for MJPEG, SurfaceView for H.264). Same
+     *  listener attached to both; `toPeerCoords` picks the source
+     *  dims from whichever is showing. */
     private fun attachInputToFrame() {
         var downCoords: IntArray? = null
         var downAtMs: Long = 0L
         val dragThreshPx = 8
-        b.frame.setOnTouchListener { _, ev ->
-            // Only meaningful on the Screen tab; ignore on Camera +
-            // others. (The flip + sys-key buttons are above this
-            // view in the z-order so they intercept their own taps.)
-            if (currentTab != Tab.SCREEN) return@setOnTouchListener false
+        val touchListener = View.OnTouchListener { v, ev ->
+            if (currentTab != Tab.SCREEN) return@OnTouchListener false
             when (ev.action) {
                 android.view.MotionEvent.ACTION_DOWN -> {
-                    downCoords = toPeerCoords(ev.x, ev.y)
+                    downCoords = toPeerCoordsForView(v, ev.x, ev.y)
                     downAtMs = System.currentTimeMillis()
                     true
                 }
                 android.view.MotionEvent.ACTION_UP -> {
-                    val down = downCoords ?: return@setOnTouchListener true
-                    val up = toPeerCoords(ev.x, ev.y) ?: down
+                    val down = downCoords ?: return@OnTouchListener true
+                    val up = toPeerCoordsForView(v, ev.x, ev.y) ?: down
                     val dx = up[0] - down[0]; val dy = up[1] - down[1]
                     val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble())
                     val elapsed = (System.currentTimeMillis() - downAtMs).toInt().coerceAtLeast(50)
@@ -562,6 +688,31 @@ class PeerControlActivity : AppCompatActivity() {
                 else -> false
             }
         }
+        b.frame.setOnTouchListener(touchListener)
+        b.frameVideo.setOnTouchListener(touchListener)
+    }
+
+    /** Route to the right toPeerCoords overload by which view fired
+     *  the touch event. ImageView reads drawable.intrinsic*; the
+     *  SurfaceView uses the H.264 stream_start width/height. */
+    private fun toPeerCoordsForView(v: View, viewX: Float, viewY: Float): IntArray? {
+        return if (v === b.frameVideo) toPeerCoordsSurface(viewX, viewY)
+               else                    toPeerCoords(viewX, viewY)
+    }
+
+    /** Counterpart for the SurfaceView (H.264 mode). The view is
+     *  already sized to the video aspect by sizeSurfaceAspect, so
+     *  there's no letterboxing inside the view itself -- coords
+     *  scale linearly from view-pixels to peer-screen-pixels. */
+    private fun toPeerCoordsSurface(viewX: Float, viewY: Float): IntArray? {
+        val viewW = b.frameVideo.width.toFloat()
+        val viewH = b.frameVideo.height.toFloat()
+        if (viewW <= 0 || viewH <= 0) return null
+        if (viewX < 0 || viewY < 0 || viewX > viewW || viewY > viewH) return null
+        val xFrac = viewX / viewW; val yFrac = viewY / viewH
+        val targetW = if (peerScreenW > 0) peerScreenW else (videoW.takeIf { it > 0 } ?: 1080)
+        val targetH = if (peerScreenH > 0) peerScreenH else (videoH.takeIf { it > 0 } ?: 2400)
+        return intArrayOf((xFrac * targetW).toInt(), (yFrac * targetH).toInt())
     }
 
     /** Translate (viewX, viewY) on the ImageView into peer-pixel
