@@ -89,6 +89,17 @@
             android:textAllCaps="false"
             android:background="@drawable/vortex_pill_off"/>
         <Button
+            android:id="@+id/tab_theft"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:text="@string/peer_tab_theft"
+            android:textColor="@color/vortex_text_subtle"
+            android:textAllCaps="false"
+            android:background="@drawable/vortex_pill_off"/>
+        <Button
             android:id="@+id/tab_info"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -133,6 +144,240 @@
                 android:fontFamily="monospace"
                 android:textSize="12sp"
                 android:lineSpacingExtra="2dp"/>
+        </ScrollView>
+
+        <!-- B11.8: Theft-mode controls. Four compact cards driving
+             the existing B4 ops (location / record_audio /
+             camera_capture / keepawake) via PeerClient. -->
+        <ScrollView
+            android:id="@+id/theft_pane"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="14dp"
+            android:visibility="gone">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Location card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/vortex_card"
+                    android:padding="14dp"
+                    android:layout_marginBottom="10dp">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/peer_theft_location_title"
+                        android:textColor="@color/vortex_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.04"
+                        android:textAllCaps="true"/>
+                    <TextView
+                        android:id="@+id/theft_location_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="13sp"
+                        android:textColor="@color/vortex_text_muted"
+                        android:text="@string/peer_theft_idle"/>
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+                        <Button
+                            android:id="@+id/theft_location_btn"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/peer_theft_location_btn"
+                            android:textColor="@color/vortex_bg"
+                            android:textStyle="bold"
+                            android:textAllCaps="false"
+                            android:background="@drawable/vortex_button_primary"/>
+                        <Button
+                            android:id="@+id/theft_location_map_btn"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            style="?android:attr/buttonBarButtonStyle"
+                            android:text="@string/peer_theft_location_map"
+                            android:textColor="@color/vortex_cyan"
+                            android:textAllCaps="false"
+                            android:visibility="gone"/>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Audio card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/vortex_card"
+                    android:padding="14dp"
+                    android:layout_marginBottom="10dp">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/peer_theft_audio_title"
+                        android:textColor="@color/vortex_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.04"
+                        android:textAllCaps="true"/>
+                    <RadioGroup
+                        android:id="@+id/theft_audio_duration"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp">
+                        <RadioButton
+                            android:id="@+id/theft_audio_5s"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="5 s"
+                            android:textColor="@color/vortex_text"
+                            android:buttonTint="@color/vortex_cyan"/>
+                        <RadioButton
+                            android:id="@+id/theft_audio_15s"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:text="15 s"
+                            android:textColor="@color/vortex_text"
+                            android:buttonTint="@color/vortex_cyan"
+                            android:checked="true"/>
+                        <RadioButton
+                            android:id="@+id/theft_audio_30s"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:text="30 s"
+                            android:textColor="@color/vortex_text"
+                            android:buttonTint="@color/vortex_cyan"/>
+                    </RadioGroup>
+                    <TextView
+                        android:id="@+id/theft_audio_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="13sp"
+                        android:textColor="@color/vortex_text_muted"
+                        android:text="@string/peer_theft_idle"/>
+                    <Button
+                        android:id="@+id/theft_audio_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="@string/peer_theft_audio_btn"
+                        android:textColor="@color/vortex_bg"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:background="@drawable/vortex_button_primary"/>
+                </LinearLayout>
+
+                <!-- Camera card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/vortex_card"
+                    android:padding="14dp"
+                    android:layout_marginBottom="10dp">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/peer_theft_camera_title"
+                        android:textColor="@color/vortex_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.04"
+                        android:textAllCaps="true"/>
+                    <RadioGroup
+                        android:id="@+id/theft_camera_facing"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp">
+                        <RadioButton
+                            android:id="@+id/theft_camera_back"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/peer_theft_camera_back"
+                            android:textColor="@color/vortex_text"
+                            android:buttonTint="@color/vortex_cyan"
+                            android:checked="true"/>
+                        <RadioButton
+                            android:id="@+id/theft_camera_front"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:text="@string/peer_theft_camera_front"
+                            android:textColor="@color/vortex_text"
+                            android:buttonTint="@color/vortex_cyan"/>
+                    </RadioGroup>
+                    <TextView
+                        android:id="@+id/theft_camera_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="13sp"
+                        android:textColor="@color/vortex_text_muted"
+                        android:text="@string/peer_theft_idle"/>
+                    <Button
+                        android:id="@+id/theft_camera_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="@string/peer_theft_camera_btn"
+                        android:textColor="@color/vortex_bg"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:background="@drawable/vortex_button_primary"/>
+                </LinearLayout>
+
+                <!-- Wake-lock card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/vortex_card"
+                    android:padding="14dp"
+                    android:layout_marginBottom="10dp">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/peer_theft_wake_title"
+                        android:textColor="@color/vortex_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.04"
+                        android:textAllCaps="true"/>
+                    <TextView
+                        android:id="@+id/theft_wake_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="13sp"
+                        android:textColor="@color/vortex_text_muted"
+                        android:text="@string/peer_theft_wake_idle"/>
+                    <Button
+                        android:id="@+id/theft_wake_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="@string/peer_theft_wake_on"
+                        android:textColor="@color/vortex_bg"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:background="@drawable/vortex_button_primary"/>
+                </LinearLayout>
+            </LinearLayout>
         </ScrollView>
 
         <!-- B11.5: Files tab. Breadcrumb path + Up button + scrollable

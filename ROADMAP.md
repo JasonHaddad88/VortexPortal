@@ -346,6 +346,16 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.8 — theft-mode controls tab** _shipped_. New Theft
+  pill in PeerControlActivity surfaces the four B4 ops as
+  native cards: location (with `geo:` map deep-link),
+  record_audio (5/15/30 s, MediaStore Downloads/Vortex),
+  camera_capture (back/front, MediaStore Pictures/Vortex),
+  keepawake (Hold/Release toggle). New
+  `saveStreamToCollection(...)` factors out the MediaStore-or-
+  disk write path. Zero peer-side changes; everything runs
+  over the existing PeerClient.
+
 - [x] **B11.6 — input passthrough** _shipped_. Touch listener
   on the Screen ImageView with webapp-style drag-vs-tap
   discrimination (8 px threshold; tap / long_press / swipe).

@@ -3,6 +3,49 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.8] — 2026-05-27
+
+**Theft-mode controls.** New Theft tab in PeerControlActivity
+surfaces the four B4 ops as native cards: get location (with map
+deep-link), record audio (5/15/30 s, saves to Downloads/Vortex),
+capture photo (back/front, saves to Pictures/Vortex), and a
+hold/release wake-lock toggle. Zero peer-side changes; everything
+runs over the existing PeerClient.
+
+### Theft tab
+- New 5th pill in the tab row. Compact scrollable column of four
+  `vortex_card`-backed sections.
+- **Location**: stream `location` op, accumulate the single JSON
+  chunk, parse to lat/lon/accuracy/provider, show in human-
+  readable form, expose "Open in maps" button that fires a
+  `geo:lat,lon?q=lat,lon` URI.
+- **Audio**: 3-way duration radio (5 s / 15 s / 30 s; default 15);
+  saves the m4a stream to `Downloads/Vortex/vortex-audio-<ts>.m4a`
+  via MediaStore (Android 10+) or `DIRECTORY_DOWNLOADS` on older.
+- **Photo**: back/front radio; saves the JPEG to
+  `Pictures/Vortex/vortex-photo-<ts>.jpg` via
+  `MediaStore.Images.Media`.
+- **Keep awake**: unary `keepawake` op; button label flips
+  Hold ↔ Release; status text reflects `keepawake_response.held`.
+  Best-effort -- can't block lock screen / power-off without
+  device-owner privileges (matches the agent's behaviour).
+
+### Shared stream-to-file helper
+- New `saveStreamToCollection(...)` factors out the
+  MediaStore-or-disk write path so the audio + photo handlers
+  share one code path (and the existing file-browser download
+  flow can later move onto it too). Handles `IS_PENDING ->
+  flush` transition required on Android 10+.
+
+### APK version
+- **0.23.0-b11.6 → 0.24.0-b11.8 (versionCode 27 → 28)**.
+
+### Hub
+- Unchanged. Uses the `location`, `record_audio`,
+  `camera_capture`, `keepawake` ops registered by `Ops.kt::B4` --
+  byte-compatible with the Python agent + the webapp's Theft
+  Mode page.
+
 ## [Driver-B11.6] — 2026-05-27
 
 **Input passthrough.** The Screen tab in PeerControlActivity goes

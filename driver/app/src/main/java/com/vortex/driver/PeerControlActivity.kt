@@ -54,7 +54,12 @@ class PeerControlActivity : AppCompatActivity() {
     private var currentTab: Tab = Tab.SCREEN
     private var cameraFacing: String = "back"
 
-    private enum class Tab { SCREEN, CAMERA, FILES, INFO }
+    private enum class Tab { SCREEN, CAMERA, FILES, THEFT, INFO }
+
+    /** B11.8: held by the wake-lock toggle so the button label can
+     *  flip between "Hold" and "Release". */
+    @Volatile private var wakeHeld: Boolean = false
+    @Volatile private var lastLocationGeoUri: android.net.Uri? = null
 
     /** B11.5: file-browser nav stack. Empty = root; "/photos" = inside
      *  the photos folder; etc. We send to the peer as `args.path`. */
@@ -79,8 +84,34 @@ class PeerControlActivity : AppCompatActivity() {
         b.tabScreen.setOnClickListener  { switchTab(Tab.SCREEN) }
         b.tabCamera.setOnClickListener  { switchTab(Tab.CAMERA) }
         b.tabFiles.setOnClickListener   { switchTab(Tab.FILES) }
+        b.tabTheft.setOnClickListener   { switchTab(Tab.THEFT) }
         b.tabInfo.setOnClickListener    { switchTab(Tab.INFO) }
         b.filesUpBtn.setOnClickListener { filesGoUp() }
+
+        // B11.8: theft-mode card wiring.
+        b.theftLocationBtn.setOnClickListener { theftGetLocation() }
+        b.theftLocationMapBtn.setOnClickListener {
+            lastLocationGeoUri?.let {
+                try { startActivity(Intent(Intent.ACTION_VIEW, it)) }
+                catch (_: Exception) {
+                    Toast.makeText(this, "No maps app installed.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        b.theftAudioBtn.setOnClickListener {
+            val dur = when (b.theftAudioDuration.checkedRadioButtonId) {
+                R.id.theft_audio_5s  -> 5
+                R.id.theft_audio_30s -> 30
+                else                  -> 15
+            }
+            theftRecordAudio(dur)
+        }
+        b.theftCameraBtn.setOnClickListener {
+            val facing = if (b.theftCameraFacing.checkedRadioButtonId == R.id.theft_camera_front)
+                            "1" else "0"
+            theftCaptureCamera(facing)
+        }
+        b.theftWakeBtn.setOnClickListener { theftToggleWake() }
 
         // B11.6: input passthrough. Touch listener on the frame; the
         // peer's screen_size answer drives coord translation. System
@@ -165,12 +196,14 @@ class PeerControlActivity : AppCompatActivity() {
         styleTab(b.tabScreen, t == Tab.SCREEN)
         styleTab(b.tabCamera, t == Tab.CAMERA)
         styleTab(b.tabFiles,  t == Tab.FILES)
+        styleTab(b.tabTheft,  t == Tab.THEFT)
         styleTab(b.tabInfo,   t == Tab.INFO)
         // Visibility reset.
         b.frame.visibility = View.GONE
         b.frame.setImageDrawable(null)
         b.infoScroll.visibility = View.GONE
         b.filesPane.visibility = View.GONE
+        b.theftPane.visibility = View.GONE
         b.cameraFlipBtn.visibility = View.GONE
         b.sysKeys.visibility = View.GONE
         b.placeholder.visibility = if (peer.isOpen) View.GONE else View.VISIBLE
@@ -182,6 +215,7 @@ class PeerControlActivity : AppCompatActivity() {
             Tab.SCREEN -> { b.sysKeys.visibility = View.VISIBLE; startScreenStream() }
             Tab.CAMERA -> { b.cameraFlipBtn.visibility = View.VISIBLE; startCameraStream() }
             Tab.FILES  -> { b.filesPane.visibility = View.VISIBLE; loadFiles(filesPath) }
+            Tab.THEFT  -> { b.theftPane.visibility = View.VISIBLE }
             Tab.INFO   -> { b.infoScroll.visibility = View.VISIBLE; loadInfo() }
         }
     }
@@ -275,6 +309,187 @@ class PeerControlActivity : AppCompatActivity() {
         b.errorText.text = msg
         b.errorText.visibility = View.VISIBLE
         b.placeholder.visibility = View.GONE
+    }
+
+    // ---- B11.8: theft-mode controls ----------------------------------
+
+    /** Stream a JSON location fix from the peer (one chunk). */
+    private fun theftGetLocation() {
+        b.theftLocationStatus.text = getString(R.string.peer_theft_busy)
+        b.theftLocationMapBtn.visibility = View.GONE
+        lastLocationGeoUri = null
+        val accumulator = StringBuilder()
+        peer.stream(
+            "location",
+            JSONObject(),
+            object : PeerClient.StreamHandlers {
+                override fun onFrame(bytes: ByteArray, header: JSONObject?) {
+                    accumulator.append(String(bytes, Charsets.UTF_8))
+                }
+                override fun onEnd(error: JSONObject?) {
+                    runOnUiThread {
+                        if (error != null) {
+                            b.theftLocationStatus.text =
+                                "Error: " + error.optString("error", "")
+                            return@runOnUiThread
+                        }
+                        try {
+                            val j = JSONObject(accumulator.toString())
+                            val lat = j.optDouble("latitude")
+                            val lon = j.optDouble("longitude")
+                            val acc = j.optDouble("accuracy", 0.0)
+                            val src = j.optString("provider", "?")
+                            b.theftLocationStatus.text = getString(
+                                R.string.peer_theft_location_result,
+                                lat, lon, acc, src,
+                            )
+                            lastLocationGeoUri = android.net.Uri.parse(
+                                "geo:%f,%f?q=%f,%f(Peer)".format(lat, lon, lat, lon)
+                            )
+                            b.theftLocationMapBtn.visibility = View.VISIBLE
+                        } catch (e: Throwable) {
+                            b.theftLocationStatus.text =
+                                "Parse error: ${e.message ?: ""}"
+                        }
+                    }
+                }
+            },
+        ) ?: run {
+            b.theftLocationStatus.text = "Not connected."
+        }
+    }
+
+    /** Record an audio clip on the peer and stream the file back to
+     *  Downloads/Vortex via MediaStore. Same save pipeline the file
+     *  browser uses (see downloadFile + accumulator pattern). */
+    private fun theftRecordAudio(durationSec: Int) {
+        b.theftAudioStatus.text = getString(R.string.peer_theft_audio_recording, durationSec)
+        val ts = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val displayName = "vortex-audio-$ts.m4a"
+        saveStreamToCollection(
+            op = "record_audio",
+            args = JSONObject().put("duration", durationSec),
+            displayName = displayName,
+            collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI else null,
+            relativePath = Environment.DIRECTORY_DOWNLOADS + "/Vortex",
+            mimeType = "audio/mp4",
+            onDone = { ok ->
+                b.theftAudioStatus.text = if (ok)
+                    getString(R.string.peer_theft_audio_saved, displayName)
+                else "Recording failed."
+            },
+        )
+    }
+
+    /** Single-frame capture from the peer's back/front camera into
+     *  Pictures/Vortex via MediaStore. */
+    private fun theftCaptureCamera(cameraId: String) {
+        b.theftCameraStatus.text = getString(R.string.peer_theft_busy)
+        val ts = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val displayName = "vortex-photo-$ts.jpg"
+        saveStreamToCollection(
+            op = "camera_capture",
+            args = JSONObject().put("camera_id", cameraId),
+            displayName = displayName,
+            collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI else null,
+            relativePath = Environment.DIRECTORY_PICTURES + "/Vortex",
+            mimeType = "image/jpeg",
+            onDone = { ok ->
+                b.theftCameraStatus.text = if (ok)
+                    getString(R.string.peer_theft_camera_saved, displayName)
+                else "Capture failed."
+            },
+        )
+    }
+
+    /** Toggle the peer's PARTIAL_WAKE_LOCK. Unary op; immediate result. */
+    private fun theftToggleWake() {
+        val on = !wakeHeld
+        scope.launch {
+            val res = runCatching {
+                peer.unary("keepawake", JSONObject().put("on", on), timeoutMs = 3_000)
+            }
+            res.onSuccess { r ->
+                wakeHeld = r.optBoolean("keepawake", on)
+                b.theftWakeStatus.text = getString(
+                    if (wakeHeld) R.string.peer_theft_wake_held
+                    else R.string.peer_theft_wake_idle
+                )
+                b.theftWakeBtn.text = getString(
+                    if (wakeHeld) R.string.peer_theft_wake_off
+                    else R.string.peer_theft_wake_on
+                )
+            }.onFailure { e ->
+                b.theftWakeStatus.text = "Error: ${e.message ?: ""}"
+            }
+        }
+    }
+
+    /**
+     * Shared helper for theft ops that produce a file (audio + photo).
+     * Streams the peer's `read_file_stream`-style output into the
+     * given MediaStore collection (Downloads / Images.Media) or onto
+     * disk on Android <= 9. Mirrors the file-browser download flow.
+     */
+    private fun saveStreamToCollection(
+        op: String,
+        args: JSONObject,
+        displayName: String,
+        collection: Uri?,
+        relativePath: String,
+        mimeType: String,
+        onDone: (ok: Boolean) -> Unit,
+    ) {
+        var pendingUri: Uri? = null
+        var output: OutputStream? = null
+        val resolver = contentResolver
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && collection != null) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                }
+                pendingUri = resolver.insert(collection, values)
+                output = pendingUri?.let { resolver.openOutputStream(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(
+                    if (mimeType.startsWith("image/")) Environment.DIRECTORY_PICTURES
+                    else Environment.DIRECTORY_DOWNLOADS
+                )
+                val target = java.io.File(dir, displayName)
+                output = target.outputStream()
+            }
+        } catch (e: Throwable) {
+            onDone(false); return
+        }
+        if (output == null) { onDone(false); return }
+        val rid = peer.stream(op, args, object : PeerClient.StreamHandlers {
+            override fun onFrame(bytes: ByteArray, header: JSONObject?) {
+                try { output.write(bytes) } catch (_: Throwable) {}
+            }
+            override fun onEnd(error: JSONObject?) {
+                try { output.close() } catch (_: Throwable) {}
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && pendingUri != null) {
+                    try {
+                        resolver.update(pendingUri,
+                            ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                            null, null)
+                    } catch (_: Throwable) {}
+                }
+                runOnUiThread { onDone(error == null) }
+            }
+        })
+        if (rid == null) {
+            try { output.close() } catch (_: Throwable) {}
+            onDone(false)
+        }
     }
 
     // ---- B11.6: input passthrough ------------------------------------

@@ -143,6 +143,33 @@
     <string name="peer_key_home">○  Home</string>
     <string name="peer_key_recents">□  Recents</string>
     <string name="peer_input_needs_a11y">Tap recognised, but the peer\'s Accessibility service isn\'t enabled. Open Vortex Driver on that device and follow the prompt.</string>
+
+    <!-- B11.8: Theft-mode controls tab. -->
+    <string name="peer_tab_theft">Theft</string>
+    <string name="peer_theft_idle">Ready.</string>
+    <string name="peer_theft_busy">Working…</string>
+
+    <string name="peer_theft_location_title">Location</string>
+    <string name="peer_theft_location_btn">Get current location</string>
+    <string name="peer_theft_location_map">Open in maps</string>
+    <string name="peer_theft_location_result">%1$.5f, %2$.5f  (±%3$.0f m, %4$s)</string>
+
+    <string name="peer_theft_audio_title">Record audio</string>
+    <string name="peer_theft_audio_btn">Record</string>
+    <string name="peer_theft_audio_recording">Recording %1$d s…</string>
+    <string name="peer_theft_audio_saved">Saved %1$s to Downloads/Vortex</string>
+
+    <string name="peer_theft_camera_title">Capture photo</string>
+    <string name="peer_theft_camera_back">Back</string>
+    <string name="peer_theft_camera_front">Front</string>
+    <string name="peer_theft_camera_btn">Capture</string>
+    <string name="peer_theft_camera_saved">Saved %1$s to Pictures/Vortex</string>
+
+    <string name="peer_theft_wake_title">Keep peer awake</string>
+    <string name="peer_theft_wake_idle">Wake-lock: not held.</string>
+    <string name="peer_theft_wake_held">Wake-lock: held (best-effort).</string>
+    <string name="peer_theft_wake_on">Hold wake-lock</string>
+    <string name="peer_theft_wake_off">Release wake-lock</string>
     <string name="signin_open_setup">Database setup</string>
     <string name="dashboard_db_setup">Database setup</string>
 
