@@ -3,6 +3,56 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.9] — 2026-05-29
+
+**H.264 native decode in the Camera tab.** Mirrors B11.7 (Screen).
+The encoder side already shipped in B5.1; this commit wires the
+APK viewer's Camera tab to negotiate `codec:"h264"` first and
+render the resulting stream on the same SurfaceView that the
+Screen tab uses, with the existing ImageView path kept as a
+fallback. The two tabs now share one `H264Decoder` instance
+(renamed from `ScreenH264Decoder` since it's source-agnostic).
+
+### Decoder rename
+- `ScreenH264Decoder` -> `H264Decoder`. Behaviour unchanged: the
+  decoder is fed annex-B SPS+PPS in CSD and annex-B AUs per
+  chunk, which is exactly what both `ScreenH264Encoder` and
+  `CameraH264Encoder` emit. No source-specific code.
+
+### PeerControlActivity
+- `screenHandlers()` -> `videoHandlers(label, opName, mjpegArgs)`.
+  One factory now serves both tabs; the args parameterise
+  status text and the MJPEG retry that fires if local MediaCodec
+  setup fails.
+- `startCameraStream()` requests
+  `codec:"h264", facing, max_dim:720, fps_cap:30, bitrate:2_000_000`
+  first; if the peer answers `video/h264` we configure the
+  decoder, otherwise we render the JPEG frames through
+  `BitmapFactory` like before.
+- Camera-flip button now tears the decoder down and clears the
+  surface transform before reopening the stream with the new
+  facing, so the second stream's `stream_start` can bind a fresh
+  decoder + apply the right rotation.
+- `sizeSurfaceAspect(w, h, rotation)` accepts a rotation hint.
+  When the rotation swaps axes (90 / 270) we size the View using
+  the *swapped* natural dims so the post-rotation bounding box
+  stays inside the parent. Combined with `View.setRotation()`
+  this fixes the common front-camera "sideways" preview.
+- Shared `videoDecoder` field replaces the screen-only
+  `screenH264`; teardown happens in `switchTab`, on
+  `onDestroy`, and in the camera-flip path.
+
+### Wire shape
+- No changes. Camera + Screen H.264 producers already emit the
+  same `stream_start` (`content_type:"video/h264"`,
+  `csd_base64`, `width`, `height`, optional `rotation`) +
+  `stream_chunk_header` (`kf`, `pts`) the Screen path consumes.
+
+### APK version
+- **0.25.0-b11.7 -> 0.25.0-b11.9 (versionCode 29 -> 30)**.
+
+---
+
 ## [Driver-B11.7] — 2026-05-28
 
 **H.264 native decode in the Screen tab.** The biggest

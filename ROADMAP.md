@@ -346,6 +346,21 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.9 — H.264 native decode for the Camera tab** _shipped_.
+  Mirrors B11.7. `ScreenH264Decoder` renamed to `H264Decoder`
+  (source-agnostic; same bytes the screen + camera encoders both
+  emit). `screenHandlers()` generalised to
+  `videoHandlers(label, opName, mjpegArgs)`; one factory now
+  serves both tabs. `startCameraStream()` negotiates
+  `codec:"h264"` first (720p / 30 fps / 2 Mbps) with the
+  existing JPEG path as a MediaCodec-failure fallback.
+  `sizeSurfaceAspect(w, h, rotation)` honours the camera's
+  `rotation` hint from `stream_start`; combined with
+  `View.setRotation` this fixes the common sideways front-
+  camera preview. Camera-flip path now also tears down the
+  decoder + clears the surface transform so the next
+  `stream_start` binds a fresh decoder.
+
 - [x] **B11.7 — H.264 native decode** _shipped_. New
   `ScreenH264Decoder` (MediaCodec async callbacks +
   HandlerThread + non-blocking `feed(nalBytes, kf)`). New
@@ -356,7 +371,9 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   the SurfaceView to the H.264 frame's aspect so touch math
   stays linear. B11.6 input passthrough still works on both
   views via `toPeerCoordsForView`. Fallback to MJPEG on
-  decoder config failure.
+  decoder config failure. (B11.9 later renamed
+  `ScreenH264Decoder` -> `H264Decoder` and generalised the
+  handler factory so the Camera tab can reuse it.)
 
 - [x] **B11.8 — theft-mode controls tab** _shipped_. New Theft
   pill in PeerControlActivity surfaces the four B4 ops as

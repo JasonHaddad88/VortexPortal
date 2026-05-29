@@ -9,7 +9,7 @@ import android.view.Surface
 import java.nio.ByteBuffer
 
 /**
- * B11.7: native H.264 decode for incoming peer screen frames.
+ * B11.7 / B11.9: native H.264 decode for incoming peer video frames.
  *
  * Pipeline:
  *
@@ -18,11 +18,10 @@ import java.nio.ByteBuffer
  *   output rendered directly onto the provided Surface (no per-frame
  *   bitmap copy -- the decoder writes straight to the GPU).
  *
- * This is the counterpart to [ScreenH264Encoder] on the producer side
- * (B5). The encoder ships baseline / level 3.1 + a 1 s I-frame interval;
- * the decoder makes no assumptions about codec params beyond what
- * arrives in `csd` -- it just feeds MediaCodec the bytes the peer
- * sent.
+ * Source-agnostic: pairs with both [ScreenH264Encoder] (B5) and
+ * [CameraH264Encoder] (B5.1). Both producers emit identical wire shape
+ * (annex-B SPS+PPS in csd, annex-B AUs per chunk) so the decoder makes
+ * no source-specific assumptions.
  *
  * Threading: all MediaCodec calls happen on a dedicated HandlerThread
  * so the WebSocket coroutine doesn't end up serialised through the
@@ -37,9 +36,9 @@ import java.nio.ByteBuffer
  *     latency).
  *   - [stop]: tear down. Idempotent.
  */
-class ScreenH264Decoder {
+class H264Decoder {
 
-    private val workThread = HandlerThread("ScreenH264Decoder").apply { start() }
+    private val workThread = HandlerThread("H264Decoder").apply { start() }
     private val workHandler = Handler(workThread.looper)
     @Volatile private var codec: MediaCodec? = null
     @Volatile private var stopped = false
@@ -142,7 +141,7 @@ class ScreenH264Decoder {
     }
 
     companion object {
-        private const val TAG = "ScreenH264Decoder"
+        private const val TAG = "H264Decoder"
         private const val MIME = "video/avc"
     }
 }

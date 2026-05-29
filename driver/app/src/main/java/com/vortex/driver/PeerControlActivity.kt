@@ -72,14 +72,18 @@ class PeerControlActivity : AppCompatActivity() {
     @Volatile private var peerScreenW: Int = 0
     @Volatile private var peerScreenH: Int = 0
 
-    /** B11.7: native H.264 decoder + video frame dims. Both are null
-     *  while we're in MJPEG mode (older peer, or H.264 setup failed
-     *  and we fell back). The Screen tab uses the SurfaceView when
-     *  decoder is non-null; the touch coord helper picks the source
-     *  dims accordingly. */
-    @Volatile private var screenH264: ScreenH264Decoder? = null
+    /** B11.7 / B11.9: native H.264 decoder + video frame dims. Both
+     *  are null while we're in MJPEG mode (older peer, or H.264 setup
+     *  failed and we fell back). Shared across the Screen and Camera
+     *  tabs -- only one tab streams at a time. The touch-coord helper
+     *  picks ImageView vs SurfaceView source dims accordingly. */
+    @Volatile private var videoDecoder: H264Decoder? = null
     @Volatile private var videoW: Int = 0
     @Volatile private var videoH: Int = 0
+    /** B11.9: front-camera frames come out rotated 90/270 relative to
+     *  the natural display; the encoder emits a `rotation` hint in
+     *  stream_start so the renderer can spin the SurfaceView. */
+    @Volatile private var videoRotation: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -132,8 +136,17 @@ class PeerControlActivity : AppCompatActivity() {
         b.keyRecents.setOnClickListener { sendInput(JSONObject().put("type", "recents")) }
         b.cameraFlipBtn.setOnClickListener {
             cameraFacing = if (cameraFacing == "back") "front" else "back"
-            // Re-open the camera stream with the new facing.
+            // Re-open the camera stream with the new facing. B11.9:
+            // also tear down the active H.264 decoder + clear surface
+            // transform so the next stream_start can bind a fresh
+            // decoder + apply the right rotation.
             stopCurrentStream()
+            videoDecoder?.stop(); videoDecoder = null
+            videoW = 0; videoH = 0; videoRotation = 0
+            b.frameVideo.rotation = 0f
+            b.frameVideo.visibility = View.GONE
+            b.frame.visibility = View.GONE
+            b.frame.setImageDrawable(null)
             startCameraStream()
         }
 
@@ -143,7 +156,7 @@ class PeerControlActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopCurrentStream()
-        screenH264?.stop(); screenH264 = null
+        videoDecoder?.stop(); videoDecoder = null
         peer.close()
         scope.cancel()
         super.onDestroy()
@@ -217,10 +230,13 @@ class PeerControlActivity : AppCompatActivity() {
         b.theftPane.visibility = View.GONE
         b.cameraFlipBtn.visibility = View.GONE
         b.sysKeys.visibility = View.GONE
-        // B11.7: tear down any active H.264 decoder when leaving the
-        // Screen tab so its MediaCodec releases the surface.
-        screenH264?.stop(); screenH264 = null
-        videoW = 0; videoH = 0
+        // B11.7 / B11.9: tear down any active H.264 decoder when
+        // leaving a video tab so its MediaCodec releases the surface.
+        videoDecoder?.stop(); videoDecoder = null
+        videoW = 0; videoH = 0; videoRotation = 0
+        // Reset any rotation transform applied by a previous camera
+        // stream so the next stream starts from a clean surface.
+        b.frameVideo.rotation = 0f
         b.placeholder.visibility = if (peer.isOpen) View.GONE else View.VISIBLE
         b.errorText.visibility = View.GONE
 
@@ -260,15 +276,30 @@ class PeerControlActivity : AppCompatActivity() {
                 .put("max_dim", 720)
                 .put("fps_cap", 30)
                 .put("bitrate", 2_000_000),
-            screenHandlers(),
+            videoHandlers(
+                label = "Screen",
+                opName = "screen_stream",
+                mjpegArgs = JSONObject()
+                    .put("codec", "mjpeg")
+                    .put("max_dim", 720)
+                    .put("fps_cap", 15),
+            ),
         )
         if (currentStreamRid == null) showError(getString(R.string.peer_stream_send_failed))
     }
 
-    /** Hybrid handler: switches between H.264 SurfaceView decode and
-     *  MJPEG ImageView blit based on what the peer actually sent in
-     *  stream_start.content_type. */
-    private fun screenHandlers() = object : PeerClient.StreamHandlers {
+    /** B11.7 (Screen) / B11.9 (Camera): hybrid handler that switches
+     *  between H.264 SurfaceView decode and MJPEG ImageView blit based
+     *  on what the peer actually sent in stream_start.content_type.
+     *
+     *  @param label   shown in conn_status while streaming
+     *  @param opName  stream op name used for the MJPEG fall-back retry
+     *  @param mjpegArgs args to send on the MJPEG retry when H.264 fails */
+    private fun videoHandlers(
+        label: String,
+        opName: String,
+        mjpegArgs: JSONObject,
+    ) = object : PeerClient.StreamHandlers {
         @Volatile private var mode: String = "?"  // "h264" | "mjpeg"
         @Volatile private var firstFrame = true
 
@@ -282,31 +313,34 @@ class PeerControlActivity : AppCompatActivity() {
                     } catch (_: Throwable) { ByteArray(0) }
                     val w = meta.optInt("width", 0)
                     val h = meta.optInt("height", 0)
-                    val dec = ScreenH264Decoder()
+                    val rot = meta.optInt("rotation", 0)
+                    val dec = H264Decoder()
                     b.frameVideo.visibility = View.VISIBLE
                     b.frame.visibility = View.GONE
-                    sizeSurfaceAspect(w, h)
+                    // Apply rotation BEFORE sizing so aspect is right
+                    // when the camera sensor is sideways relative to
+                    // the natural orientation.
+                    b.frameVideo.rotation = rot.toFloat()
+                    sizeSurfaceAspect(w, h, rot)
                     val surface = b.frameVideo.holder.surface
                     val ok = surface != null && csd.isNotEmpty() &&
                              dec.configure(surface, csd, w, h)
                     if (ok) {
-                        screenH264 = dec
-                        videoW = w; videoH = h
+                        videoDecoder = dec
+                        videoW = w; videoH = h; videoRotation = rot
                         mode = "h264"
                         b.placeholder.visibility = View.GONE
-                        b.connStatus.text = getString(R.string.peer_streaming, "Screen (H.264)")
+                        b.connStatus.text = getString(R.string.peer_streaming, "$label (H.264)")
                     } else {
                         // Surface not ready yet OR MediaCodec choked.
                         // Drop to MJPEG by stopping this stream and
-                        // requesting one without the h264 hint.
+                        // re-requesting without the h264 hint.
                         dec.stop()
                         b.frameVideo.visibility = View.GONE
+                        b.frameVideo.rotation = 0f
                         b.frame.visibility = View.VISIBLE
                         currentStreamRid = peer.stream(
-                            "screen_stream",
-                            JSONObject().put("codec", "mjpeg")
-                                .put("max_dim", 720).put("fps_cap", 15),
-                            mjpegHandlers("Screen"),
+                            opName, mjpegArgs, mjpegHandlers(label),
                         )
                         mode = "mjpeg"
                     }
@@ -317,7 +351,7 @@ class PeerControlActivity : AppCompatActivity() {
                     b.frameVideo.visibility = View.GONE
                     mode = "mjpeg"
                     b.placeholder.visibility = View.GONE
-                    b.connStatus.text = getString(R.string.peer_streaming, "Screen")
+                    b.connStatus.text = getString(R.string.peer_streaming, label)
                 }
             }
         }
@@ -325,7 +359,7 @@ class PeerControlActivity : AppCompatActivity() {
         override fun onFrame(bytes: ByteArray, header: JSONObject?) {
             when (mode) {
                 "h264" -> {
-                    val dec = screenH264 ?: return
+                    val dec = videoDecoder ?: return
                     val kf = header?.optBoolean("kf", false) ?: false
                     dec.feed(bytes, kf)
                     if (firstFrame) {
@@ -345,9 +379,9 @@ class PeerControlActivity : AppCompatActivity() {
         override fun onEnd(error: JSONObject?) {
             currentStreamRid = null
             runOnUiThread {
-                screenH264?.stop(); screenH264 = null
+                videoDecoder?.stop(); videoDecoder = null
                 if (error != null) {
-                    showError("Screen stream ended: ${error.optString("error", "")}")
+                    showError("$label stream ended: ${error.optString("error", "")}")
                 }
             }
         }
@@ -356,13 +390,26 @@ class PeerControlActivity : AppCompatActivity() {
     /** Resize the SurfaceView so the H.264 frame fills the stage with
      *  the right aspect ratio. Without this the surface either
      *  stretches to fill (ugly) or shows letterboxing inside the
-     *  surface (also ugly + breaks touch math). */
-    private fun sizeSurfaceAspect(w: Int, h: Int) {
+     *  surface (also ugly + breaks touch math).
+     *
+     *  B11.9: `rotation` (0/90/180/270) is the View rotation we'll
+     *  apply via [View.setRotation]. When the rotation swaps the
+     *  axes (90 or 270) we have to size the View using the SWAPPED
+     *  natural dims so that, post-rotation, the visible bbox stays
+     *  inside the parent. */
+    private fun sizeSurfaceAspect(w: Int, h: Int, rotation: Int = 0) {
         if (w <= 0 || h <= 0) return
         val parentW = (b.frameVideo.parent as? View)?.width ?: return
         val parentH = (b.frameVideo.parent as? View)?.height ?: return
         if (parentW <= 0 || parentH <= 0) return
-        val scale = kotlin.math.min(parentW / w.toFloat(), parentH / h.toFloat())
+        val swap = rotation == 90 || rotation == 270
+        // Post-rotation bbox is (h x w) when swapping. Compute the
+        // scale that fits the bbox into the parent.
+        val bboxW = if (swap) h else w
+        val bboxH = if (swap) w else h
+        val scale = kotlin.math.min(parentW / bboxW.toFloat(), parentH / bboxH.toFloat())
+        // The View's own width/height are pre-rotation, so they use
+        // the un-swapped dims.
         val targetW = (w * scale).toInt()
         val targetH = (h * scale).toInt()
         val lp = b.frameVideo.layoutParams
@@ -372,14 +419,30 @@ class PeerControlActivity : AppCompatActivity() {
     }
 
     private fun startCameraStream() {
-        b.frame.visibility = View.VISIBLE
+        // B11.9: same H.264-first negotiation the screen tab does.
+        // The shared videoHandlers() factory flips to the SurfaceView
+        // when the peer answers video/h264 and to the ImageView when
+        // the peer answers image/jpeg. MJPEG retry fires only if our
+        // local MediaCodec setup fails (rare).
         b.placeholder.visibility = View.VISIBLE
         b.placeholderText.setText(R.string.peer_loading_camera)
         currentStreamRid = peer.stream(
             "camera_stream",
-            JSONObject().put("codec", "mjpeg").put("facing", cameraFacing)
-                        .put("max_dim", 720).put("fps_cap", 15),
-            mjpegHandlers("Camera"),
+            JSONObject()
+                .put("codec", "h264")
+                .put("facing", cameraFacing)
+                .put("max_dim", 720)
+                .put("fps_cap", 30)
+                .put("bitrate", 2_000_000),
+            videoHandlers(
+                label = "Camera",
+                opName = "camera_stream",
+                mjpegArgs = JSONObject()
+                    .put("codec", "mjpeg")
+                    .put("facing", cameraFacing)
+                    .put("max_dim", 720)
+                    .put("fps_cap", 15),
+            ),
         )
         if (currentStreamRid == null) showError(getString(R.string.peer_stream_send_failed))
     }
