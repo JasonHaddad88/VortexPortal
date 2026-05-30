@@ -84,6 +84,12 @@ class PeerControlActivity : AppCompatActivity() {
      *  the natural display; the encoder emits a `rotation` hint in
      *  stream_start so the renderer can spin the SurfaceView. */
     @Volatile private var videoRotation: Int = 0
+    /** B11.10: AAC decoder for the optional multiplexed audio track
+     *  on the Screen tab. Null when (a) the peer didn't emit
+     *  `stream_start.audio`, (b) we're on the Camera tab (no audio
+     *  there yet), or (c) decoder setup failed and we silently
+     *  carried on with video-only. */
+    @Volatile private var screenAudio: AacDecoder? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -157,6 +163,7 @@ class PeerControlActivity : AppCompatActivity() {
     override fun onDestroy() {
         stopCurrentStream()
         videoDecoder?.stop(); videoDecoder = null
+        screenAudio?.stop(); screenAudio = null
         peer.close()
         scope.cancel()
         super.onDestroy()
@@ -237,6 +244,10 @@ class PeerControlActivity : AppCompatActivity() {
         // Reset any rotation transform applied by a previous camera
         // stream so the next stream starts from a clean surface.
         b.frameVideo.rotation = 0f
+        // B11.10: stop any active audio playback when leaving the
+        // screen tab. Don't carry an AAC decoder + AudioTrack into a
+        // tab where they're meaningless.
+        screenAudio?.stop(); screenAudio = null
         b.placeholder.visibility = if (peer.isOpen) View.GONE else View.VISIBLE
         b.errorText.visibility = View.GONE
 
@@ -267,12 +278,16 @@ class PeerControlActivity : AppCompatActivity() {
         // B11.7: ask for h264 first; the handler factory below
         // routes by stream_start.content_type. If the peer is older
         // (or chose to honour mjpeg) we transparently fall back.
+        // B11.10: opt in to multiplexed system audio. Older peers
+        // ignore the flag (no audio track ships) so the same args
+        // are safe everywhere.
         b.placeholder.visibility = View.VISIBLE
         b.placeholderText.setText(R.string.peer_loading_screen)
         currentStreamRid = peer.stream(
             "screen_stream",
             JSONObject()
                 .put("codec", "h264")
+                .put("audio", true)
                 .put("max_dim", 720)
                 .put("fps_cap", 30)
                 .put("bitrate", 2_000_000),
@@ -329,8 +344,30 @@ class PeerControlActivity : AppCompatActivity() {
                         videoDecoder = dec
                         videoW = w; videoH = h; videoRotation = rot
                         mode = "h264"
+                        // B11.10: bring up an AAC decoder if the peer
+                        // multiplexed audio. Failure is non-fatal --
+                        // we silently fall back to video-only.
+                        val audioMeta = meta.optJSONObject("audio")
+                        if (audioMeta != null) {
+                            val aCsdB64 = audioMeta.optString("csd_base64", "")
+                            val aCsd = try {
+                                android.util.Base64.decode(aCsdB64, android.util.Base64.NO_WRAP)
+                            } catch (_: Throwable) { ByteArray(0) }
+                            val sr = audioMeta.optInt("sample_rate", 48_000)
+                            val ch = audioMeta.optInt("channels", 2)
+                            if (aCsd.isNotEmpty()) {
+                                val ad = AacDecoder()
+                                if (ad.configure(aCsd, sr, ch)) {
+                                    screenAudio = ad
+                                } else {
+                                    ad.stop()
+                                }
+                            }
+                        }
                         b.placeholder.visibility = View.GONE
-                        b.connStatus.text = getString(R.string.peer_streaming, "$label (H.264)")
+                        val streamingLabel = if (screenAudio != null)
+                            "$label (H.264 + audio)" else "$label (H.264)"
+                        b.connStatus.text = getString(R.string.peer_streaming, streamingLabel)
                     } else {
                         // Surface not ready yet OR MediaCodec choked.
                         // Drop to MJPEG by stopping this stream and
@@ -359,6 +396,16 @@ class PeerControlActivity : AppCompatActivity() {
         override fun onFrame(bytes: ByteArray, header: JSONObject?) {
             when (mode) {
                 "h264" -> {
+                    // B11.10: route on header.track. Default to "v"
+                    // for back-compat with B11.7/B11.9 producers that
+                    // never tagged their chunks.
+                    val track = header?.optString("track", "v") ?: "v"
+                    if (track == "a") {
+                        val dec = screenAudio ?: return
+                        val pts = header?.optLong("pts", 0L) ?: 0L
+                        dec.feed(bytes, pts)
+                        return
+                    }
                     val dec = videoDecoder ?: return
                     val kf = header?.optBoolean("kf", false) ?: false
                     dec.feed(bytes, kf)
@@ -380,6 +427,7 @@ class PeerControlActivity : AppCompatActivity() {
             currentStreamRid = null
             runOnUiThread {
                 videoDecoder?.stop(); videoDecoder = null
+                screenAudio?.stop(); screenAudio = null
                 if (error != null) {
                     showError("$label stream ended: ${error.optString("error", "")}")
                 }

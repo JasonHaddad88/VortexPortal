@@ -79,6 +79,10 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private var nativeScreen: ScreenEngine? = null
     private var nativeScreenH264: ScreenH264Encoder? = null
     private var nativeCameraH264: CameraH264Encoder? = null
+    // B11.10: optional system-audio capture that piggybacks on the
+    // active MediaProjection consent. Started/stopped alongside the
+    // H.264 screen encoder when the consumer asks for audio.
+    private var nativeScreenAudio: ScreenAudioCapture? = null
     @Volatile private var nativeCameraSink: CameraEngine.FrameSink? = null
     @Volatile private var nativeScreenSink: CameraEngine.FrameSink? = null
 
@@ -174,6 +178,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { nativeScreen?.stop() } catch (_: Exception) {}
         try { nativeScreenH264?.stop() } catch (_: Exception) {}
         try { nativeCameraH264?.stop() } catch (_: Exception) {}
+        try { nativeScreenAudio?.stop() } catch (_: Exception) {}
         try { cameraServer.stop() } catch (_: Exception) {}
         try { screenServer.stop() } catch (_: Exception) {}
         try { inputServer.stop() } catch (_: Exception) {}
@@ -365,6 +370,42 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { nativeScreenH264?.stop() } catch (_: Exception) {}
         nativeScreenH264 = null
         promoteForeground()
+        updateNotification()
+    }
+
+    /**
+     * B11.10: companion to [startNativeScreenStreamH264]. Pumps system
+     * playback audio (USAGE_MEDIA + USAGE_GAME + USAGE_UNKNOWN) through
+     * an AAC encoder and into [sink]. Re-uses the same MediaProjection
+     * consent the video encoder is using -- no extra prompt.
+     *
+     * Requires API 29+ (AudioPlaybackCaptureConfiguration). On older
+     * devices the sink gets an immediate error frame.
+     */
+    @Synchronized
+    fun startNativeScreenAudio(sink: ScreenAudioCapture.NalSink) {
+        val data = pendingScreenResultData
+        if (!screenArmed || data == null) {
+            throw IllegalStateException(
+                "Vortex Driver screen sharing is not armed -- the audio " +
+                "capture piggybacks on the screen-share consent."
+            )
+        }
+        try { nativeScreenAudio?.stop() } catch (_: Exception) {}
+        nativeScreenAudio = null
+        promoteForeground()
+        nativeScreenAudio = ScreenAudioCapture(
+            context = this,
+            resultCode = pendingScreenResultCode,
+            resultData = data,
+        ).also { it.start(sink) }
+        updateNotification()
+    }
+
+    @Synchronized
+    fun stopNativeScreenAudio() {
+        try { nativeScreenAudio?.stop() } catch (_: Exception) {}
+        nativeScreenAudio = null
         updateNotification()
     }
 

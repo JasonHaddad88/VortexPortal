@@ -256,10 +256,23 @@ object Ops {
             if (it > 0) it.coerceIn(200_000, 8_000_000)
             else        defaultBitrateFor(maxDim)
         }
+        // B11.10: opt-in system-audio capture multiplexed into the same
+        // sink. Only activates on Android 10+ AND when the consumer
+        // explicitly asked for it via args.audio (default false for
+        // back-compat with B11.9 viewers).
+        val wantAudio = args?.optBoolean("audio", false) == true &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
         // Bridge from encoder callbacks back into the coroutine.
         val failure = CompletableDeferred<Throwable>()
         val started = CompletableDeferred<Boolean>()
+        // B11.10: when audio is on, the AAC CSD may arrive before OR
+        // after the video CSD depending on hardware. We need both to
+        // be in the SAME stream_start frame so the consumer can
+        // configure both decoders atomically. Buffer the audio CSD
+        // until the video CSD fires (which is what actually sends
+        // stream_start); video happens first in practice.
+        @Volatile var pendingAudioStart: JSONObject? = null
         val nalSink = object : ScreenH264Encoder.NalSink {
             override fun onCodecConfig(csdBytes: ByteArray, width: Int, height: Int, codecString: String) {
                 val csdB64 = Base64.encodeToString(csdBytes, Base64.NO_WRAP)
@@ -269,11 +282,16 @@ object Ops {
                     m.put("width", width)
                     m.put("height", height)
                     m.put("csd_base64", csdB64)
+                    pendingAudioStart?.let { m.put("audio", it) }
                 }
                 if (!started.isCompleted) started.complete(true)
             }
             override fun onFrame(nalBytes: ByteArray, isKeyFrame: Boolean, ptsMicros: Long) {
                 sink.sendChunkAnnotated(nalBytes) { hdr ->
+                    // B11.10: tag every video chunk so the multiplexed
+                    // audio chunks (track:"a") are unambiguously
+                    // distinguished by consumers that opted in.
+                    hdr.put("track", "v")
                     hdr.put("kf", isKeyFrame)
                     hdr.put("pts", ptsMicros)
                 }
@@ -290,6 +308,42 @@ object Ops {
             fpsCap = fpsCap,
         )
 
+        // B11.10: kick off the AAC capture after the video encoder so
+        // the MediaProjection ref-count is already non-zero. The
+        // audio sink emits CSD into pendingAudioStart (which the video
+        // CSD then folds into the SAME stream_start) and then per-
+        // chunk audio frames into the shared sink.
+        if (wantAudio) {
+            val audioSink = object : ScreenAudioCapture.NalSink {
+                override fun onCodecConfig(csdBytes: ByteArray, sampleRate: Int, channels: Int, codecString: String) {
+                    val csdB64 = Base64.encodeToString(csdBytes, Base64.NO_WRAP)
+                    val meta = JSONObject()
+                        .put("content_type", "audio/aac")
+                        .put("codec", codecString)
+                        .put("sample_rate", sampleRate)
+                        .put("channels", channels)
+                        .put("csd_base64", csdB64)
+                    pendingAudioStart = meta
+                }
+                override fun onFrame(aacBytes: ByteArray, ptsMicros: Long) {
+                    // If the video CSD hasn't fired yet, drop -- the
+                    // consumer wouldn't know how to decode anyway.
+                    if (!started.isCompleted) return
+                    sink.sendChunkAnnotated(aacBytes) { hdr ->
+                        hdr.put("track", "a")
+                        hdr.put("pts", ptsMicros)
+                    }
+                }
+                override fun onError(message: String) {
+                    // Audio failures are non-fatal -- video continues.
+                    android.util.Log.w("Ops", "screen audio failed (continuing video-only): $message")
+                }
+            }
+            try { svc.startNativeScreenAudio(audioSink) } catch (e: Throwable) {
+                android.util.Log.w("Ops", "screen audio start failed: ${e.message}")
+            }
+        }
+
         try {
             while (true) {
                 if (failure.isCompleted) throw failure.getCompleted()
@@ -297,6 +351,7 @@ object Ops {
             }
         } finally {
             try { svc.stopNativeScreenStreamH264() } catch (_: Exception) {}
+            if (wantAudio) try { svc.stopNativeScreenAudio() } catch (_: Exception) {}
         }
     }
 

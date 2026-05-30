@@ -346,6 +346,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.10 — system audio on the Screen stream** _shipped_.
+  New `ScreenAudioCapture` (`AudioPlaybackCapture` ->
+  `MediaCodec` AAC-LC, re-uses the H.264 encoder's
+  MediaProjection consent) + `AacDecoder` (MediaCodec ->
+  `AudioTrack` in MODE_STREAM). Multiplexed into the existing
+  `screen_stream` via a new `track:"v"|"a"` header field on
+  `stream_chunk_header` plus an optional `audio` sub-object on
+  `stream_start` carrying the AAC CSD + sample rate + channels.
+  Opt-in via `args.audio:true` (default false so old viewers see
+  exactly the same video-only stream). APK viewer auto-enables;
+  status pill reads "Screen (H.264 + audio)". Browser-side
+  decode (WebCodecs AudioDecoder + AudioContext) deferred.
+
 - [x] **B11.9 — H.264 native decode for the Camera tab** _shipped_.
   Mirrors B11.7. `ScreenH264Decoder` renamed to `H264Decoder`
   (source-agnostic; same bytes the screen + camera encoders both

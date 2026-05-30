@@ -3,6 +3,84 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.10] — 2026-05-30
+
+**System audio on the Screen stream.** Until now the APK viewer
+saw the peer's screen but not its sound. B11.10 captures playback
+audio (music, video, game) via `AudioPlaybackCapture` (Android
+10+), encodes it as AAC-LC, and multiplexes the access units into
+the same `screen_stream` the video already rides on. The APK
+viewer plays the audio through an `AudioTrack` in lock-step with
+the H.264 video. Backward-compatible: producers/consumers that
+don't know about audio see exactly the same stream they did
+before B11.10.
+
+### New ScreenAudioCapture (producer)
+- `MediaProjection` (re-using the same consent the H.264 encoder
+  is on -- no extra dialog) -> `AudioPlaybackCaptureConfiguration`
+  with `USAGE_MEDIA + USAGE_GAME + USAGE_UNKNOWN` so voice calls
+  and system alert sounds stay out of the share.
+- `AudioRecord` (48 kHz / stereo / PCM16) -> `MediaCodec` AAC-LC
+  encoder (128 kbps), CSD-out-once + per-frame raw access units
+  (ADTS-free; consumer reads the SPS-equivalent from the CSD blob
+  like the H.264 path does).
+- Dedicated HandlerThread for codec callbacks + a small
+  PCM-pump thread that feeds the encoder's input buffers.
+
+### New AacDecoder (consumer)
+- Symmetric pair to ScreenAudioCapture: configure with
+  `meta.audio.csd_base64`, `sample_rate`, `channels`; feed AAC
+  bytes; PCM goes straight to an `AudioTrack` in MODE_STREAM
+  via the codec output callback.
+- Non-blocking `feed(aacBytes, ptsMicros)`: drops the frame if
+  the input queue is full. Audio glitches > unbounded latency.
+
+### Ops + DriverService (multiplex)
+- `runScreenH264Stream` now reads `args.audio:true` (default
+  false). On Android 10+ it kicks off `ScreenAudioCapture`
+  alongside the H.264 encoder; the audio CSD is folded into the
+  same `stream_start` as the video CSD (single atomic config
+  point for the consumer) and audio chunks ship through the
+  same `WsStreamSink` with a `track:"a"` tag.
+- Every video chunk now carries `track:"v"`. Consumers that
+  don't know about the tag default-route everything to video,
+  same as B11.9.
+- `DriverService.startNativeScreenAudio()` / `stopNativeScreenAudio()`
+  parallel the H.264 lifecycle (same MediaProjection consent,
+  same lifecycle hooks).
+
+### PeerControlActivity
+- `startScreenStream` opts in with `audio:true`.
+- `videoHandlers` configures the AAC decoder from `meta.audio`
+  when present and routes per-chunk on `header.track`. When
+  audio is up, the status badge reads "Screen (H.264 + audio)".
+- Audio decoder torn down on tab switch, onDestroy, stream end.
+  Failures stay quiet -- video keeps playing.
+
+### Wire shape
+- `screen_stream` `stream_start` gains an optional `audio` field:
+  `{content_type:"audio/aac", codec:"mp4a.40.2", sample_rate,
+   channels, csd_base64}`. Producers that don't multiplex omit
+  it; consumers that don't expect it ignore it.
+- `stream_chunk_header` gains an optional `track:"v"|"a"`
+  (defaults to "v"). The matching binary frame is one access
+  unit of that track's codec.
+
+### Permissions / manifest
+- No new manifest changes: `RECORD_AUDIO`,
+  `FOREGROUND_SERVICE_MICROPHONE`, and the service-type
+  `microphone` bit were already in place from earlier work.
+
+### Browser
+- Browser-side decode lands in a follow-up (WebCodecs
+  `AudioDecoder` + `AudioContext`). Older webapp clients still
+  see video-only because they don't pass `audio:true`.
+
+### APK version
+- **0.25.0-b11.9 -> 0.26.0-b11.10 (versionCode 30 -> 31)**.
+
+---
+
 ## [Driver-B11.9] — 2026-05-29
 
 **H.264 native decode in the Camera tab.** Mirrors B11.7 (Screen).

@@ -61,6 +61,7 @@ Future milestones, in order:
 | **B11.8** | Theft-mode controls tab — location / record audio / capture photo / keep awake | _shipped_ |
 | **B11.7** | H.264 native decode (MediaCodec + SurfaceView) in the Screen tab | _shipped_ |
 | **B11.9** | H.264 native decode for the Camera tab too (decoder renamed `ScreenH264Decoder` → `H264Decoder`; rotation hint honoured for sideways front-camera previews) | _shipped_ |
+| **B11.10** | System audio on the Screen stream (`AudioPlaybackCapture` → AAC, multiplexed into `screen_stream` via `track:"v"\|"a"`; APK viewer plays through `AudioTrack`) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 
