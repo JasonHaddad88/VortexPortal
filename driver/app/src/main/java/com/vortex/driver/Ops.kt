@@ -53,6 +53,15 @@ object Ops {
                 runNativeStream(StreamKind.CAMERA, sink, args)
             }
         }
+        // B11.13: audio-only stream. Same MediaProjection consent
+        // contract as screen_stream (AudioPlaybackCapture needs the
+        // projection), but no video is encoded -- useful for
+        // bandwidth-constrained listeners (~16 KB/s vs ~250 KB/s for
+        // 720p H.264). Wire shape is the audio half of screen_stream
+        // with no `track` tag (single-track stream).
+        dispatcher.registerStream("audio_stream") { _, sink ->
+            runAudioOnlyStream(sink)
+        }
         // B4: native theft-mode ops -- replaces the Termux:API surface on
         // Android. Wire shapes match the Python agent so the hub's Theft
         // Mode UI (and Theft Dashboard) need zero changes.
@@ -401,6 +410,54 @@ object Ops {
         } finally {
             try { svc.stopNativeScreenStreamH264() } catch (_: Exception) {}
             if (wantAudio) try { svc.stopNativeScreenAudio() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * B11.13: standalone audio-only stream. Same MediaProjection
+     * consent the screen path uses (AudioPlaybackCapture has no
+     * lighter-weight alternative on Android), but no video encoder
+     * runs and the wire shape carries one track only.
+     *
+     * Wire:
+     *   stream_start: {content_type:"audio/aac", codec:"mp4a.40.2",
+     *                  sample_rate, channels, csd_base64}
+     *   stream_chunk_header: {pts}  + binary AAC access unit
+     */
+    private suspend fun runAudioOnlyStream(sink: WsStreamSink) {
+        val svc = DriverService.instance
+            ?: throw RuntimeException("Vortex Driver service is not running")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            throw RuntimeException("System audio capture needs Android 10 (API 29) or newer")
+        }
+
+        val failure = CompletableDeferred<Throwable>()
+        val audioSink = object : ScreenAudioCapture.NalSink {
+            override fun onCodecConfig(csdBytes: ByteArray, sampleRate: Int, channels: Int, codecString: String) {
+                val csdB64 = Base64.encodeToString(csdBytes, Base64.NO_WRAP)
+                sink.sendStartWith { m ->
+                    m.put("content_type", "audio/aac")
+                    m.put("codec", codecString)
+                    m.put("sample_rate", sampleRate)
+                    m.put("channels", channels)
+                    m.put("csd_base64", csdB64)
+                }
+            }
+            override fun onFrame(aacBytes: ByteArray, ptsMicros: Long) {
+                sink.sendChunkAnnotated(aacBytes) { hdr -> hdr.put("pts", ptsMicros) }
+            }
+            override fun onError(message: String) {
+                if (!failure.isCompleted) failure.complete(RuntimeException(message))
+            }
+        }
+        svc.startNativeScreenAudio(audioSink)
+        try {
+            while (true) {
+                if (failure.isCompleted) throw failure.getCompleted()
+                delay(100)
+            }
+        } finally {
+            try { svc.stopNativeScreenAudio() } catch (_: Exception) {}
         }
     }
 

@@ -149,6 +149,11 @@
     <string name="peer_mic_active">🔴  Talking…</string>
     <string name="peer_mic_needs_perm">Microphone permission denied. Grant it in system settings to use push-to-talk.</string>
 
+    <!-- B11.13: audio-only mode. Hides the video tile and uses the
+         lower-bandwidth audio_stream op instead of screen_stream. -->
+    <string name="peer_audio_only">🎵  Audio only</string>
+    <string name="peer_streaming_audio_only">Audio only</string>
+
     <!-- B11.8: Theft-mode controls tab. -->
     <string name="peer_tab_theft">Theft</string>
     <string name="peer_theft_idle">Ready.</string>

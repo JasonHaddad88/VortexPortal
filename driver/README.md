@@ -65,6 +65,7 @@ Future milestones, in order:
 | **B11.11** | Browser-side audio decode (WebCodecs `AudioDecoder` + `AudioContext`; webapp viewer plays peer audio; 🔊/🔇 mute toggle) | _shipped_ |
 | **B11.14** | Pinch-zoom + wheel-scroll on both viewers (APK: `ScaleGestureDetector` + double-tap reset; browser: `wheel` → swipe input, Ctrl+wheel → local CSS zoom) | _shipped_ |
 | **B11.12** | Push-to-talk mic upstream (🎤 hold-to-talk on both viewers; new peer ops `mic_open` / `mic_chunk` / `mic_close` reuse `AacDecoder`; APK producer = `MicCapture` AudioRecord→MediaCodec AAC; browser producer = WebCodecs `AudioEncoder` + `MediaStreamTrackProcessor`) | _shipped_ |
+| **B11.13** | Audio-only stream op (`audio_stream` — no video encoder runs, ~16 KB/s vs ~250 KB/s for H.264; "🎵 Audio only" toggle on both viewers) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 

@@ -548,6 +548,22 @@
                 android:text="@string/peer_mic_hold"
                 android:textColor="@color/vortex_text"
                 android:textAllCaps="false"/>
+            <!-- B11.13: audio-only toggle. When checked, the Screen
+                 tab opens audio_stream (no video encoded on the peer,
+                 ~16 KB/s) instead of screen_stream. Toggles take
+                 effect the next time the tab opens a stream. -->
+            <CheckBox
+                android:id="@+id/key_audio_only"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="10dp"
+                android:text="@string/peer_audio_only"
+                android:textColor="@color/vortex_text"
+                android:textAllCaps="false"
+                android:buttonTint="@color/vortex_cyan"/>
         </LinearLayout>
     </FrameLayout>
 

@@ -3,6 +3,51 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.32 + Driver-B11.13] — 2026-05-30
+
+**Audio-only stream op.** Standalone `audio_stream` for
+bandwidth-constrained listeners: ~16 KB/s downstream vs ~250 KB/s
+for 720p H.264. Same MediaProjection consent the screen path
+uses (AudioPlaybackCapture has no lighter alternative on
+Android), but no video encoder runs and no video bytes ship.
+
+### Peer side (Ops.kt)
+- New `audio_stream` stream op. Wire shape mirrors the audio
+  half of `screen_stream`: `stream_start` carries
+  `content_type:"audio/aac"`, `codec:"mp4a.40.2"`,
+  `sample_rate`, `channels`, `csd_base64`. Chunks carry
+  `pts` only (no `track` tag -- single-track stream).
+- `runAudioOnlyStream(sink)` reuses
+  `DriverService.startNativeScreenAudio` from B11.10. Same
+  cancellation semantics as the H.264 stream op.
+
+### APK viewer (PeerControlActivity)
+- "🎵 Audio only" CheckBox in the system-keys pill on the
+  Screen tab. When checked, `startScreenStream` diverts to a
+  new `startAudioOnlyStream` that opens `audio_stream` and
+  pipes chunks to a reused `AacDecoder` (the same one B11.10
+  set up for the multiplexed track).
+- Flipping the toggle mid-stream restarts the active stream
+  in the new mode so the user doesn't have to leave the tab.
+
+### Browser viewer (templates.py)
+- "🎵 Audio only" checkbox in the screen-page toolbar. When
+  checked, `_startDirectScreen` returns immediately after
+  calling `_startDirectAudioOnly()`.
+- `setupAudio()` lifted out of the `_startDirectScreen`
+  closure into module scope so the new audio-only path can
+  share it. Same `_screenAudio*` state means the existing
+  🔊/🔇 mute button works in audio-only mode unchanged.
+- Status pill reads "streaming (audio only)".
+
+### Hub version
+- **V5.31 -> V5.32**.
+
+### APK version
+- **0.27.0-b11.12 -> 0.27.0-b11.13 (versionCode 33 -> 34)**.
+
+---
+
 ## [V5.31 + Driver-B11.12] — 2026-05-30
 
 **Push-to-talk mic upstream.** Two-way audio. Hold the 🎤

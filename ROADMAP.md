@@ -346,6 +346,18 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.13 — audio-only stream op** _shipped_.
+  New `audio_stream` peer-side op for bandwidth-constrained
+  listeners: ~16 KB/s downstream vs ~250 KB/s for 720p H.264.
+  Same MediaProjection consent (AudioPlaybackCapture requires
+  it), but no video encoder runs. Wire shape mirrors the audio
+  half of `screen_stream` minus the `track` tag (single-track).
+  Both viewers grow a "🎵 Audio only" toggle that diverts the
+  Screen tab to `audio_stream`; browser side lifted `setupAudio`
+  to module scope so the new path shares the B11.11 AAC decoder
+  + mute button. Mid-stream toggle restarts in the new mode.
+  Hub V5.31 -> V5.32. APK 0.27.0-b11.13, versionCode 34.
+
 - [x] **B11.12 — push-to-talk mic upstream** _shipped_.
   Closes the audio loop: B11.10 put peer audio in the downstream;
   B11.11 played it in the browser; B11.12 ships the controller's

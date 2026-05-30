@@ -163,6 +163,19 @@ class PeerControlActivity : AppCompatActivity() {
                 else -> false
             }
         }
+        // B11.13: flipping the toggle mid-stream restarts in the new
+        // mode so the user doesn't have to leave and come back to the
+        // tab. No-op when we're on a different tab.
+        b.keyAudioOnly.setOnCheckedChangeListener { _, _ ->
+            if (currentTab == Tab.SCREEN && peer.isOpen) {
+                stopCurrentStream()
+                videoDecoder?.stop(); videoDecoder = null
+                screenAudio?.stop(); screenAudio = null
+                videoW = 0; videoH = 0
+                b.frame.setImageDrawable(null)
+                startScreenStream()
+            }
+        }
         b.cameraFlipBtn.setOnClickListener {
             cameraFacing = if (cameraFacing == "back") "front" else "back"
             // Re-open the camera stream with the new facing. B11.9:
@@ -413,6 +426,14 @@ class PeerControlActivity : AppCompatActivity() {
         // B11.10: opt in to multiplexed system audio. Older peers
         // ignore the flag (no audio track ships) so the same args
         // are safe everywhere.
+        // B11.13: if the user checked "Audio only," divert to the
+        // standalone audio_stream op -- no video encoder runs on the
+        // peer, ~16 KB/s downstream instead of ~250 KB/s for 720p
+        // H.264. Same MediaProjection consent applies.
+        if (b.keyAudioOnly.isChecked) {
+            startAudioOnlyStream()
+            return
+        }
         b.placeholder.visibility = View.VISIBLE
         b.placeholderText.setText(R.string.peer_loading_screen)
         currentStreamRid = peer.stream(
@@ -431,6 +452,61 @@ class PeerControlActivity : AppCompatActivity() {
                     .put("max_dim", 720)
                     .put("fps_cap", 15),
             ),
+        )
+        if (currentStreamRid == null) showError(getString(R.string.peer_stream_send_failed))
+    }
+
+    /** B11.13: open the standalone audio_stream op. Reuses the
+     *  AacDecoder + AudioTrack from B11.10 (via `screenAudio`); the
+     *  Screen tab's video views stay hidden so the placeholder
+     *  surfaces the "Audio only" status. */
+    private fun startAudioOnlyStream() {
+        b.frame.visibility = View.GONE
+        b.frameVideo.visibility = View.GONE
+        b.placeholder.visibility = View.VISIBLE
+        b.placeholderText.setText(R.string.peer_streaming_audio_only)
+        currentStreamRid = peer.stream(
+            "audio_stream",
+            JSONObject(),
+            object : PeerClient.StreamHandlers {
+                override fun onStart(meta: JSONObject) {
+                    runOnUiThread {
+                        val csdB64 = meta.optString("csd_base64", "")
+                        val csd = try {
+                            android.util.Base64.decode(csdB64, android.util.Base64.NO_WRAP)
+                        } catch (_: Throwable) { ByteArray(0) }
+                        if (csd.isEmpty()) {
+                            showError("audio_stream: peer sent no CSD")
+                            return@runOnUiThread
+                        }
+                        val sr = meta.optInt("sample_rate", 48_000)
+                        val ch = meta.optInt("channels", 2)
+                        val dec = AacDecoder()
+                        if (dec.configure(csd, sr, ch)) {
+                            screenAudio?.stop()
+                            screenAudio = dec
+                            b.connStatus.text = getString(R.string.peer_streaming, "Audio only")
+                        } else {
+                            dec.stop()
+                            showError("audio_stream: decoder setup failed")
+                        }
+                    }
+                }
+                override fun onFrame(bytes: ByteArray, header: JSONObject?) {
+                    val dec = screenAudio ?: return
+                    val pts = header?.optLong("pts", 0L) ?: 0L
+                    dec.feed(bytes, pts)
+                }
+                override fun onEnd(error: JSONObject?) {
+                    currentStreamRid = null
+                    runOnUiThread {
+                        screenAudio?.stop(); screenAudio = null
+                        if (error != null) {
+                            showError("Audio stream ended: ${error.optString("error", "")}")
+                        }
+                    }
+                }
+            },
         )
         if (currentStreamRid == null) showError(getString(R.string.peer_stream_send_failed))
     }
