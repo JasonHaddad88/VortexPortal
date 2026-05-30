@@ -206,9 +206,9 @@ class PeerControlActivity : AppCompatActivity() {
      *  user runs record_audio first; we share the same permission so
      *  most users won't see the prompt at PTT time. */
     private fun ensureMicPermission(): Boolean {
-        val granted = ContextCompat.checkSelfPermission(this,
-                          android.Manifest.permission.RECORD_AUDIO)
-                      == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val granted = ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (granted) return true
         androidx.core.app.ActivityCompat.requestPermissions(
             this, arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC,
