@@ -112,19 +112,16 @@ class ScreenAudioCapture(
                 .addMatchingUsage(AudioAttributes.USAGE_GAME)
                 .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
 
+            val channelMask = if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO
+                              else AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(sampleRate)
-                .setChannelMask(
-                    if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO
-                    else AudioFormat.CHANNEL_IN_MONO
-                )
+                .setChannelMask(channelMask)
                 .build()
 
             val minBuf = AudioRecord.getMinBufferSize(
-                sampleRate,
-                if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
+                sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT,
             ).coerceAtLeast(4096)
 
             val rec = AudioRecord.Builder()

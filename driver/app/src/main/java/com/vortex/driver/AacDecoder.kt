@@ -68,12 +68,11 @@ class AacDecoder {
                         if (buf != null && info.size > 0) {
                             buf.position(info.offset)
                             buf.limit(info.offset + info.size)
-                            val pcm = ByteArray(info.size)
-                            buf.get(pcm)
-                            // AudioTrack.write blocks up to one buffer
-                            // worth of frames; harmless on a dedicated
-                            // worker thread.
-                            track?.write(pcm, 0, pcm.size)
+                            // ByteBuffer overload writes straight from
+                            // the codec buffer -- no per-frame heap
+                            // allocation. Blocking is harmless on this
+                            // dedicated worker thread.
+                            track?.write(buf, info.size, AudioTrack.WRITE_BLOCKING)
                         }
                         codec.releaseOutputBuffer(index, false)
                     } catch (e: Throwable) {

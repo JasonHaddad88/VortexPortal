@@ -365,9 +365,8 @@ class PeerControlActivity : AppCompatActivity() {
                             }
                         }
                         b.placeholder.visibility = View.GONE
-                        val streamingLabel = if (screenAudio != null)
-                            "$label (H.264 + audio)" else "$label (H.264)"
-                        b.connStatus.text = getString(R.string.peer_streaming, streamingLabel)
+                        val suffix = if (screenAudio != null) " + audio" else ""
+                        b.connStatus.text = getString(R.string.peer_streaming, "$label (H.264$suffix)")
                     } else {
                         // Surface not ready yet OR MediaCodec choked.
                         // Drop to MJPEG by stopping this stream and
