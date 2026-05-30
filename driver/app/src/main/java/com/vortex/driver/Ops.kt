@@ -272,7 +272,11 @@ object Ops {
         // configure both decoders atomically. Buffer the audio CSD
         // until the video CSD fires (which is what actually sends
         // stream_start); video happens first in practice.
-        @Volatile var pendingAudioStart: JSONObject? = null
+        //
+        // AtomicReference for cross-thread visibility -- Kotlin
+        // disallows @Volatile on local vars and we read/write this
+        // from two different MediaCodec callback threads.
+        val pendingAudioStart = java.util.concurrent.atomic.AtomicReference<JSONObject?>(null)
         val nalSink = object : ScreenH264Encoder.NalSink {
             override fun onCodecConfig(csdBytes: ByteArray, width: Int, height: Int, codecString: String) {
                 val csdB64 = Base64.encodeToString(csdBytes, Base64.NO_WRAP)
@@ -282,7 +286,7 @@ object Ops {
                     m.put("width", width)
                     m.put("height", height)
                     m.put("csd_base64", csdB64)
-                    pendingAudioStart?.let { m.put("audio", it) }
+                    pendingAudioStart.get()?.let { m.put("audio", it) }
                 }
                 if (!started.isCompleted) started.complete(true)
             }
@@ -323,7 +327,7 @@ object Ops {
                         .put("sample_rate", sampleRate)
                         .put("channels", channels)
                         .put("csd_base64", csdB64)
-                    pendingAudioStart = meta
+                    pendingAudioStart.set(meta)
                 }
                 override fun onFrame(aacBytes: ByteArray, ptsMicros: Long) {
                     // If the video CSD hasn't fired yet, drop -- the
