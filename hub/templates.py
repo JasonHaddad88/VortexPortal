@@ -2566,6 +2566,11 @@ def device_screen_page(user: dict, device: dict) -> str:
   <button class="btn" id="nav-home" title="Home">⌂ Home</button>
   <button class="btn" id="nav-recents" title="Recent apps">▣ Recents</button>
   <button class="btn" id="nav-notifs" title="Pull down notification shade">⤓ Notifs</button>
+  <!-- B11.11: peer's system audio (multiplexed into screen_stream).
+       Hidden until the stream actually starts and the peer signals
+       it's sending an audio track. Defaults to ON. -->
+  <button class="btn" id="scr-mute" title="Mute / unmute peer audio"
+          style="display:none">🔊 Audio on</button>
   <span class="cam-status" id="scr-status">idle</span>
 </div>
 
@@ -2625,8 +2630,43 @@ def device_screen_page(user: dict, device: dict) -> str:
   // V5.21: track active direct screen stream rid + last blob URL so we
   // can shut down cleanly and not leak ObjectURLs.
   // B5: also track WebCodecs decoder + canvas when negotiating H.264.
+  // B11.11: also track AAC AudioDecoder + AudioContext + next-play
+  // timestamp for the optional multiplexed audio track.
   let _screenDirectRid = null, _screenLastUrl = null;
   let _screenDecoder = null, _screenCanvas = null;
+  let _screenAudioDec = null, _screenAudioCtx = null;
+  let _screenAudioNext = 0;          // monotonic playback cursor (seconds)
+  let _screenAudioMuted = false;
+  const _muteBtn = document.getElementById('scr-mute');
+
+  function _stopScreenAudio() {{
+    if (_screenAudioDec) {{
+      try {{ _screenAudioDec.close(); }} catch (_) {{}}
+      _screenAudioDec = null;
+    }}
+    if (_screenAudioCtx) {{
+      try {{ _screenAudioCtx.close(); }} catch (_) {{}}
+      _screenAudioCtx = null;
+    }}
+    _screenAudioNext = 0;
+    if (_muteBtn) {{
+      _muteBtn.style.display = 'none';
+      _muteBtn.textContent = '🔊 Audio on';
+    }}
+  }}
+
+  if (_muteBtn) {{
+    _muteBtn.addEventListener('click', () => {{
+      _screenAudioMuted = !_screenAudioMuted;
+      if (_screenAudioCtx) {{
+        try {{
+          if (_screenAudioMuted) _screenAudioCtx.suspend();
+          else                   _screenAudioCtx.resume();
+        }} catch (_) {{}}
+      }}
+      _muteBtn.textContent = _screenAudioMuted ? '🔇 Audio off' : '🔊 Audio on';
+    }});
+  }}
 
   function _startDirectScreen(img) {{
     let firstFrame = true;
@@ -2636,6 +2676,10 @@ def device_screen_page(user: dict, device: dict) -> str:
     // Negotiate: ask for H.264 if WebCodecs is available, else MJPEG.
     // The APK falls back to MJPEG silently if it can't honour h264 too.
     const wantCodec = (typeof window.VideoDecoder === 'function') ? 'h264' : 'mjpeg';
+    // B11.11: opt in to multiplexed system audio if AudioDecoder is
+    // available. APKs older than B11.10 ignore the flag, and we
+    // silently fall back to video-only.
+    const wantAudio = (typeof window.AudioDecoder === 'function');
 
     function setupH264(m) {{
       // Replace the <img> with a <canvas> sized to the encoder output.
@@ -2678,16 +2722,113 @@ def device_screen_page(user: dict, device: dict) -> str:
       return true;
     }}
 
-    const rid = _directStream('screen_stream', {{codec: wantCodec}}, {{
+    // B11.11: AAC decoder + AudioContext sink for the optional audio
+    // track. Returns true if setup succeeded. CSD is the AAC-LC
+    // AudioSpecificConfig blob the APK encoder shipped.
+    function setupAudio(a) {{
+      if (!a || typeof window.AudioDecoder !== 'function') return false;
+      let description = null;
+      try {{
+        const bin = atob(a.csd_base64 || '');
+        description = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) description[i] = bin.charCodeAt(i);
+      }} catch (e) {{}}
+      if (!description || !description.length) return false;
+      let ctx;
+      try {{
+        ctx = new (window.AudioContext || window.webkitAudioContext)({{
+          sampleRate: a.sample_rate || 48000,
+          latencyHint: 'interactive',
+        }});
+      }} catch (e) {{ return false; }}
+      _screenAudioCtx = ctx;
+      _screenAudioNext = 0;
+      // Each decoded AudioData lands here -- copy out as planar
+      // Float32s, allocate an AudioBuffer of the right shape, and
+      // schedule it at the running play cursor.
+      const dec = new AudioDecoder({{
+        output: ad => {{
+          try {{
+            if (_screenAudioMuted) {{ ad.close(); return; }}
+            const channels = ad.numberOfChannels;
+            const frames   = ad.numberOfFrames;
+            const sr       = ad.sampleRate;
+            const buf = ctx.createBuffer(channels, frames, sr);
+            for (let c = 0; c < channels; c++) {{
+              const dst = buf.getChannelData(c);
+              ad.copyTo(dst, {{planeIndex: c, format: 'f32-planar'}});
+            }}
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(ctx.destination);
+            // Schedule at max(ctx.currentTime, _screenAudioNext) so
+            // late frames don't backdate, and a small initial cushion
+            // hides decode jitter on the first few frames.
+            const now = ctx.currentTime;
+            const cushion = 0.05;
+            const startAt = Math.max(_screenAudioNext, now + cushion);
+            src.start(startAt);
+            _screenAudioNext = startAt + buf.duration;
+            // If the cursor has drifted way ahead of real time the
+            // user is probably mid-stutter; resync.
+            if (_screenAudioNext - now > 0.5) _screenAudioNext = now + cushion;
+          }} catch (e) {{ /* one-frame glitch; skip */ }}
+          finally {{ try {{ ad.close(); }} catch (_) {{}} }}
+        }},
+        error: e => {{ /* non-fatal -- video keeps playing */ }},
+      }});
+      try {{
+        dec.configure({{
+          codec: a.codec || 'mp4a.40.2',
+          sampleRate: a.sample_rate || 48000,
+          numberOfChannels: a.channels || 2,
+          description,
+        }});
+      }} catch (e) {{
+        try {{ dec.close(); }} catch (_) {{}}
+        try {{ ctx.close(); }} catch (_) {{}}
+        _screenAudioCtx = null;
+        return false;
+      }}
+      _screenAudioDec = dec;
+      if (_muteBtn) {{
+        _muteBtn.style.display = '';
+        _muteBtn.textContent = _screenAudioMuted ? '🔇 Audio off' : '🔊 Audio on';
+      }}
+      return true;
+    }}
+
+    const rid = _directStream('screen_stream',
+        {{codec: wantCodec, audio: wantAudio}}, {{
       start: m => {{
         if (m && m.content_type === 'video/h264') {{
           mode = setupH264(m) ? 'h264' : null;
+          // B11.11: bring up audio only if the peer multiplexed it.
+          // Old APKs omit m.audio; the call is a no-op.
+          if (mode === 'h264' && m.audio) setupAudio(m.audio);
         }} else {{
           mode = 'mjpeg';
         }}
       }},
       frame: (ab, hdr) => {{
         if (mode === 'h264' && _screenDecoder) {{
+          // B11.11: route on header.track. Audio chunks ("a") feed
+          // the AAC decoder; everything else (default "v") feeds the
+          // existing video decoder.
+          const track = (hdr && hdr.track) || 'v';
+          if (track === 'a') {{
+            if (!_screenAudioDec) return;
+            const pts = (hdr && typeof hdr.pts === 'number')
+                          ? hdr.pts : Math.round(performance.now() * 1000);
+            try {{
+              _screenAudioDec.decode(new EncodedAudioChunk({{
+                type: 'key',         // AAC has no inter-frame deps
+                timestamp: pts,
+                data: new Uint8Array(ab),
+              }}));
+            }} catch (e) {{ /* one-frame glitch */ }}
+            return;
+          }}
           const kf = !!(hdr && hdr.kf);
           const ptsMicros = (hdr && typeof hdr.pts === 'number')
                               ? hdr.pts : Math.round(performance.now() * 1000);
@@ -2698,7 +2839,11 @@ def device_screen_page(user: dict, device: dict) -> str:
               data: new Uint8Array(ab),
             }}));
           }} catch (e) {{ setStatus('decode err: ' + e.message); }}
-          if (firstFrame) {{ firstFrame = false; setStatus('streaming (direct h264)'); }}
+          if (firstFrame) {{
+            firstFrame = false;
+            setStatus(_screenAudioDec ? 'streaming (direct h264 + audio)'
+                                       : 'streaming (direct h264)');
+          }}
           return;
         }}
         // MJPEG path (default, and fallback if h264 setup failed).
@@ -2714,6 +2859,7 @@ def device_screen_page(user: dict, device: dict) -> str:
           try {{ _screenDecoder.close(); }} catch (_) {{}}
           _screenDecoder = null;
         }}
+        _stopScreenAudio();
         _screenDirectRid = null;
         if (m && !m.ok) showError('Direct screen stream failed: '
             + String(m.error || '').slice(0, 200) + ' — falling back to hub.');
@@ -2771,6 +2917,7 @@ def device_screen_page(user: dict, device: dict) -> str:
       try {{ _screenDecoder.close(); }} catch (_) {{}}
       _screenDecoder = null;
     }}
+    _stopScreenAudio();
     if (_screenCanvas && _screenCanvas.parentNode) {{
       // Restore an empty <img> so the next startStream() finds one.
       const fresh = document.createElement('img');

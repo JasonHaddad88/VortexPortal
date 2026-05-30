@@ -3,6 +3,44 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.29 + Driver-B11.11] — 2026-05-30
+
+**Browser-side audio decode.** Closes the loop on Driver-B11.10:
+the webapp screen viewer now plays the peer's system audio
+alongside the H.264 video instead of dropping it on the floor.
+Uses WebCodecs `AudioDecoder` + `AudioContext` for native
+hardware AAC decode + low-latency playback.
+
+### templates.py / device_screen_page
+- Negotiate `audio:true` on the direct screen stream when
+  `window.AudioDecoder` exists. Older browsers and older APKs
+  silently keep getting video-only.
+- New `setupAudio(meta.audio)`: configures `AudioDecoder` from
+  the AAC-LC AudioSpecificConfig blob in `meta.audio.csd_base64`,
+  brings up an `AudioContext` sized to the peer's sample rate.
+- `AudioDecoder.output` -> `ctx.createBuffer` (planar Float32 via
+  `AudioData.copyTo({format:'f32-planar'})`) -> scheduled on an
+  `AudioBufferSourceNode` at `max(_screenAudioNext, ctx.currentTime
+  + 0.05)`. The 50 ms cushion hides initial decode jitter; if the
+  cursor drifts > 500 ms ahead of real time we resync (covers
+  mid-stream stutter).
+- Per-chunk router on `header.track`: `"a"` -> AudioDecoder,
+  default `"v"` -> existing VideoDecoder. AudioDecoder takes
+  `EncodedAudioChunk({type:'key', ...})` -- AAC has no inter-frame
+  deps so every chunk is a "key".
+- Status pill reads "streaming (direct h264 + audio)" when audio
+  is live, or the existing "streaming (direct h264)" otherwise.
+- Mute button (🔊 / 🔇) in the screen-page toolbar: suspends /
+  resumes the AudioContext + drops new frames while muted so we
+  don't queue work the user can't hear.
+- Lifecycle: `_stopScreenAudio()` runs on stream end, stopStream,
+  and is idempotent. Setup failure leaves the video stream alone.
+
+### Hub version
+- **V5.28 -> V5.29**.
+
+---
+
 ## [Driver-B11.10] — 2026-05-30
 
 **System audio on the Screen stream.** Until now the APK viewer

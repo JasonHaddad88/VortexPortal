@@ -346,6 +346,21 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.11 — browser-side audio decode** _shipped_.
+  Closes the loop on B11.10: webapp screen viewer (templates.py
+  `device_screen_page`) negotiates `audio:true` when WebCodecs
+  `AudioDecoder` exists, configures it from
+  `meta.audio.csd_base64`, and routes per-chunk on
+  `header.track == "a"` to the AAC decoder. Decoded
+  `AudioData` -> planar Float32 `AudioBuffer` ->
+  `AudioBufferSourceNode` scheduled at `max(_screenAudioNext,
+  ctx.currentTime + 0.05)` so a small initial cushion hides
+  decode jitter and a > 500 ms drift triggers a resync. New
+  🔊/🔇 mute button suspends/resumes the AudioContext + drops
+  new frames while muted. Old APKs (pre-B11.10) and browsers
+  without AudioDecoder keep getting silent video. Hub V5.28 ->
+  V5.29.
+
 - [x] **B11.10 — system audio on the Screen stream** _shipped_.
   New `ScreenAudioCapture` (`AudioPlaybackCapture` ->
   `MediaCodec` AAC-LC, re-uses the H.264 encoder's
