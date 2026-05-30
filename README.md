@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V5.32 + Driver-B11.15** — multi-user, multi-node control plane for your
+**V5.32 + Driver-B11.16** — multi-user, multi-node control plane for your
 devices. One or more **hubs** (any laptop, phone, or VM) share a
 database and present the same dashboard; each device runs an **agent**
 (pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver
@@ -266,12 +266,98 @@ bash serve.sh
 # (add a systemd unit if you want it on boot)
 ```
 
+### Option D — Self-host on Termux (fully free, zero domain, zero cost)
+
+Hosting the hub from a Termux-running Android phone, with auto-
+discovery so the rotating Cloudflare quick-tunnel URL never
+becomes your problem. **No domain, no VPS, no Cloudflare account.**
+
+Honest limits up front:
+- A phone-as-server is best for personal use. Anything serious
+  belongs on Option B or C.
+- Cellular CGNAT blocks inbound, which is why we tunnel out.
+- Android will kill background processes if you skip the wake-lock
+  + battery-opt step below — that's an OS thing, not a Vortex
+  thing.
+- A `*.trycloudflare.com` URL rotates whenever cloudflared
+  restarts. **The APK auto-discovers the current URL from your
+  Turso DB** (B11.16) so this is invisible to clients, but
+  *browsers* still need you to bookmark whichever URL is current.
+
+Setup, one time:
+
+```bash
+# Install Termux from F-Droid (NOT Play Store — Play's version is
+# frozen at API 28 and breaks).
+pkg install git python python-pip cloudflared curl openssh
+
+# Clone the repo to your phone (anywhere; ~/VortexPortal is fine).
+git clone https://github.com/JasonHaddad88/VortexPortal.git
+cd VortexPortal
+
+# Optional but recommended: a Turso DB so the hub state lives in
+# the cloud + multiple devices/hubs can share it. Free tier is
+# generous; see "Local + remote database" further down for the
+# `turso db tokens create` step. Then:
+mkdir -p ~/vortex
+cat > ~/vortex/config.json <<'JSON'
+{ "VORTEX_SYNC_URL":   "libsql://YOUR-DB.turso.io",
+  "VORTEX_SYNC_TOKEN": "YOUR-JWT" }
+JSON
+chmod 600 ~/vortex/config.json
+
+# In Android Settings → Apps → Termux:
+#   - Battery → Unrestricted
+#   - Allow background activity
+# These two are non-negotiable. Without them Android freezes
+# Termux within minutes of you locking the screen.
+
+# Acquire the wake lock + start the hub. serve.sh installs
+# cloudflared if missing and starts a quick tunnel automatically.
+termux-wake-lock
+bash serve.sh
+```
+
+serve.sh prints something like:
+
+```
+Public URL : https://random-words-1234.trycloudflare.com
+LAN URL    : http://192.168.1.42:8000
+```
+
+Open the public URL in a browser, register the admin account,
+click **+ Self-Register this device**. The Termux phone is now
+hub + device.
+
+**Survive reboots** with [Termux:Boot](https://wiki.termux.com/wiki/Termux:Boot)
+(also F-Droid). After installing the add-on:
+
+```bash
+mkdir -p ~/.termux/boot
+cp scripts/termux-boot-vortex.sh ~/.termux/boot/vortex-autostart
+chmod +x ~/.termux/boot/vortex-autostart
+```
+
+Now every device boot:
+1. Acquires the wake lock.
+2. Starts the hub + cloudflared quick tunnel.
+3. Hub heartbeats its new URL into the shared Turso DB.
+4. Driver APKs poll the DB every 60 s and follow the new URL —
+   nobody touches anything.
+
+If your hub URL changes overnight you'll see browsers can't
+reach the old `trycloudflare` URL anymore, but the Driver APKs
+on your phones keep working. To get a permanent browser URL too,
+graduate to Option B (you'll need a domain — Cloudflare
+Registrar is ~$9/yr, or eu.org/is-a.dev for free).
+
 ### Point the APK at it
 
 On every device running the Vortex Driver APK:
 
 1. **Kebab** (⋮ in the dashboard topbar) → **Database setup**.
-2. Paste the relay's public URL into **Relay server URL**.
+2. **Leave Relay server URL blank** — it'll auto-discover from
+   Turso (B11.16). Fill it in only to pin a specific URL.
 3. **Save & continue** → sign in again.
 
 From then on, tapping a device row tries the direct LAN connection

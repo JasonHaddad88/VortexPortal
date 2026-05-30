@@ -67,6 +67,7 @@ Future milestones, in order:
 | **B11.12** | Push-to-talk mic upstream (🎤 hold-to-talk on both viewers; new peer ops `mic_open` / `mic_chunk` / `mic_close` reuse `AacDecoder`; APK producer = `MicCapture` AudioRecord→MediaCodec AAC; browser producer = WebCodecs `AudioEncoder` + `MediaStreamTrackProcessor`) | _shipped_ |
 | **B11.13** | Audio-only stream op (`audio_stream` — no video encoder runs, ~16 KB/s vs ~250 KB/s for H.264; "🎵 Audio only" toggle on both viewers) | _shipped_ |
 | **B11.15** | Queued commands for offline peers (Turso `device_commands` table; peer polls every 30s + on service start; whitelist `keepawake` / `location_once` / `play_sound`; "Find my phone" alarm + 📨 Queue buttons on Theft tab) | _shipped_ |
+| **B11.16** | Hub URL auto-discovery (`HubDiscovery` pulls from Turso `node_endpoints` every 60s; rotating Cloudflare quick-tunnel URLs become invisible to clients); Termux:Boot autostart script + README "Self-host on Termux" walkthrough | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 

@@ -27,6 +27,10 @@ object Prefs {
     private const val K_USER_ID       = "user_id"        // signed-in user PK
     private const val K_USERNAME      = "username"
     private const val K_IS_ADMIN      = "is_admin"
+    // B11.16: hub URL auto-discovered from Turso node_endpoints. Lives
+    // in a separate key from the user's manual override so we can
+    // refresh it on a poll without overwriting their explicit pin.
+    private const val K_RELAY_DISCOVERED = "relay_discovered"
 
     fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -57,8 +61,26 @@ object Prefs {
     // page when the direct LAN connection isn't reachable. Empty
     // means LAN-only; the peer-to-peer direct path still works on a
     // shared Wi-Fi without any relay.
+    //
+    // B11.16: split into manual + discovered. relayUrl() = the
+    // effective value (manual wins, else discovered). HubDiscovery
+    // periodically refreshes the discovered cache from Turso's
+    // node_endpoints table -- the same table the hub already
+    // heartbeats its current cloudflared URL into, so the APK can
+    // follow a rotating quick-tunnel URL without user intervention.
     fun relayUrl(ctx: Context): String? =
+        relayUrlManual(ctx) ?: relayUrlDiscovered(ctx)
+
+    /** The URL the user explicitly typed in Setup. Null when blank. */
+    fun relayUrlManual(ctx: Context): String? =
         prefs(ctx).getString(K_BOOTSTRAP_URL, null)
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+    /** The most recent URL HubDiscovery pulled from Turso. Null until
+     *  the first successful poll (so brand-new installs without a
+     *  manual URL still get the LAN-only fallback). */
+    fun relayUrlDiscovered(ctx: Context): String? =
+        prefs(ctx).getString(K_RELAY_DISCOVERED, null)
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 
     fun saveRelay(ctx: Context, url: String) {
@@ -67,6 +89,13 @@ object Prefs {
     }
     fun clearRelay(ctx: Context) {
         prefs(ctx).edit().remove(K_BOOTSTRAP_URL).apply()
+    }
+    /** B11.16: HubDiscovery writes here from the background poller. */
+    fun saveRelayDiscovered(ctx: Context, url: String?) {
+        val e = prefs(ctx).edit()
+        if (url.isNullOrBlank()) e.remove(K_RELAY_DISCOVERED)
+        else                     e.putString(K_RELAY_DISCOVERED, url.trim().trimEnd('/'))
+        e.apply()
     }
 
     // ---- B11: signed-in user (after sign-in / register). ----

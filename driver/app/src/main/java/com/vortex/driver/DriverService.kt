@@ -142,6 +142,10 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // B11.15: pull + execute any pending commands the user
         // queued while this device was offline.
         startCommandPoller()
+        // B11.16: refresh the discovered relay URL from Turso's
+        // node_endpoints. Lets a Termux hub's rotating cloudflared
+        // URL flow to the APK without the user re-pasting.
+        startHubDiscoveryPoller()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -189,6 +193,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { directServerImpl?.shutdown() } catch (_: Exception) {}
         try { peerPublisherJob?.cancel() } catch (_: Exception) {}
         try { commandPollerJob?.cancel() } catch (_: Exception) {}
+        try { hubDiscoveryJob?.cancel() } catch (_: Exception) {}
         try { peerScope.cancel() } catch (_: Exception) {}
         // Best-effort retract our peer row so other devices see us
         // offline immediately instead of waiting for the stale TTL.
@@ -207,6 +212,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
     private val peerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var peerPublisherJob: Job? = null
     private var commandPollerJob: Job? = null
+    private var hubDiscoveryJob: Job? = null
     @Volatile private var currentTicket: String = ""
 
     /** B11.15: dispatcher used by the queued-command poller. Lives for
@@ -268,6 +274,25 @@ class DriverService : Service(), CameraEngine.FrameSink {
             while (true) {
                 drainCommandQueueOnce(cli)
                 delay(30_000L)
+            }
+        }
+    }
+
+    /** B11.16: pull the freshest hub URL from Turso `node_endpoints`
+     *  every 60 s + once immediately. Caches into Prefs so the
+     *  fallback path in PeerControlActivity (and DeviceWebActivity)
+     *  sees the latest value without re-querying. A user-set manual
+     *  relay URL still wins -- this only fills the auto-discovered
+     *  slot. */
+    private fun startHubDiscoveryPoller() {
+        if (hubDiscoveryJob != null) return
+        if (!Prefs.isSignedIn(this)) return
+        hubDiscoveryJob = peerScope.launch {
+            val cli = tursoClientFrom(this@DriverService) ?: return@launch
+            while (true) {
+                val freshest = HubDiscovery.queryFreshest(cli)
+                Prefs.saveRelayDiscovered(this@DriverService, freshest)
+                delay(60_000L)
             }
         }
     }

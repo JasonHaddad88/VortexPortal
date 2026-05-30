@@ -3,6 +3,54 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.16] — 2026-05-30
+
+**Hub URL auto-discovery + Termux self-host docs/boot.** Closes
+the "Termux-hosted hub on a rotating Cloudflare URL is annoying
+to paste into every APK" pain. APK now polls the existing
+`node_endpoints` table the hub already heartbeats into (V5.9) and
+picks the freshest non-loopback URL automatically.
+
+### APK
+- New `HubDiscovery` object: `queryFreshest(client)` pulls the
+  newest non-stale (default <5 min old) URL from Turso
+  `node_endpoints`. Loopback URLs (127.0.0.1, localhost) are
+  filtered -- a Termux self-loop publishing 127.0.0.1 would
+  otherwise poison cross-device clients.
+- `Prefs.relayUrl()` is now `relayUrlManual() ?: relayUrlDiscovered()`.
+  Manual override wins so users can pin a specific URL when
+  needed; everyone else gets the auto-discovered value.
+- `DriverService.startHubDiscoveryPoller()` -- new sibling
+  coroutine to the peer publisher + command poller. Fires
+  immediately on service start, then every 60 s.
+- `SetupActivity` hint text + help paragraph updated: leaving
+  the Relay URL blank now reads "(auto-discover from DB)"
+  instead of being a dead-end.
+
+### Termux self-host (no code change, docs + boot script)
+- New `scripts/termux-boot-vortex.sh` -- Termux:Boot autostart
+  script. Acquires the wake lock + launches `serve.sh` in
+  background. One-time install:
+  `cp scripts/termux-boot-vortex.sh ~/.termux/boot/vortex-autostart`.
+- New README section "Option D -- Self-host on Termux (fully
+  free, zero domain, zero cost)". Walks through:
+  - Termux from F-Droid (not Play)
+  - `pkg install` + `git clone`
+  - Battery → Unrestricted + Allow background activity
+  - `termux-wake-lock`
+  - `bash serve.sh` (cloudflared quick tunnel auto-launches)
+  - Termux:Boot autostart for survive-reboot
+  - APK side: leave the Relay URL blank, auto-discovery
+    handles the rotating cloudflared URL
+- Acknowledges the honest limit: a rotating `*.trycloudflare.com`
+  URL still affects *browsers* (which can't auto-discover),
+  but is invisible to APK clients now.
+
+### APK version
+- **0.28.0-b11.15 -> 0.28.0-b11.16 (versionCode 35 -> 36)**.
+
+---
+
 ## [Driver-B11.15] — 2026-05-30
 
 **Queued commands for offline peers.** What Google's "Find My

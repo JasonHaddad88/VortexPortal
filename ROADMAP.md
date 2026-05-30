@@ -346,6 +346,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.16 — hub URL auto-discovery + Termux self-host docs**
+  _shipped_. New `HubDiscovery` queries Turso `node_endpoints`
+  (the table the hub already heartbeats into since V5.9), picks
+  the freshest non-loopback URL. `Prefs.relayUrl()` becomes
+  `manual ?: discovered` -- a manual override still wins.
+  DriverService runs a 60 s poller. SetupActivity hint updated to
+  "Leave blank to auto-discover." New `scripts/termux-boot-vortex.sh`
+  for Termux:Boot autostart + a new README "Option D --
+  Self-host on Termux (fully free, zero domain)" walkthrough.
+  Result: a rotating Cloudflare quick-tunnel URL on a Termux self-
+  host is invisible to APK clients; only browsers still need to
+  bookmark the latest URL. APK 0.28.0-b11.16, versionCode 36.
+
 - [x] **B11.15 — queued commands for offline peers** _shipped_.
   Mirrors Google's "Find My Device → Erase" pattern. New Turso
   `device_commands` table (+ partial index for cheap

@@ -125,8 +125,8 @@
 
     <!-- B11.4: optional relay URL for cross-network control. -->
     <string name="setup_label_relay">Relay server URL (optional)</string>
-    <string name="setup_hint_relay">https://your-vortex-relay.example</string>
-    <string name="setup_relay_help">Without a relay, devices can only control each other on the SAME Wi-Fi. To control across networks, run a Vortex hub somewhere reachable (Cloudflare Tunnel, $4/mo VM, etc.) pointed at the SAME database above, and paste its URL here.</string>
+    <string name="setup_hint_relay">Leave blank to auto-discover</string>
+    <string name="setup_relay_help">Without a relay, devices can only control each other on the SAME Wi-Fi. To control across networks, run a Vortex hub somewhere reachable (Cloudflare Tunnel, $4/mo VM, etc.) pointed at the SAME database above.\n\nLeave this blank to AUTO-DISCOVER from the database — any running hub publishes its current URL there, so a rotating Cloudflare quick-tunnel URL on a Termux self-host just works. Fill it in only to pin a specific URL.</string>
     <string name="peer_falling_back_to_relay">Direct LAN connect failed — switching to relay…</string>
     <string name="peer_connect_failed_no_relay">Couldn\'t reach this device on the LAN, and no relay URL is configured. Add one in Setup to control devices on other networks. (Direct error: %1$s)</string>
 
