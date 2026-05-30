@@ -221,6 +221,19 @@
                             android:textAllCaps="false"
                             android:visibility="gone"/>
                     </LinearLayout>
+                    <!-- B11.15: queue this op for next-online. Hidden
+                         visually with no margin until needed; writes
+                         a device_commands row keyed by the peer's
+                         device_id. -->
+                    <Button
+                        android:id="@+id/theft_location_queue_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:text="@string/peer_theft_queue_btn"
+                        android:textColor="@color/vortex_cyan"
+                        android:textAllCaps="false"/>
                 </LinearLayout>
 
                 <!-- Audio card -->
@@ -349,6 +362,56 @@
                         android:textStyle="bold"
                         android:textAllCaps="false"
                         android:background="@drawable/vortex_button_primary"/>
+                </LinearLayout>
+
+                <!-- B11.15: Find-my-phone card. Plays the system alarm
+                     ringtone on the peer (max alarm volume) for 10 s.
+                     Both real-time and queue-for-next-online variants.
+                     Useful for "where did I leave it" and theft
+                     scenarios alike. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/vortex_card"
+                    android:padding="14dp"
+                    android:layout_marginBottom="10dp">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/peer_theft_sound_title"
+                        android:textColor="@color/vortex_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.04"
+                        android:textAllCaps="true"/>
+                    <TextView
+                        android:id="@+id/theft_sound_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="13sp"
+                        android:textColor="@color/vortex_text_muted"
+                        android:text="@string/peer_theft_idle"/>
+                    <Button
+                        android:id="@+id/theft_sound_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="@string/peer_theft_sound_btn"
+                        android:textColor="@color/vortex_bg"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:background="@drawable/vortex_button_primary"/>
+                    <Button
+                        android:id="@+id/theft_sound_queue_btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:text="@string/peer_theft_queue_btn"
+                        android:textColor="@color/vortex_cyan"
+                        android:textAllCaps="false"/>
                 </LinearLayout>
 
                 <!-- Wake-lock card -->

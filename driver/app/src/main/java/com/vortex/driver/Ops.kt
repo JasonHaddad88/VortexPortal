@@ -124,6 +124,24 @@ object Ops {
         dispatcher.register("keepawake") { args ->
             WakeLockOp.set(ctx, args.optBoolean("on", true))
         }
+        // B11.15: unary location wrapper. The existing `location` op is
+        // a stream (one JSON chunk); the queue path needs a unary so
+        // the result lands back as device_commands.result_json.
+        // LocationOp.fix is suspend (it awaits a single fix via the
+        // LocationManager callback), so wrap in runBlocking -- the
+        // queue poller already runs on an IO coroutine and we hold
+        // it for at most one fix timeout (~30 s).
+        dispatcher.register("location_once") { args ->
+            val hint = args.optString("provider", "").takeIf { it.isNotBlank() }
+            kotlinx.coroutines.runBlocking { LocationOp.fix(ctx, hint) }
+        }
+        // B11.15: play an alarm sound on the peer for N seconds.
+        // Useful as both a real-time op ("find my phone under the
+        // couch") AND a queued op (theft scenario: alarm fires the
+        // moment the phone next connects).
+        dispatcher.register("play_sound") { args ->
+            PlaySound.play(ctx, args.optInt("duration", 10))
+        }
         // location: stream one JSON fix back. Same content_type the
         // Python agent uses so the hub parses it identically.
         dispatcher.registerStream("location") { args, sink ->

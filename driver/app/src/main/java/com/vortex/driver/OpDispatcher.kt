@@ -48,6 +48,15 @@ class OpDispatcher {
     fun register(op: String, handler: UnaryHandler) { unary[op] = handler }
     fun registerStream(op: String, handler: StreamHandler) { stream[op] = handler }
 
+    /** B11.15: synchronous unary call for self-dispatch from background
+     *  jobs (e.g. the queued-command poller). Skips the WS request /
+     *  response wrapping classify() does for inbound frames. */
+    @Throws(Exception::class)
+    fun runUnary(op: String, args: JSONObject): JSONObject {
+        val h = unary[op] ?: throw RuntimeException("unknown unary op: $op")
+        return h.call(args)
+    }
+
     sealed class Outcome {
         /** A complete response text frame, ready to send. */
         data class Unary(val responseJson: String) : Outcome()

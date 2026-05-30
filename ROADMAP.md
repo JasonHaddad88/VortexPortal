@@ -346,6 +346,22 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.15 — queued commands for offline peers** _shipped_.
+  Mirrors Google's "Find My Device → Erase" pattern. New Turso
+  `device_commands` table (+ partial index for cheap
+  pending-only lookups). DriverService's new
+  `startCommandPoller` fires immediately on service start and
+  then every 30 s; drains pending rows for THIS device via a
+  background `OpDispatcher` (lazy, `Ops.registerAll` against
+  the service context). Whitelist v1: `keepawake`,
+  `location_once` (new unary wrapper around the B4 location
+  stream), `play_sound` (new -- system alarm at max volume).
+  Theft tab gains a "Find my phone" card + 📨 Queue buttons on
+  Location + Find-my-phone cards. Does NOT make truly-offline
+  phones (powered off, no network) controllable in real time
+  -- the bytes still have nowhere to land -- but does fire the
+  moment the peer reconnects. APK 0.28.0-b11.15, versionCode 35.
+
 - [x] **B11.13 — audio-only stream op** _shipped_.
   New `audio_stream` peer-side op for bandwidth-constrained
   listeners: ~16 KB/s downstream vs ~250 KB/s for 720p H.264.

@@ -143,6 +143,16 @@ class PeerControlActivity : AppCompatActivity() {
             theftCaptureCamera(facing)
         }
         b.theftWakeBtn.setOnClickListener { theftToggleWake() }
+        // B11.15: queue-for-next-online buttons + real-time "find my
+        // phone" card. The queue helpers write a row to Turso and
+        // the peer's poller picks it up within ~30 s of next connect.
+        b.theftLocationQueueBtn.setOnClickListener {
+            queueOp("location_once", JSONObject(), b.theftLocationStatus)
+        }
+        b.theftSoundBtn.setOnClickListener { theftPlaySound() }
+        b.theftSoundQueueBtn.setOnClickListener {
+            queueOp("play_sound", JSONObject().put("duration", 10), b.theftSoundStatus)
+        }
 
         // B11.6: input passthrough. Touch listener on the frame; the
         // peer's screen_size answer drives coord translation. System
@@ -848,6 +858,57 @@ class PeerControlActivity : AppCompatActivity() {
                 else "Capture failed."
             },
         )
+    }
+
+    /** B11.15: real-time "find my phone" via the new play_sound unary
+     *  op. The peer plays the system alarm tone at max volume for
+     *  ~10 s. Same op is also exposed via the queue button so it
+     *  fires the next time the peer comes online (theft case). */
+    private fun theftPlaySound() {
+        b.theftSoundStatus.text = getString(R.string.peer_theft_busy)
+        scope.launch {
+            val res = runCatching {
+                peer.unary("play_sound", JSONObject().put("duration", 10), timeoutMs = 4_000)
+            }
+            res.onSuccess { r ->
+                b.theftSoundStatus.text = if (r.optBoolean("ok", false))
+                    "Playing for ${r.optInt("duration", 10)} s." else
+                    "Error: ${r.optString("error", "")}"
+            }.onFailure { e ->
+                b.theftSoundStatus.text = "Error: ${e.message ?: ""}"
+            }
+        }
+    }
+
+    /**
+     * B11.15: enqueue a command for the peer to execute on its next
+     * Turso poll. Writes a row to the `device_commands` table; the
+     * peer's `DriverService` command poller picks it up within ~30 s
+     * of next connect. Used by the offline-aware buttons; works
+     * regardless of whether the peer is currently reachable.
+     */
+    private fun queueOp(op: String, args: JSONObject, statusView: android.widget.TextView) {
+        statusView.text = getString(R.string.peer_theft_busy)
+        scope.launch(Dispatchers.IO) {
+            val res = runCatching {
+                val cli = tursoClientFrom(this@PeerControlActivity)
+                    ?: throw RuntimeException("Turso not configured")
+                CommandQueue.ensureSchema(cli)
+                CommandQueue.enqueue(
+                    cli, deviceId, op, args,
+                    createdBy = Prefs.userId(this@PeerControlActivity)
+                        .takeIf { it > 0 }?.toString(),
+                )
+            }
+            withContext(Dispatchers.Main) {
+                res.onSuccess {
+                    statusView.text = getString(R.string.peer_theft_queued_ok)
+                }.onFailure { e ->
+                    statusView.text = getString(R.string.peer_theft_queued_fail,
+                                                e.message ?: "")
+                }
+            }
+        }
     }
 
     /** Toggle the peer's PARTIAL_WAKE_LOCK. Unary op; immediate result. */

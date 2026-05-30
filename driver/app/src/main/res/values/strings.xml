@@ -154,6 +154,13 @@
     <string name="peer_audio_only">🎵  Audio only</string>
     <string name="peer_streaming_audio_only">Audio only</string>
 
+    <!-- B11.15: queued commands for offline peers. -->
+    <string name="peer_theft_sound_title">Find my phone</string>
+    <string name="peer_theft_sound_btn">Play loud sound (10s)</string>
+    <string name="peer_theft_queue_btn">📨 Queue</string>
+    <string name="peer_theft_queued_ok">Queued — will run when the peer is next online.</string>
+    <string name="peer_theft_queued_fail">Queue failed: %1$s</string>
+
     <!-- B11.8: Theft-mode controls tab. -->
     <string name="peer_tab_theft">Theft</string>
     <string name="peer_theft_idle">Ready.</string>

@@ -139,6 +139,9 @@ class DriverService : Service(), CameraEngine.FrameSink {
         // `device_peers` table so other peers can find us. Periodic
         // refresh (60 s) inside startPeerPublisher().
         startPeerPublisher()
+        // B11.15: pull + execute any pending commands the user
+        // queued while this device was offline.
+        startCommandPoller()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -185,6 +188,7 @@ class DriverService : Service(), CameraEngine.FrameSink {
         try { hubClient?.stop() } catch (_: Exception) {}
         try { directServerImpl?.shutdown() } catch (_: Exception) {}
         try { peerPublisherJob?.cancel() } catch (_: Exception) {}
+        try { commandPollerJob?.cancel() } catch (_: Exception) {}
         try { peerScope.cancel() } catch (_: Exception) {}
         // Best-effort retract our peer row so other devices see us
         // offline immediately instead of waiting for the stale TTL.
@@ -202,7 +206,15 @@ class DriverService : Service(), CameraEngine.FrameSink {
 
     private val peerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var peerPublisherJob: Job? = null
+    private var commandPollerJob: Job? = null
     @Volatile private var currentTicket: String = ""
+
+    /** B11.15: dispatcher used by the queued-command poller. Lives for
+     *  the whole service lifetime; reuses the same op handlers the
+     *  HubClient + DirectServer dispatchers register. */
+    private val bgDispatcher: OpDispatcher by lazy {
+        OpDispatcher().also { Ops.registerAll(this, it) }
+    }
 
     /** Spin up a background coroutine that refreshes our peer-presence
      *  row every 30 s. Idempotent: a second call is a no-op.
@@ -239,6 +251,48 @@ class DriverService : Service(), CameraEngine.FrameSink {
      *  when the user has just joined a new Wi-Fi and wants to be
      *  reachable immediately instead of waiting up to 30 s. */
     fun publishPeerNow() = publishPeerOnce()
+
+    /** B11.15: drain any pending queued commands for THIS device and
+     *  execute them through the background OpDispatcher.
+     *
+     *  Runs ONCE immediately (so a freshly-online device fires
+     *  queued ops within seconds) then on a 30 s cadence, matching
+     *  the peer publisher. Cheap: a single SELECT per tick when the
+     *  queue is empty. */
+    private fun startCommandPoller() {
+        if (commandPollerJob != null) return
+        if (!Prefs.isSignedIn(this)) return
+        commandPollerJob = peerScope.launch {
+            val cli = tursoClientFrom(this@DriverService) ?: return@launch
+            try { CommandQueue.ensureSchema(cli) } catch (_: TursoError) { /* retry next pass */ }
+            while (true) {
+                drainCommandQueueOnce(cli)
+                delay(30_000L)
+            }
+        }
+    }
+
+    private fun drainCommandQueueOnce(cli: TursoClient) {
+        val deviceId = Prefs.deviceId(this) ?: return
+        val pending = CommandQueue.pendingFor(cli, deviceId)
+        for (cmd in pending) {
+            if (cmd.op !in CommandQueue.WHITELIST) {
+                CommandQueue.markExecuted(
+                    cli, cmd.id, error = "op not in queue whitelist: ${cmd.op}",
+                )
+                continue
+            }
+            try {
+                val result = bgDispatcher.runUnary(cmd.op, cmd.args)
+                CommandQueue.markExecuted(cli, cmd.id, result = result)
+            } catch (e: Throwable) {
+                CommandQueue.markExecuted(
+                    cli, cmd.id,
+                    error = "${e.javaClass.simpleName}: ${e.message ?: ""}",
+                )
+            }
+        }
+    }
 
     private fun publishPeerOnce() {
         val deviceId = Prefs.deviceId(this) ?: return

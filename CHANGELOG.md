@@ -3,6 +3,79 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Driver-B11.15] — 2026-05-30
+
+**Queued commands for offline peers.** What Google's "Find My
+Device → Erase" does. The controller writes a row describing
+what to do; the peer device polls when next online and executes
+any pending rows. Does NOT make truly-offline phones (powered
+off, no network) controllable in real time -- the bytes still
+have nowhere to land -- but does mean "fire when it comes back"
+works for theft scenarios, deferred maintenance, etc.
+
+### New Turso table
+- `device_commands(id, device_id, op, args_json, created_by,
+  created_at, executed_at, result_json, error)` with a partial
+  index on `(device_id) WHERE executed_at IS NULL` for cheap
+  pending-only lookups. Lazily created by both producers and
+  consumers via `CommandQueue.ensureSchema`.
+
+### Peer side (DriverService)
+- New `startCommandPoller()` coroutine sibling to the B11.2
+  peer publisher. Fires immediately on service start (so a
+  freshly-online device drains within seconds), then on a 30 s
+  cadence.
+- `drainCommandQueueOnce()` pulls up to 16 pending rows for
+  this `device_id`, dispatches each through a NEW background
+  `OpDispatcher` (lazily created with `Ops.registerAll` against
+  the service context), writes `result_json` or `error` back
+  to the row.
+- Hard whitelist (`CommandQueue.WHITELIST`): only `keepawake`,
+  `location_once`, `play_sound`. Anything else gets marked
+  executed with an "op not in queue whitelist" error so a
+  bad-actor controller can't smuggle a `screen_stream` through.
+
+### New ops
+- `location_once`: unary wrapper around the existing B4
+  `location` stream (one fix as a JSON result instead of a
+  stream chunk). Wrapped in `runBlocking` since `LocationOp.fix`
+  is suspend; the queue poller already owns an IO coroutine
+  so the brief block is fine.
+- `play_sound`: plays the system default alarm ringtone at
+  max alarm volume for N seconds (default 10, cap 60). Restores
+  the user's prior alarm-stream volume when done. Useful both
+  as a real-time "find my phone under the couch" and as a
+  theft-mode queued op.
+
+### `OpDispatcher.runUnary`
+- New public method for background self-dispatch -- skips the
+  request/response WS frame wrapping `classify()` does for
+  inbound traffic. Cleaner than building synthetic JSON to feed
+  through `classify`.
+
+### APK viewer (PeerControlActivity, Theft tab)
+- New "Find my phone" card with two buttons: "Play loud sound
+  (10s)" (real-time `play_sound` via `peer.unary`) and "📨
+  Queue" (writes to `device_commands` via Turso).
+- New "📨 Queue" button on the existing Location card -- queues
+  `location_once` for next-online execution.
+- `queueOp(op, args, statusView)` helper writes a row to the
+  peer's device_commands queue regardless of whether the peer
+  is currently reachable. Status text reports OK / failure.
+
+### Honest limits
+- A powered-off phone or a phone with no network is still
+  uncontrollable in real time. The queue path only helps for
+  "fire when it comes back."
+- Streams (camera_capture, record_audio) are not queueable in
+  v1 because the result blob has nowhere to land. A follow-up
+  could upload via Turso blob storage or to a hub relay.
+
+### APK version
+- **0.27.0-b11.13 -> 0.28.0-b11.15 (versionCode 34 -> 35)**.
+
+---
+
 ## [V5.32 + Driver-B11.13] — 2026-05-30
 
 **Audio-only stream op.** Standalone `audio_stream` for
