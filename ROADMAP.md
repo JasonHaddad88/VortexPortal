@@ -346,6 +346,21 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.12 — push-to-talk mic upstream** _shipped_.
+  Closes the audio loop: B11.10 put peer audio in the downstream;
+  B11.11 played it in the browser; B11.12 ships the controller's
+  mic in the OTHER direction. Three new unary ops on the peer
+  side (`mic_open` / `mic_chunk` / `mic_close`) reuse the AAC
+  decoder from B11.10. Both viewers grow a 🎤 hold-to-talk
+  button. APK producer is a new `MicCapture.kt` (AudioRecord(MIC)
+  -> MediaCodec AAC). Browser producer uses WebCodecs
+  `AudioEncoder` + `MediaStreamTrackProcessor` (Chrome 94+);
+  button stays hidden on browsers without both APIs. New
+  `_directOp` helper generalises the unary RPC path
+  (refactored out of input-specific `_directInput`). No new wire
+  primitives -- all over existing direct WS. Hub V5.30 -> V5.31.
+  APK 0.27.0-b11.12, versionCode 33.
+
 - [x] **B11.14 — pinch-zoom + wheel-scroll** _shipped_.
   Both viewers. APK PeerControlActivity gets ScaleGestureDetector
   driving a shared `viewScale` clamped 1.0..5.0 applied to both

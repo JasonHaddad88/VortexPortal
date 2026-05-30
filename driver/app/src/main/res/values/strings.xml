@@ -144,6 +144,11 @@
     <string name="peer_key_recents">□  Recents</string>
     <string name="peer_input_needs_a11y">Tap recognised, but the peer\'s Accessibility service isn\'t enabled. Open Vortex Driver on that device and follow the prompt.</string>
 
+    <!-- B11.12: push-to-talk mic upstream. -->
+    <string name="peer_mic_hold">🎤  Hold to talk</string>
+    <string name="peer_mic_active">🔴  Talking…</string>
+    <string name="peer_mic_needs_perm">Microphone permission denied. Grant it in system settings to use push-to-talk.</string>
+
     <!-- B11.8: Theft-mode controls tab. -->
     <string name="peer_tab_theft">Theft</string>
     <string name="peer_theft_idle">Ready.</string>

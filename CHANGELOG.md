@@ -3,6 +3,72 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.31 + Driver-B11.12] — 2026-05-30
+
+**Push-to-talk mic upstream.** Two-way audio. Hold the 🎤
+button on either viewer to capture mic input and stream it to
+the peer's speakers in real time. Closes the audio loop after
+B11.10 (peer audio downstream) + B11.11 (browser plays it).
+
+### Peer side (Ops.kt)
+- Three new unary ops, reuses the existing AacDecoder from
+  B11.10 (which already wraps an AudioTrack):
+  - `mic_open({sample_rate, channels, csd_base64})` -> brings
+    up the decoder + player. Replaces any prior session.
+  - `mic_chunk({b64_data, pts})` -> decodes and plays one
+    AAC frame. Ignored if no session is open.
+  - `mic_close()` -> tears down. Idempotent.
+- Single open session per peer connection -- a fresh mic_open
+  cleanly replaces the previous one without an explicit close.
+
+### APK producer (MicCapture.kt)
+- New AudioRecord(MIC, 48 kHz, mono, PCM16) + MediaCodec AAC-LC
+  encoder (64 kbps). NalSink matches ScreenAudioCapture's
+  contract so the wiring shape is identical.
+- Dedicated HandlerThread for codec callbacks; small PCM-pump
+  thread feeds the encoder's input buffers (same idiom).
+
+### APK viewer (PeerControlActivity)
+- 🎤 button in the system-keys pill on the Screen tab. Touch
+  listener (not click) so press = startMic, release/cancel =
+  stopMic. Lazy RECORD_AUDIO permission request on first hold;
+  permission denied surfaces a toast.
+- On first encoder output (CSD): unary `mic_open`; subsequent
+  frames fire-and-forget unary `mic_chunk` (no await -- ~50/sec).
+- onDestroy / failure paths always emit `mic_close` if a
+  session was open.
+
+### Browser producer (templates.py)
+- 🎤 button in the screen-page toolbar, hidden unless
+  WebCodecs `AudioEncoder` + `MediaStreamTrackProcessor` are
+  both available (Chrome 94+).
+- mousedown/touchstart -> getUserMedia({audio: {
+    sampleRate:48000, channelCount:1, echoCancellation,
+    noiseSuppression}}) -> MediaStreamTrackProcessor reader ->
+  AudioEncoder(mp4a.40.2, 64 kbps). First chunk's metadata.
+  decoderConfig.description = the AAC AudioSpecificConfig the
+  peer's AacDecoder needs in csd-0; we ship it via `mic_open`
+  before any `mic_chunk`.
+- preventDefault on press/release so hold-and-drag doesn't
+  trigger a text selection. mouseleave + touchcancel also stop
+  the mic so a slid-off press doesn't leave the channel hot.
+- New `_directOp(op, args, timeoutMs)` helper (refactored out
+  of the input-specific `_directInput`) -- used by mic_open /
+  mic_chunk / mic_close.
+
+### Wire shape
+- All ops are unary on the existing direct WS; no new wire
+  primitives. ~12.5 KB/sec uplink overhead from per-chunk JSON
+  + base64 vs. the audio's own ~16 KB/sec.
+
+### Hub version
+- **V5.30 -> V5.31**.
+
+### APK version
+- **0.26.0-b11.14 -> 0.27.0-b11.12 (versionCode 32 -> 33)**.
+
+---
+
 ## [V5.30 + Driver-B11.14] — 2026-05-30
 
 **Pinch-zoom + wheel-scroll on both viewers.** Cleanup of the two

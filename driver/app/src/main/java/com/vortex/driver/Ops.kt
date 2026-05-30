@@ -63,6 +63,51 @@ object Ops {
         // so the existing webapp file browser also Just Works against
         // a Driver APK without any changes.
         FileBrowserOps.register(ctx, dispatcher)
+        // B11.12: push-to-talk mic upstream. The CONTROLLER sends
+        // AAC frames; THIS device plays them through an AudioTrack.
+        // Just 3 unary ops -- no new wire protocol needed.
+        registerB1112MicReceiver(dispatcher)
+    }
+
+    /** B11.12: mic receiver. AacDecoder doubles as a playback sink
+     *  (decoder output goes straight to its embedded AudioTrack).
+     *  One open session at a time per peer connection; mic_open
+     *  while one is already active replaces it. */
+    @Volatile private var micReceiver: AacDecoder? = null
+
+    private fun registerB1112MicReceiver(dispatcher: OpDispatcher) {
+        dispatcher.register("mic_open") { args ->
+            val sr = args.optInt("sample_rate", 48_000)
+            val ch = args.optInt("channels", 1)
+            val csdB64 = args.optString("csd_base64", "")
+            val csd = try { Base64.decode(csdB64, Base64.NO_WRAP) }
+                      catch (e: Throwable) { throw RuntimeException("bad csd_base64: ${e.message}") }
+            if (csd.isEmpty()) throw RuntimeException("mic_open requires csd_base64")
+            // Replace any prior open session so the controller can
+            // restart cleanly without an explicit mic_close.
+            try { micReceiver?.stop() } catch (_: Throwable) {}
+            val dec = AacDecoder()
+            if (!dec.configure(csd, sr, ch)) {
+                dec.stop(); throw RuntimeException("mic decoder configure failed")
+            }
+            micReceiver = dec
+            JSONObject().put("ok", true)
+        }
+        dispatcher.register("mic_chunk") { args ->
+            val dec = micReceiver ?: throw RuntimeException("mic not open")
+            val b64 = args.optString("b64_data", "")
+            val pts = args.optLong("pts", 0L)
+            if (b64.isEmpty()) throw RuntimeException("mic_chunk requires b64_data")
+            val bytes = try { Base64.decode(b64, Base64.NO_WRAP) }
+                        catch (e: Throwable) { throw RuntimeException("bad b64_data: ${e.message}") }
+            dec.feed(bytes, pts)
+            JSONObject().put("ok", true)
+        }
+        dispatcher.register("mic_close") { _ ->
+            try { micReceiver?.stop() } catch (_: Throwable) {}
+            micReceiver = null
+            JSONObject().put("ok", true)
+        }
     }
 
     private fun registerB4(ctx: Context, dispatcher: OpDispatcher) {

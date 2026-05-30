@@ -64,6 +64,7 @@ Future milestones, in order:
 | **B11.10** | System audio on the Screen stream (`AudioPlaybackCapture` → AAC, multiplexed into `screen_stream` via `track:"v"\|"a"`; APK viewer plays through `AudioTrack`) | _shipped_ |
 | **B11.11** | Browser-side audio decode (WebCodecs `AudioDecoder` + `AudioContext`; webapp viewer plays peer audio; 🔊/🔇 mute toggle) | _shipped_ |
 | **B11.14** | Pinch-zoom + wheel-scroll on both viewers (APK: `ScaleGestureDetector` + double-tap reset; browser: `wheel` → swipe input, Ctrl+wheel → local CSS zoom) | _shipped_ |
+| **B11.12** | Push-to-talk mic upstream (🎤 hold-to-talk on both viewers; new peer ops `mic_open` / `mic_chunk` / `mic_close` reuse `AacDecoder`; APK producer = `MicCapture` AudioRecord→MediaCodec AAC; browser producer = WebCodecs `AudioEncoder` + `MediaStreamTrackProcessor`) | _shipped_ |
 
 ### B1: standalone Vortex-client role (no Termux required)
 

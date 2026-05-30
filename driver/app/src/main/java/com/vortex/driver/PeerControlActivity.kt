@@ -84,6 +84,12 @@ class PeerControlActivity : AppCompatActivity() {
      *  the natural display; the encoder emits a `rotation` hint in
      *  stream_start so the renderer can spin the SurfaceView. */
     @Volatile private var videoRotation: Int = 0
+    /** B11.12: push-to-talk mic. Lazily allocated on first hold.
+     *  When non-null the user is currently transmitting; release of
+     *  the 🎤 button stops it and calls mic_close on the peer. */
+    @Volatile private var mic: MicCapture? = null
+    @Volatile private var micOpenSent: Boolean = false
+
     /** B11.14: pinch-zoom scale factor for the Screen tab's visible
      *  view. Local-only -- the peer never learns we zoomed; tap
      *  coords stay in the view's pre-scale space (Android's touch
@@ -146,6 +152,17 @@ class PeerControlActivity : AppCompatActivity() {
         b.keyBack.setOnClickListener    { sendInput(JSONObject().put("type", "back")) }
         b.keyHome.setOnClickListener    { sendInput(JSONObject().put("type", "home")) }
         b.keyRecents.setOnClickListener { sendInput(JSONObject().put("type", "recents")) }
+        // B11.12: push-to-talk. Touch listener (not click) so we can
+        // react to press + release. ACTION_CANCEL handled like UP so
+        // sliding off the button still closes the session.
+        b.keyMic.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { startMic(); true }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> { stopMic(); true }
+                else -> false
+            }
+        }
         b.cameraFlipBtn.setOnClickListener {
             cameraFacing = if (cameraFacing == "back") "front" else "back"
             // Re-open the camera stream with the new facing. B11.9:
@@ -170,9 +187,112 @@ class PeerControlActivity : AppCompatActivity() {
         stopCurrentStream()
         videoDecoder?.stop(); videoDecoder = null
         screenAudio?.stop(); screenAudio = null
+        // B11.12: best-effort PTT shutdown; mic_close fires async.
+        try { mic?.stop() } catch (_: Throwable) {}
+        mic = null
+        if (micOpenSent) {
+            scope.launch {
+                runCatching { peer.unary("mic_close", JSONObject(), timeoutMs = 2_000) }
+            }
+        }
         peer.close()
         scope.cancel()
         super.onDestroy()
+    }
+
+    // ---- B11.12: push-to-talk mic upstream -----------------------------
+
+    /** Lazy RECORD_AUDIO request. The B4 path also asks for this if the
+     *  user runs record_audio first; we share the same permission so
+     *  most users won't see the prompt at PTT time. */
+    private fun ensureMicPermission(): Boolean {
+        val granted = ContextCompat.checkSelfPermission(this,
+                          android.Manifest.permission.RECORD_AUDIO)
+                      == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) return true
+        androidx.core.app.ActivityCompat.requestPermissions(
+            this, arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC,
+        )
+        return false
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, perms: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, perms, results)
+        if (requestCode == REQ_MIC) {
+            val ok = results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!ok) Toast.makeText(this, R.string.peer_mic_needs_perm, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startMic() {
+        if (!peer.isOpen) return
+        if (mic != null) return  // already running
+        if (!ensureMicPermission()) return
+        b.keyMic.setText(R.string.peer_mic_active)
+        // Lazy MicCapture; lives only between press and release. The
+        // first encoder output (CSD) drives mic_open; subsequent
+        // frames stream as mic_chunk unary calls. Failures fire a
+        // toast + abort.
+        val m = MicCapture(this)
+        mic = m
+        micOpenSent = false
+        m.start(object : MicCapture.NalSink {
+            override fun onCodecConfig(csdBytes: ByteArray, sampleRate: Int, channels: Int, codecString: String) {
+                val csdB64 = android.util.Base64.encodeToString(csdBytes, android.util.Base64.NO_WRAP)
+                scope.launch {
+                    val res = runCatching {
+                        peer.unary("mic_open", JSONObject()
+                            .put("sample_rate", sampleRate)
+                            .put("channels", channels)
+                            .put("codec", codecString)
+                            .put("csd_base64", csdB64), timeoutMs = 4_000)
+                    }
+                    res.onSuccess { micOpenSent = true }
+                    res.onFailure { e ->
+                        runOnUiThread {
+                            Toast.makeText(this@PeerControlActivity,
+                                "mic_open failed: ${e.message ?: ""}", Toast.LENGTH_SHORT).show()
+                            stopMic()
+                        }
+                    }
+                }
+            }
+            override fun onFrame(aacBytes: ByteArray, ptsMicros: Long) {
+                // Fire-and-forget: don't await each chunk's reply, the
+                // peer's mic_chunk handler is cheap and we can't usefully
+                // backpressure on a dropped one. ~50 chunks/sec.
+                if (!micOpenSent) return
+                val b64 = android.util.Base64.encodeToString(aacBytes, android.util.Base64.NO_WRAP)
+                scope.launch {
+                    runCatching {
+                        peer.unary("mic_chunk", JSONObject()
+                            .put("b64_data", b64).put("pts", ptsMicros),
+                            timeoutMs = 2_000)
+                    }
+                }
+            }
+            override fun onError(message: String) {
+                runOnUiThread {
+                    Toast.makeText(this@PeerControlActivity,
+                        "mic error: $message", Toast.LENGTH_SHORT).show()
+                    stopMic()
+                }
+            }
+        })
+    }
+
+    private fun stopMic() {
+        b.keyMic.setText(R.string.peer_mic_hold)
+        val m = mic ?: return
+        mic = null
+        try { m.stop() } catch (_: Throwable) {}
+        val wasOpen = micOpenSent
+        micOpenSent = false
+        if (wasOpen) {
+            scope.launch {
+                runCatching { peer.unary("mic_close", JSONObject(), timeoutMs = 2_000) }
+            }
+        }
     }
 
     // ---- connection ----------------------------------------------------
@@ -1086,6 +1206,7 @@ class PeerControlActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_DEVICE_ID   = "device_id"
         const val EXTRA_DEVICE_NAME = "device_name"
+        private const val REQ_MIC   = 0xB1112
 
         fun start(ctx: Context, deviceId: String, deviceName: String) {
             ctx.startActivity(Intent(ctx, PeerControlActivity::class.java).apply {

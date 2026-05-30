@@ -533,6 +533,21 @@
                 android:text="@string/peer_key_recents"
                 android:textColor="@color/vortex_text"
                 android:textAllCaps="false"/>
+            <!-- B11.12: push-to-talk. Hold the button to encode mic
+                 audio and stream it to the peer's speakers; release
+                 to stop. Pill background changes red while talking. -->
+            <Button
+                android:id="@+id/key_mic"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/peer_mic_hold"
+                android:textColor="@color/vortex_text"
+                android:textAllCaps="false"/>
         </LinearLayout>
     </FrameLayout>
 

@@ -2571,6 +2571,12 @@ def device_screen_page(user: dict, device: dict) -> str:
        it's sending an audio track. Defaults to ON. -->
   <button class="btn" id="scr-mute" title="Mute / unmute peer audio"
           style="display:none">🔊 Audio on</button>
+  <!-- B11.12: push-to-talk. Hold to capture mic and ship to peer
+       speakers; release to stop. Hidden unless WebCodecs +
+       MediaStreamTrackProcessor are available (Chrome 94+). -->
+  <button class="btn" id="scr-mic"
+          title="Hold to talk through this device's microphone"
+          style="display:none">🎤 Hold to talk</button>
   <span class="cam-status" id="scr-status">idle</span>
 </div>
 
@@ -2666,6 +2672,141 @@ def device_screen_page(user: dict, device: dict) -> str:
       }}
       _muteBtn.textContent = _screenAudioMuted ? '🔇 Audio off' : '🔊 Audio on';
     }});
+  }}
+
+  // ---- B11.12: push-to-talk mic upstream (browser -> peer speakers) ----
+  //
+  // Requires WebCodecs AudioEncoder + MediaStreamTrackProcessor (both
+  // Chrome 94+). On older browsers the 🎤 button stays hidden.
+  // Wire shape uses the same direct WS the input fast-path already
+  // owns -- three unary ops the peer side handles:
+  //   mic_open({sample_rate, channels, codec, csd_base64}) -> {ok}
+  //   mic_chunk({b64_data, pts})                            -> {ok}
+  //   mic_close()                                           -> {ok}
+  let _micStream = null, _micProcessor = null, _micReader = null;
+  let _micEncoder = null, _micOpenSent = false;
+  const _micBtn = document.getElementById('scr-mic');
+  const _hasMicSupport = (typeof window.AudioEncoder === 'function' &&
+                          typeof window.MediaStreamTrackProcessor === 'function');
+  if (_micBtn && _hasMicSupport) _micBtn.style.display = '';
+
+  function _b64FromUint8(u8) {{
+    // Avoid String.fromCharCode.apply(null, u8) -- blows the stack on
+    // large buffers. AAC frames are small (~200 B) but be defensive.
+    let bin = '';
+    for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+    return btoa(bin);
+  }}
+
+  async function _startMic() {{
+    if (!_hasMicSupport) return;
+    if (_micStream) return;  // already on
+    if (_micBtn) {{
+      _micBtn.textContent = '🔴 Talking…';
+      _micBtn.classList.add('btn-danger');
+    }}
+    try {{
+      _micStream = await navigator.mediaDevices.getUserMedia({{
+        audio: {{
+          sampleRate: 48000, channelCount: 1,
+          echoCancellation: true, noiseSuppression: true,
+        }},
+      }});
+    }} catch (e) {{
+      _resetMicBtn();
+      setStatus('mic permission denied');
+      return;
+    }}
+    const track = _micStream.getAudioTracks()[0];
+    if (!track) {{ _stopMic(); return; }}
+    _micProcessor = new MediaStreamTrackProcessor({{track}});
+    _micReader = _micProcessor.readable.getReader();
+    _micOpenSent = false;
+
+    _micEncoder = new AudioEncoder({{
+      output: (chunk, metadata) => {{
+        // First chunk's metadata has the AAC AudioSpecificConfig the
+        // peer's decoder needs. Send mic_open BEFORE any mic_chunk.
+        try {{
+          if (!_micOpenSent && metadata && metadata.decoderConfig) {{
+            const desc = metadata.decoderConfig.description;
+            const csd = desc ? new Uint8Array(
+                desc instanceof ArrayBuffer ? desc : desc.buffer) : null;
+            if (csd && csd.length) {{
+              _directOp('mic_open', {{
+                sample_rate: metadata.decoderConfig.sampleRate || 48000,
+                channels:    metadata.decoderConfig.numberOfChannels || 1,
+                codec:       metadata.decoderConfig.codec || 'mp4a.40.2',
+                csd_base64:  _b64FromUint8(csd),
+              }}, 4000).then(() => {{ _micOpenSent = true; }}).catch(() => {{}});
+            }}
+          }}
+          if (_micOpenSent) {{
+            // Copy the encoded chunk into a fresh Uint8Array.
+            const buf = new Uint8Array(chunk.byteLength);
+            chunk.copyTo(buf);
+            _directOp('mic_chunk', {{
+              b64_data: _b64FromUint8(buf),
+              pts: chunk.timestamp | 0,
+            }}, 2000).catch(() => {{}});  // fire-and-forget
+          }}
+        }} catch (_) {{}}
+      }},
+      error: e => {{ setStatus('mic encoder err: ' + e.message); _stopMic(); }},
+    }});
+    try {{
+      _micEncoder.configure({{
+        codec: 'mp4a.40.2',
+        sampleRate: 48000, numberOfChannels: 1, bitrate: 64000,
+      }});
+    }} catch (e) {{ setStatus('mic codec unsupported: ' + e.message); _stopMic(); return; }}
+
+    // Drain AudioData frames from the track into the encoder.
+    (async () => {{
+      try {{
+        while (true) {{
+          const {{value, done}} = await _micReader.read();
+          if (done) break;
+          try {{ _micEncoder.encode(value); }} catch (_) {{}}
+          value.close();
+        }}
+      }} catch (_) {{ /* shutdown */ }}
+    }})();
+  }}
+
+  async function _stopMic() {{
+    _resetMicBtn();
+    try {{ _micReader && _micReader.cancel(); }} catch (_) {{}}
+    _micReader = null;
+    try {{ _micEncoder && _micEncoder.close(); }} catch (_) {{}}
+    _micEncoder = null;
+    _micProcessor = null;
+    if (_micStream) {{
+      _micStream.getTracks().forEach(t => {{ try {{ t.stop(); }} catch (_) {{}} }});
+      _micStream = null;
+    }}
+    const wasOpen = _micOpenSent;
+    _micOpenSent = false;
+    if (wasOpen) {{
+      try {{ await _directOp('mic_close', {{}}, 2000); }} catch (_) {{}}
+    }}
+  }}
+
+  function _resetMicBtn() {{
+    if (!_micBtn) return;
+    _micBtn.textContent = '🎤 Hold to talk';
+    _micBtn.classList.remove('btn-danger');
+  }}
+
+  if (_micBtn) {{
+    // mousedown / mouseup for desktop; touchstart / touchend for mobile.
+    // preventDefault so a hold-and-drag doesn't kick off a text selection.
+    _micBtn.addEventListener('mousedown',  e => {{ e.preventDefault(); _startMic(); }});
+    _micBtn.addEventListener('mouseup',    e => {{ e.preventDefault(); _stopMic(); }});
+    _micBtn.addEventListener('mouseleave', () => {{ if (_micStream) _stopMic(); }});
+    _micBtn.addEventListener('touchstart', e => {{ e.preventDefault(); _startMic(); }}, {{passive:false}});
+    _micBtn.addEventListener('touchend',   e => {{ e.preventDefault(); _stopMic(); }}, {{passive:false}});
+    _micBtn.addEventListener('touchcancel', () => {{ if (_micStream) _stopMic(); }});
   }}
 
   function _startDirectScreen(img) {{
@@ -3035,16 +3176,23 @@ def device_screen_page(user: dict, device: dict) -> str:
   _connectDirect();
 
   function _directInput(cmd, timeoutMs) {{
+    return _directOp('input', {{command: cmd}}, timeoutMs);
+  }}
+
+  /** B11.12: generalised unary RPC over the direct WS. Same wire
+   *  shape _directInput used to build inline; pulled out so the
+   *  push-to-talk mic_open / mic_chunk / mic_close calls (and any
+   *  future op) don't need to duplicate the request/reply plumbing. */
+  function _directOp(op, args, timeoutMs) {{
     return new Promise((resolve, reject) => {{
       if (!_directWS || _directWS.readyState !== 1) return reject('no-direct');
       const id = String(_directNextId++);
       const timeout = setTimeout(() => {{
         _directPending.delete(id); reject('timeout');
-      }}, timeoutMs);
+      }}, timeoutMs || 4000);
       _directPending.set(id, {{resolve, timeout}});
       try {{
-        _directWS.send(JSON.stringify({{type:'request', id, op:'input',
-                                        args:{{command: cmd}}}}));
+        _directWS.send(JSON.stringify({{type:'request', id, op, args: args || {{}}}}));
       }} catch (e) {{
         clearTimeout(timeout); _directPending.delete(id); reject(e);
       }}
