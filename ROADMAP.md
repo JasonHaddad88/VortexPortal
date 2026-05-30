@@ -346,6 +346,19 @@ that's the whole Vortex client. Phases (see `driver/README.md`):
   `<canvas>` that replaces the `<img>`. Camera-H264 + audio defer to
   a B5.1.
 
+- [x] **B11.14 — pinch-zoom + wheel-scroll** _shipped_.
+  Both viewers. APK PeerControlActivity gets ScaleGestureDetector
+  driving a shared `viewScale` clamped 1.0..5.0 applied to both
+  `frame` (MJPEG ImageView) and `frameVideo` (H.264 SurfaceView);
+  double-tap resets. Two-finger gestures suppress the tap/swipe
+  path. Browser device_screen_page gets a `wheel` listener that
+  posts a swipe input (inverted: wheel-down = swipe-up on the
+  peer) and Ctrl+wheel for local CSS zoom; zoom state survives
+  the H.264 img <-> canvas swap. Local-only on both sides --
+  peer never learns we zoomed, tap coords stay in pre-zoom
+  view-local space so existing coord-translation math works
+  unchanged. Hub V5.29 -> V5.30. APK 0.26.0-b11.14, versionCode 32.
+
 - [x] **B11.11 — browser-side audio decode** _shipped_.
   Closes the loop on B11.10: webapp screen viewer (templates.py
   `device_screen_page`) negotiates `audio:true` when WebCodecs

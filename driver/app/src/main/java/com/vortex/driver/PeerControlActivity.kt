@@ -84,6 +84,12 @@ class PeerControlActivity : AppCompatActivity() {
      *  the natural display; the encoder emits a `rotation` hint in
      *  stream_start so the renderer can spin the SurfaceView. */
     @Volatile private var videoRotation: Int = 0
+    /** B11.14: pinch-zoom scale factor for the Screen tab's visible
+     *  view. Local-only -- the peer never learns we zoomed; tap
+     *  coords stay in the view's pre-scale space (Android's touch
+     *  events on a scaled View use local coords, no remap needed). */
+    @Volatile private var viewScale: Float = 1.0f
+
     /** B11.10: AAC decoder for the optional multiplexed audio track
      *  on the Screen tab. Null when (a) the peer didn't emit
      *  `stream_start.audio`, (b) we're on the Camera tab (no audio
@@ -248,6 +254,12 @@ class PeerControlActivity : AppCompatActivity() {
         // screen tab. Don't carry an AAC decoder + AudioTrack into a
         // tab where they're meaningless.
         screenAudio?.stop(); screenAudio = null
+        // B11.14: reset zoom so the next tab starts fresh; both
+        // visible views share the same scaleX/Y so this is just
+        // setting them back to 1.0.
+        viewScale = 1.0f
+        b.frame.scaleX = 1.0f; b.frame.scaleY = 1.0f
+        b.frameVideo.scaleX = 1.0f; b.frameVideo.scaleY = 1.0f
         b.placeholder.visibility = if (peer.isOpen) View.GONE else View.VISIBLE
         b.errorText.visibility = View.GONE
 
@@ -756,13 +768,52 @@ class PeerControlActivity : AppCompatActivity() {
     /** Wire mouse-style + tap gestures on the Screen tab's visible
      *  view (ImageView for MJPEG, SurfaceView for H.264). Same
      *  listener attached to both; `toPeerCoords` picks the source
-     *  dims from whichever is showing. */
+     *  dims from whichever is showing.
+     *
+     *  B11.14: also wires pinch-to-zoom (purely local view scale --
+     *  the peer doesn't know we zoomed) and double-tap-to-reset.
+     *  Two-finger gestures suppress the single-finger tap/swipe
+     *  path so we don't accidentally swipe the peer while zooming. */
     private fun attachInputToFrame() {
         var downCoords: IntArray? = null
         var downAtMs: Long = 0L
         val dragThreshPx = 8
+
+        // B11.14: ScaleGestureDetector drives both visible views;
+        // they share the same scaleFactor so the touch handler can
+        // be view-agnostic. Range clamped so the user can't zoom
+        // into a pixel or out into nothing.
+        val scaleListener = object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
+                viewScale = (viewScale * detector.scaleFactor).coerceIn(1.0f, 5.0f)
+                applyViewScale()
+                return true
+            }
+        }
+        val scaleDetector = android.view.ScaleGestureDetector(this, scaleListener)
+
+        // Double-tap to reset zoom. SimpleOnGestureListener swallows
+        // its own ACTION_DOWN, so we keep it isolated from the
+        // tap/swipe-to-peer path by only consulting onDoubleTap.
+        val gestureListener = object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+                viewScale = 1.0f
+                applyViewScale()
+                return true
+            }
+        }
+        val gestureDetector = android.view.GestureDetector(this, gestureListener)
+
         val touchListener = View.OnTouchListener { v, ev ->
             if (currentTab != Tab.SCREEN) return@OnTouchListener false
+            // Feed both detectors first; they short-circuit the
+            // single-finger path when active.
+            scaleDetector.onTouchEvent(ev)
+            gestureDetector.onTouchEvent(ev)
+            if (ev.pointerCount > 1 || scaleDetector.isInProgress) {
+                downCoords = null   // cancel any in-flight tap intent
+                return@OnTouchListener true
+            }
             when (ev.action) {
                 android.view.MotionEvent.ACTION_DOWN -> {
                     downCoords = toPeerCoordsForView(v, ev.x, ev.y)
@@ -800,6 +851,13 @@ class PeerControlActivity : AppCompatActivity() {
         }
         b.frame.setOnTouchListener(touchListener)
         b.frameVideo.setOnTouchListener(touchListener)
+    }
+
+    /** B11.14: apply the current zoom level to both stream views.
+     *  Single source of truth so onScale + onDoubleTap can't drift. */
+    private fun applyViewScale() {
+        b.frame.scaleX = viewScale; b.frame.scaleY = viewScale
+        b.frameVideo.scaleX = viewScale; b.frameVideo.scaleY = viewScale
     }
 
     /** Route to the right toPeerCoords overload by which view fired

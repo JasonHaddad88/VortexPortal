@@ -1,6 +1,6 @@
 # Vortex Hub
 
-**V5.29 + Driver-B11.11** — multi-user, multi-node control plane for your
+**V5.30 + Driver-B11.14** — multi-user, multi-node control plane for your
 devices. One or more **hubs** (any laptop, phone, or VM) share a
 database and present the same dashboard; each device runs an **agent**
 (pure-Python on PC / SBC / IoT / Termux phone) OR a **Vortex Driver

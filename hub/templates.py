@@ -3137,7 +3137,41 @@ def device_screen_page(user: dict, device: dict) -> str:
     // Suppress the browser's right-click context menu so right-click can
     // mean long-press without the menu popping up.
     img.addEventListener('contextmenu', (evt) => evt.preventDefault());
+
+    // B11.14: wheel handling.
+    //   Plain wheel  -> short swipe on the peer (scroll the controlled
+    //                   app). Direction is INVERTED -- wheel-down on
+    //                   the viewer means "see content below," which is
+    //                   a swipe-UP on the phone.
+    //   Ctrl+wheel   -> local CSS zoom of the stream view.
+    img.addEventListener('wheel', (evt) => {{
+      evt.preventDefault();
+      if (evt.ctrlKey || evt.metaKey) {{
+        const dz = evt.deltaY < 0 ? 1.1 : (1 / 1.1);
+        _scrZoom = Math.min(5, Math.max(1, (_scrZoom || 1) * dz));
+        img.style.transform = 'scale(' + _scrZoom + ')';
+        img.style.transformOrigin = 'center center';
+        return;
+      }}
+      const c = toPhoneCoords(img, evt);
+      if (!c) return;
+      // ~60 px per notch, capped. Negate so wheel-down scrolls
+      // content up on the peer.
+      const stepPx = Math.max(40, Math.min(200, Math.abs(evt.deltaY)));
+      const dy = (evt.deltaY < 0 ? 1 : -1) * stepPx;
+      postInput({{
+        type: 'swipe',
+        from: c,
+        to: [c[0], c[1] + dy],
+        duration_ms: 120,
+      }});
+    }}, {{passive: false}});
   }}
+
+  // B11.14: page-scoped zoom state. Lives outside attachInput because
+  // the stream view (img or canvas) gets swapped when H.264 negotiates,
+  // but the zoom level shouldn't reset on the swap.
+  let _scrZoom = 1;
 
   // Nav buttons. These work even without screen sharing armed -- they
   // only need the AccessibilityService.

@@ -3,6 +3,44 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.30 + Driver-B11.14] — 2026-05-30
+
+**Pinch-zoom + wheel-scroll on both viewers.** Cleanup of the two
+most-asked-for gestures the viewer was missing.
+
+### APK PeerControlActivity
+- ScaleGestureDetector on the Screen tab's visible view; pinch
+  adjusts a shared `viewScale` clamped 1.0..5.0 and applied to
+  both `frame` (ImageView, MJPEG) and `frameVideo` (SurfaceView,
+  H.264). Local-only -- the peer never learns we zoomed, and
+  Android's touch events on a scaled view report local coords
+  so the existing `toPeerCoords` math needs no change.
+- Double-tap resets zoom to 1.0. SimpleOnGestureListener for the
+  double-tap; both detectors run before the single-finger path.
+- Two-finger gestures suppress the tap/swipe-to-peer path so we
+  don't accidentally swipe the peer while zooming.
+- Zoom resets on tab switch so the next tab starts fresh.
+
+### Hub device_screen_page (templates.py)
+- `wheel` (plain): short swipe input on the peer for
+  scrolling-the-controlled-app. Direction inverted -- wheel-down
+  means see-content-below, which is a swipe-UP on the phone.
+  Step capped 40..200 px so giant scroll deltas don't fling.
+- `Ctrl+wheel` (or Meta+wheel on macOS): local CSS
+  `transform: scale()` on the stream view, clamped 1.0..5.0.
+  Zoom level lives at page scope so the H.264 negotiation's
+  img <-> canvas swap doesn't reset it.
+- `passive:false` on the listener so `preventDefault()` actually
+  suppresses the default page scroll.
+
+### Hub version
+- **V5.29 -> V5.30**.
+
+### APK version
+- **0.26.0-b11.10 -> 0.26.0-b11.14 (versionCode 31 -> 32)**.
+
+---
+
 ## [V5.29 + Driver-B11.11] — 2026-05-30
 
 **Browser-side audio decode.** Closes the loop on Driver-B11.10:
