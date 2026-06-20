@@ -48,6 +48,23 @@ PING_INTERVAL = float(os.environ.get("VORTEX_PING_INTERVAL", "30"))
 PING_TIMEOUT = float(os.environ.get("VORTEX_PING_TIMEOUT", "60"))
 
 
+def _is_android() -> bool:
+    """Is this agent running under Termux on Android? On a phone the
+    screen/input ops proxy the Vortex Driver APK's loopback sockets; on a
+    desktop OS they capture/inject locally via mss + pyautogui instead.
+    Detection keys on Termux's prefix/data dir (always present) rather
+    than `platform.system()` (Termux reports plain 'Linux'). Override with
+    VORTEX_FORCE_DESKTOP=1 to force the PC path (e.g. an x86 Android box
+    with a real display)."""
+    if os.environ.get("VORTEX_FORCE_DESKTOP"):
+        return False
+    if os.environ.get("TERMUX_VERSION"):
+        return True
+    if "com.termux" in (os.environ.get("PREFIX") or ""):
+        return True
+    return os.path.isdir("/data/data/com.termux/files")
+
+
 def _storage_root() -> Path:
     """Default to phone-shared on Termux, home dir elsewhere."""
     env = os.environ.get("STORAGE_ROOT")
@@ -855,12 +872,21 @@ def op_input(args: dict) -> dict:
     result; on `ok:true` with no payload we return `{"acked": true}` so
     the hub still has something to JSON-serialise.
     """
-    from .input_bridge import (
-        send_command, DriverNotAvailable, DriverInputError,
-    )
     cmd = args.get("command")
     if not isinstance(cmd, dict):
         raise ValueError("op_input expects args.command to be an object")
+    # Desktop: inject locally via pyautogui (same command schema).
+    if not _is_android():
+        from .pc_input_bridge import dispatch, PcInputUnavailable
+        try:
+            result = dispatch(cmd)
+        except PcInputUnavailable as e:
+            raise RuntimeError(str(e))
+        return result if result is not None else {"acked": True}
+    # Android/Termux: forward to the Vortex Driver APK's input socket.
+    from .input_bridge import (
+        send_command, DriverNotAvailable, DriverInputError,
+    )
     try:
         result = send_command(cmd)
     except DriverNotAvailable as e:
@@ -873,26 +899,46 @@ def op_input(args: dict) -> dict:
 
 
 async def op_screen_stream(session: "Session", rid: str, args: dict) -> None:
-    """Real-time screen capture from the Vortex Driver APK (V5.0-M2).
+    """Real-time screen mirror, MJPEG (V5.0-M2 phone · V5.34 desktop).
 
-    Same shape as op_camera_stream but talks to the screen socket on
-    127.0.0.1:5098. The driver only delivers frames when the user has
-    armed screen sharing in the Driver app (system MediaProjection
-    consent dialog accepted); otherwise the connect succeeds but no
-    frames arrive and we time out cleanly.
+    Two frame sources behind one op, chosen by platform:
+      * Android/Termux -> the Vortex Driver APK's MediaProjection socket
+        on 127.0.0.1:5098 (only delivers frames once the user has armed
+        screen sharing; otherwise the read times out cleanly).
+      * Desktop (Win/macOS/Linux) -> this machine's primary monitor via
+        mss + Pillow (`pc_screen_bridge`), honouring `quality`, `max_dim`,
+        `fps_cap` args.
+    Either way the rest of the pipeline (stream_start, JPEG chunks,
+    stream_end) is identical, so the browser/phone viewer is unchanged.
     """
-    from .screen_bridge import open_stream as open_screen, ScreenNotArmedOrDriverMissing
-
     loop = asyncio.get_event_loop()
 
     def _next_frame(it):
         try: return next(it)
         except StopIteration: return None
 
-    try:
-        frames = await loop.run_in_executor(None, open_screen)
-    except ScreenNotArmedOrDriverMissing as e:
-        raise RuntimeError(str(e))
+    if _is_android():
+        # Phone: proxy the Vortex Driver APK's MediaProjection MJPEG socket.
+        from .screen_bridge import (
+            open_stream as open_screen, ScreenNotArmedOrDriverMissing,
+        )
+        try:
+            frames = await loop.run_in_executor(None, open_screen)
+        except ScreenNotArmedOrDriverMissing as e:
+            raise RuntimeError(str(e))
+    else:
+        # Desktop: capture this machine's primary monitor via mss + Pillow.
+        from .pc_screen_bridge import open_stream as open_pc, PcCaptureUnavailable
+        q = int(args.get("quality", 60) or 60)
+        md = int(args.get("max_dim", 0) or 0)
+        fps = float(args.get("fps_cap", 10) or 10)
+
+        def _open_pc():
+            return open_pc(quality=q, max_dim=md, fps_cap=fps)
+        try:
+            frames = await loop.run_in_executor(None, _open_pc)
+        except PcCaptureUnavailable as e:
+            raise RuntimeError(str(e))
 
     await session.send_text({
         "type": "stream_start", "id": rid,

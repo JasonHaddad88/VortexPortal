@@ -3,6 +3,45 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.34] — 2026-06-20
+
+**Desktop screen mirror + remote control (real phone→PC control).**
+V5.33 made a PC discoverable in the no-hub mesh, but on a PC the agent
+still only served device_info / files / thumbnails — the `screen_stream`
+and `input` ops proxied the Android Driver APK's loopback sockets, which
+don't exist on a desktop. Now those two ops are platform-aware, so a
+phone (or any browser) gets a live screen mirror **and** click/drag
+control of a Windows / macOS / Linux box.
+
+### Agent
+- `agent/pc_screen_bridge.py` — primary-monitor capture via `mss`,
+  JPEG-encoded with Pillow, exposed as the same standalone-JPEG-frame
+  iterator the Android screen path yields. Honours `quality`, `max_dim`
+  (long-edge downscale), `fps_cap`. Raises `PcCaptureUnavailable` up
+  front (clean `ok:false`, no half-open empty stream) if the capture
+  stack is missing.
+- `agent/pc_input_bridge.py` — mouse click / press-hold / drag via
+  `pyautogui`, speaking the **exact** command schema the webapp + phone
+  peers already send (`screen_size`, `a11y_state`, `tap`, `long_press`,
+  `swipe`; `back`/`home`/`recents` correctly reported as Android-only).
+  Coordinates are real screen pixels, matching `screen_size`, so clicks
+  land where the user taps. pyautogui's corner failsafe is disabled.
+- `op_screen_stream` / `op_input` dispatch to the APK bridges on
+  Termux/Android and to the new PC bridges on a desktop, decided by
+  `_is_android()` (Termux prefix/data dir; `VORTEX_FORCE_DESKTOP=1`
+  override). No protocol or hub/webapp changes — the viewer is identical.
+
+### Launchers
+- `serve.ps1` (Windows) and `serve.sh` (non-Termux) best-effort
+  `pip install mss pyautogui` so the co-located self-register agent can
+  serve screen + control out of the box. A failed install just yields a
+  clear "pip install mss pyautogui" message on first use.
+
+### Not yet
+- No keyboard text/key injection or scroll (the current input protocol
+  has no such command types); H.264 screen encode stays APK-only; PC
+  `camera_stream` is still webcam-less. Phone-camera mirror unaffected.
+
 ## [V5.33] — 2026-06-20
 
 **Python agents join the peer mesh (closes the PC/mesh seam).** Until

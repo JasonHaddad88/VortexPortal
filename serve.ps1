@@ -123,6 +123,18 @@ if ($importCheck -ne 0) {
     }
 }
 
+# V5.34: desktop screen-mirror + remote-control deps so a phone can mirror
+# and drive THIS Windows box (the co-located self-register agent serves
+# screen_stream/input via mss + pyautogui). Best-effort: a failure just
+# means those two ops report a clear "pip install mss pyautogui" error.
+$hasDesktopCap = Invoke-NativeQuiet $VenvPython @("-c", "import mss, pyautogui")
+if ($hasDesktopCap -ne 0) {
+    Write-Host "==> Installing desktop control deps (mss, pyautogui)"
+    Invoke-NativeStreaming $VenvPython @(
+        "-m", "pip", "install", "--quiet", "mss", "pyautogui"
+    ) | Out-Null
+}
+
 # Optional: libsql-experimental for the local+remote replica DB. Only
 # attempt it if the operator actually set VORTEX_SYNC_URL. Windows has
 # prebuilt wheels so this usually just works; if it doesn't, the hub
