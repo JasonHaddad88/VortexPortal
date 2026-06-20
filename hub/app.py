@@ -2194,8 +2194,18 @@ async def ws_agent(ws: WebSocket):
         # V5.9: hand the agent the current live node list on every connect
         # (cheap, always fresh) so it can fail over without a hand-set URL.
         nodes = [n["url"] for n in db.list_node_endpoints(max_age=180)]
-        await ws.send_json({"type": "auth_ok", "name": device["name"],
-                            "nodes": nodes})
+        ack = {"type": "auth_ok", "name": device["name"], "nodes": nodes}
+        # Mesh parity: when this hub is Turso-backed, hand the agent the
+        # sync creds so it can publish itself to `device_peers` and be
+        # reachable peer-to-peer (no hub in the data path) the same way the
+        # Driver APK is — the APK already holds these creds. Local-SQLite
+        # hubs have no mesh, so we send nothing and the agent stays hub-only.
+        _su = config.get("VORTEX_SYNC_URL")
+        _st = config.get("VORTEX_SYNC_TOKEN")
+        if _su and _st:
+            ack["sync_url"] = _su
+            ack["sync_token"] = _st
+        await ws.send_json(ack)
     except Exception:
         await ws_router.registry.unregister(conn)
         return

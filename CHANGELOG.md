@@ -3,6 +3,39 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.33] — 2026-06-20
+
+**Python agents join the peer mesh (closes the PC/mesh seam).** Until
+now the Turso-direct `device_peers` mesh was Android-only: the Driver
+APK published its direct-WS endpoint so any peer could dial it without a
+hub, but the Python agent (PC / SBC / IoT / Termux) never advertised
+itself. So in the no-hub model a phone could reach another phone
+peer-to-peer but **not** a PC — "control any device from any other"
+silently excluded every non-Android target. The Python agent already
+serves the exact same direct-WS handshake the APK's `PeerClient` speaks
+(`hello` / `hello_ok`); it just wasn't discoverable. Now it is.
+
+### Agent (`agent/agent.py`)
+- New `device_peers` publisher: when Turso creds are resolvable, the
+  agent ensures the `device_peers` schema and publishes/refreshes its
+  row every 60 s — `hosts=["<ip>:<direct_port>", …]`, `port`,
+  `ticket` (= the existing one-shot direct ticket), `updated_at` —
+  mirroring the APK's `PeerRegistry` (schema, cadence, 90 s stale TTL).
+  Best-effort `DELETE` on shutdown so peers stop seeing us promptly.
+- Minimal pure-Python Hrana-over-HTTP writer (`_turso_pipeline`,
+  `_turso_http_url`, `_hrana_arg`) matching `hub/db.py` byte-for-byte;
+  `httpx` (already a dependency via `pairing.py`) imported lazily so
+  hub-only / local-SQLite deployments touch nothing new.
+- Creds resolve from `VORTEX_SYNC_URL` / `VORTEX_SYNC_TOKEN` (env wins)
+  or from cfg. No mesh configured → no-op, agent stays hub-only exactly
+  as before.
+
+### Hub (`hub/app.py`)
+- A Turso-backed hub now hands the agent `sync_url` / `sync_token` in
+  `auth_ok`, so a remote agent with no local env creds can still join
+  the mesh (the APK already holds these creds — same trust model).
+  Local-SQLite hubs send nothing; there's no mesh to join.
+
 ## [Driver-B11.16] — 2026-05-30
 
 **Hub URL auto-discovery + Termux self-host docs/boot.** Closes
