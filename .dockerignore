@@ -1,0 +1,14 @@
+# Keep the relay image tiny: only hub/ is needed (see Dockerfile).
+.git
+.github
+.venv
+logs
+bin
+driver
+agent
+scripts
+app_v1.py
+*.md
+**/__pycache__
+**/*.pyc
+.claude

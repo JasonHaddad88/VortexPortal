@@ -1,0 +1,37 @@
+# Always-on Vortex relay for any Ubuntu/Linux VM (e.g. Oracle Cloud Always
+# Free). Runs the hub + Caddy, which fetches a free Let's Encrypt TLS cert
+# automatically for your domain. Bring it up from the repo root via
+# deploy/oracle-setup.sh, or: `cd deploy && docker compose up -d --build`
+# with VORTEX_SYNC_URL / VORTEX_SYNC_TOKEN / RELAY_DOMAIN exported.
+
+services:
+  hub:
+    build:
+      context: ..              # repo root, so the build can see hub/
+      dockerfile: Dockerfile
+    environment:
+      VORTEX_SYNC_URL: ${VORTEX_SYNC_URL}
+      VORTEX_SYNC_TOKEN: ${VORTEX_SYNC_TOKEN}
+      VORTEX_HUB_PUBLIC_URL: https://${RELAY_DOMAIN}
+      APP_PORT: "8080"
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [hub]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
