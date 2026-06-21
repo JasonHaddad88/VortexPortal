@@ -27,10 +27,21 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 # --- OS firewall ------------------------------------------------------------
-# Oracle's Ubuntu images ship restrictive iptables; open 80 + 443 for Caddy.
+# Oracle's Ubuntu images ship a restrictive INPUT chain (a REJECT near the
+# end); insert ACCEPT rules ABOVE it for 80 + 443 so Caddy is reachable.
+# NOTE: this is the *host* firewall only -- you must ALSO open 80 + 443 as
+# ingress in the VM's Security List / NSG in the Oracle console.
 echo "==> Opening TCP 80 + 443 on the host firewall"
 sudo iptables -I INPUT -p tcp --dport 80  -j ACCEPT || true
 sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT || true
+# Persist across reboots (Oracle Ubuntu has iptables but not always the
+# persistence package); non-interactive so the script never blocks.
+if ! command -v netfilter-persistent >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+  echo 'iptables-persistent iptables-persistent/autosave_v4 boolean true' | sudo debconf-set-selections
+  echo 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | sudo debconf-set-selections
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent >/dev/null 2>&1 || true
+fi
 sudo netfilter-persistent save 2>/dev/null || true
 
 # --- Bring it up ------------------------------------------------------------
