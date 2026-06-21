@@ -1,0 +1,7 @@
+# Caddy auto-TLS reverse proxy in front of the hub. {$RELAY_DOMAIN} is
+# substituted from the environment at startup. Caddy obtains + renews a
+# Let's Encrypt certificate automatically, so the hub is reachable over
+# HTTPS (required for the wss:// agent connections).
+{$RELAY_DOMAIN} {
+	reverse_proxy hub:8080
+}

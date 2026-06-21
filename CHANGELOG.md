@@ -3,6 +3,30 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.39] — 2026-06-21
+
+**Cloud relay recipe — a 24/7 relay you don't have to keep a PC on for.**
+Companion to the home-PC relay (V5.38). A cloud relay is just the hub
+pointed at your shared Turso DB; it advertises itself via
+`VORTEX_HUB_PUBLIC_URL` and devices auto-discover it. Run it alongside the
+home relay for free automatic failover.
+
+- **`Dockerfile`** (repo root) + **`.dockerignore`**: minimal image — only
+  `hub/` (self-contained) + the hub's runtime deps; uses the pure-Python
+  Turso-over-HTTP backend, so no Rust/libsql build. No tunnel, no agent.
+- **`deploy/fly.toml`**: Fly.io config with built-in HTTPS;
+  `auto_stop_machines=false` + `min_machines_running=1` so the relay never
+  scales to zero (which would drop cross-network control).
+- **`deploy/docker-compose.yml` + `Caddyfile` + `oracle-setup.sh`**: an
+  Oracle Cloud Always-Free (or any Ubuntu VM) path — hub + Caddy auto-TLS;
+  the script installs Docker, opens the firewall, and brings it up.
+- **`deploy/README.md`**: both recipes end-to-end; linked from
+  GETTING-STARTED.
+
+Validated: bash/TOML/YAML syntax of all artifacts; `hub/` confirmed
+self-contained (imports nothing outside the package). Image build itself
+not run here (no Docker in the dev env).
+
 ## [V5.38] — 2026-06-21
 
 **Turnkey always-on Windows relay — "anytime" cross-network control.**

@@ -179,9 +179,10 @@ even after restarts:
 
 **Want it running even when your PC is off?** You can also run the exact
 same thing on a free, always-on cloud computer (Oracle Cloud Always Free
-or Fly.io). Run **both** if you like — your devices automatically use
-whichever is online, and fall back to the other if one goes down. Nothing
-to switch by hand.
+or Fly.io) — copy-paste recipe in [`deploy/README.md`](deploy/README.md).
+Run **both** if you like — your devices automatically use whichever is
+online, and fall back to the other if one goes down. Nothing to switch by
+hand.
 
 **Test it the honest way:** turn your phone's **Wi-Fi off** (so it's on
 cellular, a different network), open your Public URL, sign in, and control
