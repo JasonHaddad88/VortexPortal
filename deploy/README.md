@@ -87,9 +87,13 @@ the VM's public IP. Caddy gets a Let's Encrypt cert for it automatically.
 
 ### 4. Run it (on the VM)
 
-SSH in, clone this repo, then:
+SSH into the VM (`ssh ubuntu@<public-ip>` with the key you saved), then:
 
 ```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/JasonHaddad88/VortexPortal.git
+cd VortexPortal
+
 VORTEX_SYNC_URL=libsql://your-db.turso.io \
 VORTEX_SYNC_TOKEN=your-token \
 RELAY_DOMAIN=myvortex.duckdns.org \
