@@ -18,6 +18,22 @@ public URL, no plaintext passwords on disk.
 See [CHANGELOG.md](CHANGELOG.md) for the full version history. The old
 V1.2 file `app_v1.py` is kept at the repo root for one release as a fallback.
 
+## Where to run the relay
+
+Cross-network control needs one always-on, publicly-reachable **relay**
+(the hub). Pick any — or run several; devices auto-discover all of them and
+fail over automatically, nothing to switch by hand.
+
+| Option | Best for | Cost | Always-on | Setup | Guide |
+|---|---|---|---|---|---|
+| **Home Windows PC** | trying it / a PC you already leave on | free | only while the PC is on | one installer | [scripts/relay-windows/](scripts/relay-windows/README.md) |
+| **Fly.io** | easiest cloud, no domain needed | free allowance (light use) | ✅ | `fly deploy` | [deploy/ Option A](deploy/README.md#option-a--flyio-easiest-built-in-https) |
+| **Oracle Always Free** | truly free 24/7 | $0 (+ free DuckDNS domain) | ✅ | one script + a domain | [deploy/ Option B](deploy/README.md#option-b--oracle-cloud-always-free-truly-free-247) |
+
+On the **same Wi-Fi** no relay is used at all — devices connect directly.
+New to this? [GETTING-STARTED.md](GETTING-STARTED.md) walks the whole thing
+in plain English.
+
 ## What's new at a glance
 
 - **Multi-node** (V5.15+): run as many hubs as you like against a shared
