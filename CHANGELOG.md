@@ -3,6 +3,35 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.38] — 2026-06-21
+
+**Turnkey always-on Windows relay — "anytime" cross-network control.**
+Cross-network control needs one publicly-reachable, always-on box to
+bridge two NAT'd devices (same as AnyDesk's servers). The hub already
+does this and devices auto-discover its tunnel URL; the missing piece was
+making a home PC a *set-and-forget* relay. Now: keep a Windows PC on, run
+one installer, and it relays your whole fleet from anywhere.
+
+- `serve.ps1`: opt-in keep-awake (`VORTEX_KEEP_AWAKE=1`) via
+  `SetThreadExecutionState` so a relay box never sleeps mid-session; the
+  request is tied to the process and clears on exit, so interactive runs
+  are unaffected. Verified the P/Invoke on Windows.
+- `scripts/relay-windows/`:
+  - `install-relay.ps1` — registers a `VortexRelay` scheduled task that
+    starts the hub + Cloudflare tunnel + agent at logon, **in the
+    interactive session** (so the co-located agent's mss/pyautogui can
+    mirror + control this PC's real desktop), keeps it awake, and
+    auto-restarts on crash.
+  - `_run-relay.ps1` — restart-loop runner the task invokes.
+  - `uninstall-relay.ps1` — removes the task.
+  - `README.md` — why a relay is needed, install steps, unattended-reboot
+    (auto sign-in) and stable-URL (named tunnel) upgrades, and the
+    cross-network verification (open the URL from cellular).
+
+No new accounts, no port forwarding (the outbound `cloudflared` tunnel
+gives a public URL behind NAT). A free 24/7 cloud VM remains the
+alternative when you'd rather not keep a PC on.
+
 ## [V5.37] — 2026-06-21
 
 **Audit log — accountability for "control based on my account."** There
