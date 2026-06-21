@@ -3,6 +3,135 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.36] — 2026-06-21
+
+**Default account database link — zero-setup enrollment.** Goal: any
+device controls any device on the account, anytime, *with no extra
+setup*. The remaining friction was the APK's Setup screen, where a user
+had to paste a Turso URL + token before they could even sign in. Now the
+DB link can be **baked in at build time** as the account's default, so a
+fresh install goes straight to Sign-in → control.
+
+### APK
+- `build.gradle.kts`: new `BuildConfig.DEFAULT_SYNC_URL` /
+  `DEFAULT_SYNC_TOKEN`, sourced from gradle properties
+  (`vortexDefaultSyncUrl` / `vortexDefaultSyncToken`) so the real creds
+  are **never committed** — set them in `~/.gradle/gradle.properties`,
+  pass `-PvortexDefaultSyncUrl=…`, or inject from CI secrets. Empty
+  values preserve the classic manual-Setup flow byte-for-byte.
+- `Prefs.tursoUrl/tursoToken`: a user-saved value still wins; otherwise
+  fall back to the baked default. `isTursoConfigured` is therefore true
+  out of the box when a default exists, so `EntryActivity` skips
+  `SetupActivity` automatically (no routing change needed). Added
+  `usingDefaultTurso()` so Setup can show "using the built-in default."
+
+### Why this matches the model
+The hub DB is already a single shared store, multi-tenant by `owner_id`
+— so "each account's default database link" is just that one default
+endpoint, with the account login scoping every device + row. Combined
+with V5.33 (the hub hands Python agents the same creds on `auth_ok`),
+every device flavour can now reach the account DB without the user
+typing a connection string anywhere.
+
+## [V5.35] — 2026-06-21
+
+**Fix: the Screen control page was a hard 500 (regression since B11.12)
++ desktop keyboard & scroll.**
+
+### Fixed (critical)
+- `device_screen_page` never rendered: a push-to-talk protocol comment
+  added in B11.12 put unescaped single braces
+  (`{sample_rate, channels, codec, csd_base64}`, `{ok}`, `{b64_data,
+  pts}`) inside the page's f-string, so Python evaluated them as set
+  literals of undefined names and raised `NameError` on every request.
+  The whole Screen/remote-control viewer has been returning 500 since.
+  Braces escaped (`{{…}}`); page renders again (verified by rendering it
+  in a test, 60 KB). **This alone restores remote control from the web
+  dashboard.**
+
+### Desktop control completeness (V5.34 follow-up)
+- `pc_input_bridge` gains `scroll` (wheel), `key` (named keys + ctrl/alt/
+  shift/win combos via pyautogui hotkey), and `text` (literal typing);
+  `screen_size` now reports `os:"desktop"`.
+- Screen viewer: once it sees `os=="desktop"` it sends **native wheel
+  scroll** instead of a swipe (a swipe on a PC would left-drag/select),
+  and routes the **physical keyboard** to the peer — focus-scoped to the
+  screen stage (click the screen to grab it, click away to release), so
+  the rest of the dashboard is never hijacked. F5 / devtools accelerators
+  are left for the operator. Phones are unaffected (no key/text types).
+
+## [V5.34] — 2026-06-20
+
+**Desktop screen mirror + remote control (real phone→PC control).**
+V5.33 made a PC discoverable in the no-hub mesh, but on a PC the agent
+still only served device_info / files / thumbnails — the `screen_stream`
+and `input` ops proxied the Android Driver APK's loopback sockets, which
+don't exist on a desktop. Now those two ops are platform-aware, so a
+phone (or any browser) gets a live screen mirror **and** click/drag
+control of a Windows / macOS / Linux box.
+
+### Agent
+- `agent/pc_screen_bridge.py` — primary-monitor capture via `mss`,
+  JPEG-encoded with Pillow, exposed as the same standalone-JPEG-frame
+  iterator the Android screen path yields. Honours `quality`, `max_dim`
+  (long-edge downscale), `fps_cap`. Raises `PcCaptureUnavailable` up
+  front (clean `ok:false`, no half-open empty stream) if the capture
+  stack is missing.
+- `agent/pc_input_bridge.py` — mouse click / press-hold / drag via
+  `pyautogui`, speaking the **exact** command schema the webapp + phone
+  peers already send (`screen_size`, `a11y_state`, `tap`, `long_press`,
+  `swipe`; `back`/`home`/`recents` correctly reported as Android-only).
+  Coordinates are real screen pixels, matching `screen_size`, so clicks
+  land where the user taps. pyautogui's corner failsafe is disabled.
+- `op_screen_stream` / `op_input` dispatch to the APK bridges on
+  Termux/Android and to the new PC bridges on a desktop, decided by
+  `_is_android()` (Termux prefix/data dir; `VORTEX_FORCE_DESKTOP=1`
+  override). No protocol or hub/webapp changes — the viewer is identical.
+
+### Launchers
+- `serve.ps1` (Windows) and `serve.sh` (non-Termux) best-effort
+  `pip install mss pyautogui` so the co-located self-register agent can
+  serve screen + control out of the box. A failed install just yields a
+  clear "pip install mss pyautogui" message on first use.
+
+### Not yet
+- No keyboard text/key injection or scroll (the current input protocol
+  has no such command types); H.264 screen encode stays APK-only; PC
+  `camera_stream` is still webcam-less. Phone-camera mirror unaffected.
+
+## [V5.33] — 2026-06-20
+
+**Python agents join the peer mesh (closes the PC/mesh seam).** Until
+now the Turso-direct `device_peers` mesh was Android-only: the Driver
+APK published its direct-WS endpoint so any peer could dial it without a
+hub, but the Python agent (PC / SBC / IoT / Termux) never advertised
+itself. So in the no-hub model a phone could reach another phone
+peer-to-peer but **not** a PC — "control any device from any other"
+silently excluded every non-Android target. The Python agent already
+serves the exact same direct-WS handshake the APK's `PeerClient` speaks
+(`hello` / `hello_ok`); it just wasn't discoverable. Now it is.
+
+### Agent (`agent/agent.py`)
+- New `device_peers` publisher: when Turso creds are resolvable, the
+  agent ensures the `device_peers` schema and publishes/refreshes its
+  row every 60 s — `hosts=["<ip>:<direct_port>", …]`, `port`,
+  `ticket` (= the existing one-shot direct ticket), `updated_at` —
+  mirroring the APK's `PeerRegistry` (schema, cadence, 90 s stale TTL).
+  Best-effort `DELETE` on shutdown so peers stop seeing us promptly.
+- Minimal pure-Python Hrana-over-HTTP writer (`_turso_pipeline`,
+  `_turso_http_url`, `_hrana_arg`) matching `hub/db.py` byte-for-byte;
+  `httpx` (already a dependency via `pairing.py`) imported lazily so
+  hub-only / local-SQLite deployments touch nothing new.
+- Creds resolve from `VORTEX_SYNC_URL` / `VORTEX_SYNC_TOKEN` (env wins)
+  or from cfg. No mesh configured → no-op, agent stays hub-only exactly
+  as before.
+
+### Hub (`hub/app.py`)
+- A Turso-backed hub now hands the agent `sync_url` / `sync_token` in
+  `auth_ok`, so a remote agent with no local env creds can still join
+  the mesh (the APK already holds these creds — same trust model).
+  Local-SQLite hubs send nothing; there's no mesh to join.
+
 ## [Driver-B11.16] — 2026-05-30
 
 **Hub URL auto-discovery + Termux self-host docs/boot.** Closes

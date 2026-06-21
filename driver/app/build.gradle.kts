@@ -13,6 +13,20 @@ android {
         targetSdk = 34       // Android 14
         versionCode = 36
         versionName = "0.28.0-b11.16"
+
+        // V5.36: baked DEFAULT account database link, so a fresh install
+        // needs ZERO manual DB setup -- the app points at the account's
+        // default Turso DB out of the box and the user just signs in
+        // (Prefs.tursoUrl/Token fall back to these; EntryActivity then
+        // skips SetupActivity). Provide real values WITHOUT committing
+        // them: set vortexDefaultSyncUrl / vortexDefaultSyncToken in
+        // ~/.gradle/gradle.properties, or pass -PvortexDefaultSyncUrl=...
+        // (CI injects them from repo secrets). Empty -> classic manual
+        // Setup flow, unchanged.
+        buildConfigField("String", "DEFAULT_SYNC_URL",
+            "\"${project.findProperty("vortexDefaultSyncUrl") ?: ""}\"")
+        buildConfigField("String", "DEFAULT_SYNC_TOKEN",
+            "\"${project.findProperty("vortexDefaultSyncToken") ?: ""}\"")
     }
 
     buildTypes {

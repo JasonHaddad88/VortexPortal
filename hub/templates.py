@@ -2620,6 +2620,7 @@ def device_screen_page(user: dict, device: dict) -> str:
   // screen) which is approximately correct -- ScreenEngine downscales
   // proportionally so the relative ratios match.
   let realScreen = null;
+  let _peerIsDesktop = false;   // V5.34: true once screen_size reports os=="desktop"
 
   async function loadScreenSize() {{
     try {{
@@ -2628,6 +2629,8 @@ def device_screen_page(user: dict, device: dict) -> str:
       const data = await r.json();
       if (data.ok && data.result && data.result.w && data.result.h) {{
         realScreen = {{w: data.result.w, h: data.result.h}};
+        _peerIsDesktop = (data.result.os === 'desktop');
+        if (_peerIsDesktop) setStatus('desktop peer — click the screen, then type / scroll');
       }}
     }} catch (e) {{}}
   }}
@@ -2765,9 +2768,9 @@ def device_screen_page(user: dict, device: dict) -> str:
   // Chrome 94+). On older browsers the 🎤 button stays hidden.
   // Wire shape uses the same direct WS the input fast-path already
   // owns -- three unary ops the peer side handles:
-  //   mic_open({sample_rate, channels, codec, csd_base64}) -> {ok}
-  //   mic_chunk({b64_data, pts})                            -> {ok}
-  //   mic_close()                                           -> {ok}
+  //   mic_open({{sample_rate, channels, codec, csd_base64}}) -> {{ok}}
+  //   mic_chunk({{b64_data, pts}})                            -> {{ok}}
+  //   mic_close()                                           -> {{ok}}
   let _micStream = null, _micProcessor = null, _micReader = null;
   let _micEncoder = null, _micOpenSent = false;
   const _micBtn = document.getElementById('scr-mic');
@@ -3311,6 +3314,9 @@ def device_screen_page(user: dict, device: dict) -> str:
       if (evt.button !== 0 && evt.button !== 2) return;  // only left + right
       const c = toPhoneCoords(img, evt);
       if (!c) return;
+      // Grab keyboard focus so a desktop peer receives our keystrokes;
+      // harmless for phones (the keydown handler no-ops unless desktop).
+      try {{ stage.focus(); }} catch (_) {{}}
       downCoords = c;
       downAt = performance.now();
     }});
@@ -3359,8 +3365,16 @@ def device_screen_page(user: dict, device: dict) -> str:
       }}
       const c = toPhoneCoords(img, evt);
       if (!c) return;
-      // ~60 px per notch, capped. Negate so wheel-down scrolls
-      // content up on the peer.
+      if (_peerIsDesktop) {{
+        // Desktop peer: real wheel scroll (a swipe here would left-drag
+        // and select/move things). pyautogui treats +dy as scroll-up, so
+        // wheel-up (deltaY<0) -> +notches keeps direction natural.
+        postInput({{type: 'scroll', x: c[0], y: c[1],
+                    dy: (evt.deltaY < 0 ? 1 : -1) * 3}});
+        return;
+      }}
+      // Phone peer: emulate a scroll via a short swipe. ~60 px per notch,
+      // capped. Negate so wheel-down scrolls content up on the peer.
       const stepPx = Math.max(40, Math.min(200, Math.abs(evt.deltaY)));
       const dy = (evt.deltaY < 0 ? 1 : -1) * stepPx;
       postInput({{
@@ -3383,6 +3397,41 @@ def device_screen_page(user: dict, device: dict) -> str:
   document.getElementById('nav-home').addEventListener('click', () => postInput({{type: 'home'}}));
   document.getElementById('nav-recents').addEventListener('click', () => postInput({{type: 'recents'}}));
   document.getElementById('nav-notifs').addEventListener('click', () => postInput({{type: 'notifications'}}));
+
+  // V5.34: desktop keyboard passthrough. Scoped to the stage's keyboard
+  // focus so we never hijack the rest of the dashboard -- click the
+  // screen to grab the keyboard, click away to release it. Only active
+  // for a desktop peer (phones have no key/text command types).
+  function _keyToCmd(evt) {{
+    const mods = [];
+    if (evt.ctrlKey) mods.push('ctrl');
+    if (evt.altKey) mods.push('alt');
+    if (evt.shiftKey) mods.push('shift');
+    if (evt.metaKey) mods.push('win');
+    const k = evt.key;
+    // A lone printable char (no ctrl/alt/meta) -> type it verbatim so
+    // shifted symbols stay correct without re-mapping the layout.
+    if (k.length === 1 && !evt.ctrlKey && !evt.altKey && !evt.metaKey) {{
+      return {{type: 'text', text: k}};
+    }}
+    const SPECIAL = {{
+      'ArrowUp':'up','ArrowDown':'down','ArrowLeft':'left','ArrowRight':'right',
+      'Enter':'enter','Backspace':'backspace','Tab':'tab','Escape':'esc',
+      ' ':'space','Delete':'delete','Home':'home','End':'end',
+      'PageUp':'pageup','PageDown':'pagedown'
+    }};
+    const key = SPECIAL[k] || k.toLowerCase();
+    return {{type: 'key', key: key, modifiers: mods}};
+  }}
+  try {{ stage.tabIndex = 0; stage.style.outline = 'none'; }} catch (_) {{}}
+  stage.addEventListener('keydown', (evt) => {{
+    if (!_peerIsDesktop) return;
+    // Leave the operator's refresh / devtools accelerators alone.
+    if (evt.key === 'F5' ||
+        (evt.ctrlKey && evt.shiftKey && (evt.key === 'I' || evt.key === 'J'))) return;
+    evt.preventDefault();
+    postInput(_keyToCmd(evt));
+  }});
 
   // Pre-warm the screen-size lookup on page load so taps work even before
   // streaming starts (e.g., user just wants to fire a Back press).

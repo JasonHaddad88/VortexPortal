@@ -25,6 +25,7 @@ import os
 import secrets
 import socket
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +46,23 @@ SEND_TIMEOUT = 30.0
 # Termux + flaky network users can tune higher via env without code changes.
 PING_INTERVAL = float(os.environ.get("VORTEX_PING_INTERVAL", "30"))
 PING_TIMEOUT = float(os.environ.get("VORTEX_PING_TIMEOUT", "60"))
+
+
+def _is_android() -> bool:
+    """Is this agent running under Termux on Android? On a phone the
+    screen/input ops proxy the Vortex Driver APK's loopback sockets; on a
+    desktop OS they capture/inject locally via mss + pyautogui instead.
+    Detection keys on Termux's prefix/data dir (always present) rather
+    than `platform.system()` (Termux reports plain 'Linux'). Override with
+    VORTEX_FORCE_DESKTOP=1 to force the PC path (e.g. an x86 Android box
+    with a real display)."""
+    if os.environ.get("VORTEX_FORCE_DESKTOP"):
+        return False
+    if os.environ.get("TERMUX_VERSION"):
+        return True
+    if "com.termux" in (os.environ.get("PREFIX") or ""):
+        return True
+    return os.path.isdir("/data/data/com.termux/files")
 
 
 def _storage_root() -> Path:
@@ -854,12 +872,21 @@ def op_input(args: dict) -> dict:
     result; on `ok:true` with no payload we return `{"acked": true}` so
     the hub still has something to JSON-serialise.
     """
-    from .input_bridge import (
-        send_command, DriverNotAvailable, DriverInputError,
-    )
     cmd = args.get("command")
     if not isinstance(cmd, dict):
         raise ValueError("op_input expects args.command to be an object")
+    # Desktop: inject locally via pyautogui (same command schema).
+    if not _is_android():
+        from .pc_input_bridge import dispatch, PcInputUnavailable
+        try:
+            result = dispatch(cmd)
+        except PcInputUnavailable as e:
+            raise RuntimeError(str(e))
+        return result if result is not None else {"acked": True}
+    # Android/Termux: forward to the Vortex Driver APK's input socket.
+    from .input_bridge import (
+        send_command, DriverNotAvailable, DriverInputError,
+    )
     try:
         result = send_command(cmd)
     except DriverNotAvailable as e:
@@ -872,26 +899,46 @@ def op_input(args: dict) -> dict:
 
 
 async def op_screen_stream(session: "Session", rid: str, args: dict) -> None:
-    """Real-time screen capture from the Vortex Driver APK (V5.0-M2).
+    """Real-time screen mirror, MJPEG (V5.0-M2 phone · V5.34 desktop).
 
-    Same shape as op_camera_stream but talks to the screen socket on
-    127.0.0.1:5098. The driver only delivers frames when the user has
-    armed screen sharing in the Driver app (system MediaProjection
-    consent dialog accepted); otherwise the connect succeeds but no
-    frames arrive and we time out cleanly.
+    Two frame sources behind one op, chosen by platform:
+      * Android/Termux -> the Vortex Driver APK's MediaProjection socket
+        on 127.0.0.1:5098 (only delivers frames once the user has armed
+        screen sharing; otherwise the read times out cleanly).
+      * Desktop (Win/macOS/Linux) -> this machine's primary monitor via
+        mss + Pillow (`pc_screen_bridge`), honouring `quality`, `max_dim`,
+        `fps_cap` args.
+    Either way the rest of the pipeline (stream_start, JPEG chunks,
+    stream_end) is identical, so the browser/phone viewer is unchanged.
     """
-    from .screen_bridge import open_stream as open_screen, ScreenNotArmedOrDriverMissing
-
     loop = asyncio.get_event_loop()
 
     def _next_frame(it):
         try: return next(it)
         except StopIteration: return None
 
-    try:
-        frames = await loop.run_in_executor(None, open_screen)
-    except ScreenNotArmedOrDriverMissing as e:
-        raise RuntimeError(str(e))
+    if _is_android():
+        # Phone: proxy the Vortex Driver APK's MediaProjection MJPEG socket.
+        from .screen_bridge import (
+            open_stream as open_screen, ScreenNotArmedOrDriverMissing,
+        )
+        try:
+            frames = await loop.run_in_executor(None, open_screen)
+        except ScreenNotArmedOrDriverMissing as e:
+            raise RuntimeError(str(e))
+    else:
+        # Desktop: capture this machine's primary monitor via mss + Pillow.
+        from .pc_screen_bridge import open_stream as open_pc, PcCaptureUnavailable
+        q = int(args.get("quality", 60) or 60)
+        md = int(args.get("max_dim", 0) or 0)
+        fps = float(args.get("fps_cap", 10) or 10)
+
+        def _open_pc():
+            return open_pc(quality=q, max_dim=md, fps_cap=fps)
+        try:
+            frames = await loop.run_in_executor(None, _open_pc)
+        except PcCaptureUnavailable as e:
+            raise RuntimeError(str(e))
 
     await session.send_text({
         "type": "stream_start", "id": rid,
@@ -1202,6 +1249,150 @@ def _ensure_direct_server() -> None:
     asyncio.ensure_future(_boot())
 
 
+# ---------------------------------------------------------------------------
+# Driver-B11 mesh parity: publish ourselves to the `device_peers` table.
+#
+# In the Turso-direct model the Vortex Driver APK publishes its direct-WS
+# endpoint to a small `device_peers` table so ANY peer (another phone, the
+# webapp) can dial it directly — no hub in the data path. The Python agent
+# already serves the SAME direct-WS handshake (`hello` / `hello_ok`, see
+# `_direct_handler`) that the APK's `PeerClient` speaks, but it never
+# advertised itself, so a phone could not reach a PC / SBC / IoT box without
+# a hub relaying. That asymmetry broke "control any device from any other"
+# in the no-hub mesh. Here we close it: whenever Turso creds are known —
+# from the environment or pushed by a Turso-backed hub on `auth_ok` — we
+# publish + keep refreshing this device's row exactly like the APK does.
+#
+# Schema + cadence mirror PeerRegistry.kt (rows stale after ~90 s; refresh
+# every 60 s; ticket is our existing one-shot direct ticket).
+# ---------------------------------------------------------------------------
+_PEER_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS device_peers ("
+    "device_id TEXT PRIMARY KEY, hosts TEXT NOT NULL, port INTEGER, "
+    "ticket TEXT NOT NULL, updated_at INTEGER NOT NULL)"
+)
+_PEER_REFRESH_SEC = 60
+_peer_pub_started = False
+
+
+def _sync_creds(cfg: dict) -> tuple:
+    """Resolve (sync_url, sync_token) for the peer mesh. Env wins (lets a
+    relay/IoT box set it explicitly); otherwise the creds a Turso-backed
+    hub handed us on auth_ok. Returns (None, None) when no mesh is
+    configured — then we simply stay hub-only, same as before."""
+    url = (os.environ.get("VORTEX_SYNC_URL") or cfg.get("sync_url") or "").strip()
+    tok = (os.environ.get("VORTEX_SYNC_TOKEN") or cfg.get("sync_token") or "").strip()
+    return (url, tok) if url and tok else (None, None)
+
+
+def _turso_http_url(sync_url: str) -> str:
+    """libsql://host -> https://host (Hrana-over-HTTP base). Mirrors
+    hub/db.py::_turso_http_url so we hit the identical endpoint."""
+    u = (sync_url or "").strip()
+    if u.startswith("libsql://"):
+        u = "https://" + u[len("libsql://"):]
+    elif u.startswith("wss://"):
+        u = "https://" + u[len("wss://"):]
+    elif u.startswith("ws://"):
+        u = "http://" + u[len("ws://"):]
+    return u.rstrip("/")
+
+
+def _hrana_arg(v) -> dict:
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": str(int(v))}
+    if isinstance(v, int):
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    return {"type": "text", "value": str(v)}
+
+
+async def _turso_pipeline(client, endpoint: str, headers: dict, stmts: list) -> None:
+    """One Hrana `/v2/pipeline` round-trip (write-only; we ignore rows).
+    Raises RuntimeError on transport or SQL error. Matches the request
+    shape of hub/db.py::_TursoHttpBackend._pipeline byte-for-byte."""
+    body = {"requests": [
+        {"type": "execute",
+         "stmt": {"sql": sql,
+                  "args": [_hrana_arg(p) for p in params],
+                  "want_rows": False}}
+        for sql, params in stmts
+    ] + [{"type": "close"}]}
+    r = await client.post(endpoint, headers=headers, content=json.dumps(body))
+    if r.status_code != 200:
+        raise RuntimeError(f"Turso HTTP {r.status_code}: {r.text[:200]}")
+    for item in r.json().get("results", []):
+        if item.get("type") == "error":
+            err = item.get("error") or {}
+            raise RuntimeError(f"Turso error: {err.get('message') or err}")
+
+
+async def _peer_publish_loop(cfg: dict, url: str, tok: str) -> None:
+    import httpx  # already a dependency (pairing.py); lazy so no-mesh paths
+                  # never touch it.
+    endpoint = _turso_http_url(url) + "/v2/pipeline"
+    headers = {"Content-Type": "application/json"}
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    device_id = cfg.get("device_id")
+    client = httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=6.0))
+    schema_ok = False
+    print(f"==> Peer mesh: publishing {device_id} to device_peers "
+          f"(port {_DIRECT_PORT}, refresh {_PEER_REFRESH_SEC}s)")
+    try:
+        while True:
+            try:
+                if not schema_ok:
+                    await _turso_pipeline(client, endpoint, headers,
+                                          [(_PEER_SCHEMA, ())])
+                    schema_ok = True
+                # hosts already carry the port, e.g. "192.168.1.5:8770" —
+                # PeerClient dials ws://<host>/ws/direct?ticket=… verbatim.
+                hosts = [f"{h}:{_DIRECT_PORT}" for h in _local_hosts()]
+                await _turso_pipeline(client, endpoint, headers, [(
+                    "INSERT OR REPLACE INTO device_peers "
+                    "(device_id, hosts, port, ticket, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (device_id, json.dumps(hosts), _DIRECT_PORT,
+                     _DIRECT_TICKET, int(time.time())),
+                )])
+            except Exception as e:
+                # Transient (DB asleep, link flap): log once, keep the row
+                # fresh on the next tick. Force a schema re-check in case
+                # the failure was a missing table on a brand-new DB.
+                print(f"!! peer publish failed: {e}", file=sys.stderr)
+                schema_ok = False
+            await asyncio.sleep(_PEER_REFRESH_SEC)
+    finally:
+        # Best-effort retract so peers stop seeing us the moment we exit
+        # (mirrors PeerRegistry.retract on the APK's sign-out).
+        try:
+            await _turso_pipeline(client, endpoint, headers, [(
+                "DELETE FROM device_peers WHERE device_id = ?", (device_id,))])
+        except Exception:
+            pass
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
+
+def _ensure_peer_publisher(cfg: dict) -> None:
+    """Start the device_peers publisher once, if a direct server is up and
+    Turso creds are resolvable. No-op otherwise (hub-only stays hub-only)."""
+    global _peer_pub_started
+    if _peer_pub_started or _DIRECT_PORT <= 0:
+        return
+    url, tok = _sync_creds(cfg)
+    if not (url and tok):
+        return
+    _peer_pub_started = True
+    asyncio.ensure_future(_peer_publish_loop(cfg, url, tok))
+
+
 async def _connect_once(cfg: dict, base_url: str) -> Optional[bool]:
     """Connect to one node, auth, serve until the WS closes. Returns:
         True  -> connection ended normally (try reconnect)
@@ -1269,10 +1460,28 @@ async def _connect_once(cfg: dict, base_url: str) -> Optional[bool]:
                     save_config(cfg)
             except Exception:
                 pass
+            # Mesh parity: a Turso-backed hub hands us the sync creds so we
+            # can publish ourselves to `device_peers` and be reachable
+            # peer-to-peer (e.g. phone -> this PC) with no hub in the data
+            # path — exactly like the Driver APK. Persist them so a later
+            # offline boot can still publish from cached creds.
+            try:
+                su = (ack_msg.get("sync_url") or "").strip()
+                st = (ack_msg.get("sync_token") or "").strip()
+                if su and st and (cfg.get("sync_url") != su
+                                  or cfg.get("sync_token") != st):
+                    cfg["sync_url"] = su
+                    cfg["sync_token"] = st
+                    save_config(cfg)
+            except Exception:
+                pass
             # V5.16: stand up the direct-connect server (once) and tell
             # the hub our reachable addresses + ticket so a browser on
             # the same LAN/mesh can bypass the hub for low latency.
             _ensure_direct_server()
+            # Driver-B11 parity: also advertise to the device_peers mesh so
+            # peers can dial us directly without any hub (starts once).
+            _ensure_peer_publisher(cfg)
             try:
                 await ws.send(json.dumps(_direct_info_msg()))
             except Exception:

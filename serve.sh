@@ -132,6 +132,14 @@ else
     if ! "$VPY" -c 'import PIL' 2>/dev/null; then
         "$VPY" -m pip install --quiet Pillow 2>/dev/null || true
     fi
+    # V5.34: desktop screen-mirror + remote-control deps (mss, pyautogui).
+    # Only meaningful off Termux (a PC being controlled); best-effort so a
+    # headless/SBC agent that can't build them still runs every other op.
+    if [ -z "${TERMUX_VERSION:-}" ] && [ ! -d /data/data/com.termux/files ]; then
+        if ! "$VPY" -c 'import mss, pyautogui' 2>/dev/null; then
+            "$VPY" -m pip install --quiet mss pyautogui 2>/dev/null || true
+        fi
+    fi
 fi
 
 # ----------------------------------------------------------------------------
