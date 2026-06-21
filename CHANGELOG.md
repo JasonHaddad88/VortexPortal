@@ -3,6 +3,33 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.35] — 2026-06-21
+
+**Fix: the Screen control page was a hard 500 (regression since B11.12)
++ desktop keyboard & scroll.**
+
+### Fixed (critical)
+- `device_screen_page` never rendered: a push-to-talk protocol comment
+  added in B11.12 put unescaped single braces
+  (`{sample_rate, channels, codec, csd_base64}`, `{ok}`, `{b64_data,
+  pts}`) inside the page's f-string, so Python evaluated them as set
+  literals of undefined names and raised `NameError` on every request.
+  The whole Screen/remote-control viewer has been returning 500 since.
+  Braces escaped (`{{…}}`); page renders again (verified by rendering it
+  in a test, 60 KB). **This alone restores remote control from the web
+  dashboard.**
+
+### Desktop control completeness (V5.34 follow-up)
+- `pc_input_bridge` gains `scroll` (wheel), `key` (named keys + ctrl/alt/
+  shift/win combos via pyautogui hotkey), and `text` (literal typing);
+  `screen_size` now reports `os:"desktop"`.
+- Screen viewer: once it sees `os=="desktop"` it sends **native wheel
+  scroll** instead of a swipe (a swipe on a PC would left-drag/select),
+  and routes the **physical keyboard** to the peer — focus-scoped to the
+  screen stage (click the screen to grab it, click away to release), so
+  the rest of the dashboard is never hijacked. F5 / devtools accelerators
+  are left for the operator. Phones are unaffected (no key/text types).
+
 ## [V5.34] — 2026-06-20
 
 **Desktop screen mirror + remote control (real phone→PC control).**
