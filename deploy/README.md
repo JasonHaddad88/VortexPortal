@@ -55,38 +55,62 @@ page. Your devices will discover it within a minute.
 
 ---
 
-## Option B — Oracle Cloud Always Free (truly free 24/7; needs a domain)
+## Option B — Oracle Cloud Always Free (truly free 24/7)
 
-A free Ampere VM that never sleeps. Auto-HTTPS via Caddy + a domain you
-own ([`docker-compose.yml`](docker-compose.yml) + [`Caddyfile`](Caddyfile)).
+A free VM that never sleeps. Auto-HTTPS via Caddy + a domain you point at
+it ([`docker-compose.yml`](docker-compose.yml) + [`Caddyfile`](Caddyfile)).
+Total cost can be **$0** (free VM + a free DuckDNS domain).
 
-**First, in the Oracle console / your DNS:**
-1. Create an **Always Free** Ubuntu VM; note its **public IP**.
-2. In the VM's **Security List / NSG**, add **ingress** for TCP **80** and
-   **443**.
-3. Point a domain's **DNS A record** at that public IP
-   (e.g. `vortex.yourdomain.com`).
+### 1. Create the VM (Oracle console)
 
-**Then, on the VM** (clone this repo first):
+- Compute → Instances → **Create**. Choose an **Always Free** shape:
+  **Ampere A1 (ARM)** is the most generous and works fine — the Docker
+  image is multi-arch, so ARM "just works." (If you see *"out of host
+  capacity,"* retry later or pick a different Availability Domain/region;
+  it's a known Always-Free quirk, not your setup.)
+- Image: **Ubuntu**. Save the SSH key it offers. Note the **public IP**.
+
+### 2. Open BOTH firewalls for 80 + 443
+
+Oracle has **two** firewalls — open both, or HTTPS won't reach Caddy:
+- **Cloud:** the VM's subnet **Security List** (or the instance's **NSG**)
+  → add **ingress** rules: source `0.0.0.0/0`, TCP **80** and **443**.
+- **Host:** the Ubuntu `iptables` — **the setup script does this for you**
+  (and makes it survive reboots).
+
+### 3. Point a domain at the IP
+
+Any domain works. **Free option:** [duckdns.org](https://www.duckdns.org)
+→ sign in, create a subdomain (e.g. `myvortex.duckdns.org`), set its IP to
+the VM's public IP. Caddy gets a Let's Encrypt cert for it automatically.
+(Or use a domain you own: add an **A record** → the VM IP.)
+
+### 4. Run it (on the VM)
+
+SSH in, clone this repo, then:
 
 ```bash
 VORTEX_SYNC_URL=libsql://your-db.turso.io \
 VORTEX_SYNC_TOKEN=your-token \
-RELAY_DOMAIN=vortex.yourdomain.com \
+RELAY_DOMAIN=myvortex.duckdns.org \
   bash deploy/oracle-setup.sh
 ```
 
-It installs Docker, opens the firewall, and starts the hub + Caddy. Caddy
-fetches a Let's Encrypt cert on first hit. Verify from your laptop:
+It installs Docker, opens the host firewall (persistently), and starts the
+hub + Caddy. Caddy fetches the TLS cert on the first request. Verify from
+your laptop:
 
 ```bash
-curl -I https://vortex.yourdomain.com/login     # expect HTTP 200
+curl -I https://myvortex.duckdns.org/login      # expect HTTP 200
 ```
 
-No domain? Either grab a cheap/free one, or run `cloudflared` on the VM
-exactly like the home-PC relay (see
-[`scripts/relay-windows/README.md`](../scripts/relay-windows/README.md)
-for the named-tunnel idea) instead of Caddy.
+If the cert doesn't appear in ~30s: double-check DNS resolves to the VM IP
+(`nslookup myvortex.duckdns.org`) and that **both** firewalls allow 80/443
+— Caddy needs port 80 reachable to validate the certificate.
+
+**No domain at all?** Run `cloudflared` on the VM exactly like the home-PC
+relay (see [`scripts/relay-windows/README.md`](../scripts/relay-windows/README.md)'s
+named-tunnel note) instead of Caddy.
 
 ---
 
