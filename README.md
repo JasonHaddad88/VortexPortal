@@ -10,6 +10,11 @@ screen, camera) go **browser ↔ device direct** when the LAN allows,
 falling back to a transparent hub relay otherwise — no per-device
 public URL, no plaintext passwords on disk.
 
+> **New here / not very technical?** Start with
+> **[GETTING-STARTED.md](GETTING-STARTED.md)** — a plain-English, click-by-click
+> guide from nothing to controlling your devices from anywhere. The rest of
+> this README is the technical reference.
+
 See [CHANGELOG.md](CHANGELOG.md) for the full version history. The old
 V1.2 file `app_v1.py` is kept at the repo root for one release as a fallback.
 
