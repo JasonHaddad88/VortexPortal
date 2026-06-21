@@ -3,6 +3,30 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.37] — 2026-06-21
+
+**Audit log — accountability for "control based on my account."** There
+was no record of who did what to which device. Added an append-only,
+account-scoped audit trail focused on the **sensitive, discrete**
+actions; high-frequency input (taps / keystrokes / scroll) is
+deliberately *not* logged per-event (it would flood the table and add a
+DB write per keystroke).
+
+- `audit_log` table (auto-migrates via `CREATE TABLE IF NOT EXISTS` on
+  both SQLite + Turso backends) + `db.record_audit(...)` (best-effort,
+  never raises into the audited op) and account-scoped `db.list_audit()`.
+- Hooked at: covert captures (photo / audio / location, via the single
+  `_capture_to_store` chokepoint — logged whatever the trigger),
+  Theft-Mode **arm** / **disarm**, and device **file writes** (success
+  and failure).
+- New **/audit** page (in the top nav) + **/api/audit** JSON, both
+  account-scoped. Snapshots the actor's username so rows survive user
+  deletion.
+
+Verified end-to-end against a real SQLite DB: recording, newest-first
+ordering, cross-account isolation (one account never sees another's
+rows), failure rows, and page render.
+
 ## [V5.36] — 2026-06-21
 
 **Default account database link — zero-setup enrollment.** Goal: any
