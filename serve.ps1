@@ -167,6 +167,26 @@ if (-not (Test-Path $CloudflaredExe)) {
 }
 
 # ---------------------------------------------------------------------------
+# Keep-awake (relay mode). Opt-in via VORTEX_KEEP_AWAKE=1 -- the relay
+# Scheduled Task sets it so an always-on relay box never sleeps mid-session.
+# SetThreadExecutionState ties the request to THIS process, so it clears
+# automatically on exit; interactive `.\serve.ps1` runs are unaffected.
+# ---------------------------------------------------------------------------
+if ($env:VORTEX_KEEP_AWAKE) {
+    try {
+        Add-Type -Namespace Vortex -Name Power -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+public static extern uint SetThreadExecutionState(uint esFlags);
+'@
+        # ES_CONTINUOUS (0x80000000) | ES_SYSTEM_REQUIRED (0x00000001)
+        [void][Vortex.Power]::SetThreadExecutionState([uint32]"0x80000001")
+        Write-Host "==> Keep-awake on (won't sleep while relaying)" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "keep-awake unavailable: $_" -ForegroundColor Yellow
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Start uvicorn
 # ---------------------------------------------------------------------------
 Write-Host "==> Starting Vortex Hub on 127.0.0.1:$AppPort"
