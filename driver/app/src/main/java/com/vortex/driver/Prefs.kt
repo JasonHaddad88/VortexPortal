@@ -36,12 +36,25 @@ object Prefs {
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
     // ---- B11: Turso DB credentials (Setup screen). ----
+    // V5.36: a user-saved value always wins; otherwise we fall back to the
+    // DEFAULT account database link baked in at build time
+    // (BuildConfig.DEFAULT_SYNC_*). With a default baked, a fresh install
+    // is already "configured" -> EntryActivity skips Setup and the user
+    // just signs in. No default baked -> these stay null and the classic
+    // manual Setup flow is unchanged.
     fun tursoUrl(ctx: Context): String? =
-        prefs(ctx).getString(K_TURSO_URL, null)
+        prefs(ctx).getString(K_TURSO_URL, null)?.takeIf { it.isNotBlank() }
+            ?: BuildConfig.DEFAULT_SYNC_URL.takeIf { it.isNotBlank() }
     fun tursoToken(ctx: Context): String? =
-        prefs(ctx).getString(K_TURSO_TOKEN, null)
+        prefs(ctx).getString(K_TURSO_TOKEN, null)?.takeIf { it.isNotBlank() }
+            ?: BuildConfig.DEFAULT_SYNC_TOKEN.takeIf { it.isNotBlank() }
     fun isTursoConfigured(ctx: Context): Boolean =
         !tursoUrl(ctx).isNullOrBlank() && !tursoToken(ctx).isNullOrBlank()
+    /** True when the effective DB link comes from the baked default rather
+     *  than a value the user pasted (lets Setup show "using default"). */
+    fun usingDefaultTurso(ctx: Context): Boolean =
+        prefs(ctx).getString(K_TURSO_URL, null).isNullOrBlank() &&
+        BuildConfig.DEFAULT_SYNC_URL.isNotBlank()
 
     fun saveTurso(ctx: Context, url: String, token: String) {
         prefs(ctx).edit()

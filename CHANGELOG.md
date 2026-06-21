@@ -3,6 +3,36 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.36] — 2026-06-21
+
+**Default account database link — zero-setup enrollment.** Goal: any
+device controls any device on the account, anytime, *with no extra
+setup*. The remaining friction was the APK's Setup screen, where a user
+had to paste a Turso URL + token before they could even sign in. Now the
+DB link can be **baked in at build time** as the account's default, so a
+fresh install goes straight to Sign-in → control.
+
+### APK
+- `build.gradle.kts`: new `BuildConfig.DEFAULT_SYNC_URL` /
+  `DEFAULT_SYNC_TOKEN`, sourced from gradle properties
+  (`vortexDefaultSyncUrl` / `vortexDefaultSyncToken`) so the real creds
+  are **never committed** — set them in `~/.gradle/gradle.properties`,
+  pass `-PvortexDefaultSyncUrl=…`, or inject from CI secrets. Empty
+  values preserve the classic manual-Setup flow byte-for-byte.
+- `Prefs.tursoUrl/tursoToken`: a user-saved value still wins; otherwise
+  fall back to the baked default. `isTursoConfigured` is therefore true
+  out of the box when a default exists, so `EntryActivity` skips
+  `SetupActivity` automatically (no routing change needed). Added
+  `usingDefaultTurso()` so Setup can show "using the built-in default."
+
+### Why this matches the model
+The hub DB is already a single shared store, multi-tenant by `owner_id`
+— so "each account's default database link" is just that one default
+endpoint, with the account login scoping every device + row. Combined
+with V5.33 (the hub hands Python agents the same creds on `auth_ok`),
+every device flavour can now reach the account DB without the user
+typing a connection string anywhere.
+
 ## [V5.35] — 2026-06-21
 
 **Fix: the Screen control page was a hard 500 (regression since B11.12)
