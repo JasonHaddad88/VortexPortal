@@ -853,6 +853,7 @@ def page(title: str, body: str, *, user: Optional[dict] = None,
             ("/", "Dashboard"),
             ("/pair", "Add Device"),
             ("/theft", "Theft"),
+            ("/audit", "Audit"),
         ]
         if user and user.get("is_admin"):
             nav_items.append(("/admin/invites", "Invites"))
@@ -3640,6 +3641,46 @@ def admin_invites_page(user: dict, invites: list, hub_url: str) -> str:
   </form>
 </div>"""
     return page("Invites", body, user=user, active="/admin/invites")
+
+
+def audit_page(user: dict, events: list) -> str:
+    """V5.37: account-scoped audit of sensitive actions."""
+    import time as _t
+    rows = []
+    for e in events:
+        when = _t.strftime("%Y-%m-%d %H:%M:%S", _t.localtime(e.get("ts") or 0))
+        actor = escape(e.get("actor_name") or "—")
+        dev = escape(e.get("device_id") or "—")
+        action = escape(e.get("action") or "")
+        detail = escape(e.get("detail") or "")
+        fail = "" if e.get("ok", 1) else ' style="color:var(--red,#ff6b6b)"'
+        rows.append(
+            f'<tr{fail}><td style="white-space:nowrap;color:var(--muted)">{when}</td>'
+            f"<td>{actor}</td><td><code>{action}</code></td><td>{dev}</td>"
+            f'<td style="color:var(--muted)">{detail}</td></tr>'
+        )
+    rows_html = "".join(rows) if rows else (
+        '<tr><td colspan="5" class="empty">No audit events yet.</td></tr>'
+    )
+    body = f"""
+<div class="section-head"><h2>// Audit Log</h2></div>
+<p style="color:var(--muted);font-size:.85rem;max-width:640px">
+  Sensitive actions on your account: covert captures (camera / audio /
+  location), Theft-Mode arm &amp; disarm, and file writes to a device.
+  High-frequency input (taps / keystrokes / scroll) is deliberately not
+  logged per-event. Newest first.
+</p>
+<div class="card" style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+    <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--surface-2)">
+      <th style="padding:.4rem">Time</th><th style="padding:.4rem">Who</th>
+      <th style="padding:.4rem">Action</th><th style="padding:.4rem">Device</th>
+      <th style="padding:.4rem">Detail</th>
+    </tr></thead>
+    <tbody>{rows_html}</tbody>
+  </table>
+</div>"""
+    return page("Audit", body, user=user, active="/audit")
 
 
 # ---------------------------------------------------------------------------

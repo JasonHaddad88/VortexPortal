@@ -137,6 +137,20 @@ CREATE TABLE IF NOT EXISTS device_presence (
     node_url  TEXT    NOT NULL,
     last_seen INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         INTEGER NOT NULL,
+    owner_id   INTEGER,            -- account the target device belongs to
+    actor_id   INTEGER,            -- users.id who acted (null = device/system)
+    actor_name TEXT,               -- username snapshot (survives user deletion)
+    device_id  TEXT,               -- target device id (no FK: keep rows post-delete)
+    action     TEXT    NOT NULL,   -- e.g. input / file_write / theft_arm / camera_capture
+    detail     TEXT,               -- short human detail (input type, path, ...)
+    node_url   TEXT,               -- which hub node served the action
+    ok         INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_audit_owner_ts ON audit_log(owner_id, ts);
 """
 
 
@@ -1140,6 +1154,44 @@ def prune_theft_media(device_id: str, keep: int) -> list:
             if r["path"]:
                 paths.append(r["path"])
         return paths
+
+
+# ---------------------------------------------------------------------------
+# Audit log (V5.37) — who controlled / wrote / armed what, when, from which
+# node. Append-only; reads are account-scoped. Recording is best-effort and
+# must NEVER raise into the operation it records.
+# ---------------------------------------------------------------------------
+def record_audit(action: str, *, owner_id: Optional[int] = None,
+                 actor_id: Optional[int] = None,
+                 actor_name: Optional[str] = None,
+                 device_id: Optional[str] = None,
+                 detail: Optional[str] = None,
+                 node_url: Optional[str] = None,
+                 ok: bool = True) -> None:
+    try:
+        with _connect() as con:
+            con.execute(
+                "INSERT INTO audit_log (ts, owner_id, actor_id, actor_name, "
+                "device_id, action, detail, node_url, ok) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (int(time.time()), owner_id, actor_id, actor_name, device_id,
+                 action, (detail or "")[:300], node_url, 1 if ok else 0),
+            )
+    except Exception:
+        pass  # auditing is best-effort; never break the audited action
+
+
+def list_audit(owner_id: int, limit: int = 200) -> list:
+    """Most-recent-first audit rows for one account."""
+    limit = max(1, min(int(limit), 1000))
+    with _connect() as con:
+        rows = con.execute(
+            "SELECT ts, actor_name, device_id, action, detail, node_url, ok "
+            "FROM audit_log WHERE owner_id = ? ORDER BY ts DESC, id DESC "
+            "LIMIT ?",
+            (owner_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

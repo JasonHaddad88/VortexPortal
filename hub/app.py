@@ -1095,10 +1095,16 @@ async def device_upload(device_id: str, rel: str, request: Request,
             "write_file", {"path": rel, "size": size}, chunks(),
         )
     except ws_router.AgentError as e:
+        db.record_audit("file_write", owner_id=user["id"], actor_id=user["id"],
+                        actor_name=user.get("username"), device_id=device_id,
+                        detail=rel, ok=False)
         raise HTTPException(status_code=502, detail=str(e))
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Agent did not finish in time")
 
+    db.record_audit("file_write", owner_id=user["id"], actor_id=user["id"],
+                    actor_name=user.get("username"), device_id=device_id,
+                    detail=rel, ok=True)
     return JSONResponse({"ok": True, "result": result})
 
 
@@ -1810,6 +1816,10 @@ async def _capture_to_store(device_id: str, owner_id: int, kind: str,
         device_id, owner_id, kind, path=rel, mime=mime,
         size=len(buf), meta=meta, trigger=trigger,
     )
+    # Covert capture (photo/audio/location) is the most sensitive action in
+    # the app -- always audit it, whatever triggered it (manual or auto-arm).
+    db.record_audit(f"capture_{kind}", owner_id=owner_id, device_id=device_id,
+                    detail=f"trigger={trigger} size={len(buf)}B")
     # Retention: drop oldest beyond the cap, unlink their files.
     for stale in db.prune_theft_media(device_id, config.theft_retention()):
         try:
@@ -1889,6 +1899,16 @@ def theft_dashboard(request: Request,
     data = _theft_dashboard_data(user)
     return HTMLResponse(templates.theft_dashboard_page(
         user, data["rows"], data["media"], data["map_pts"]))
+
+
+@app.get("/audit", response_class=HTMLResponse)
+def audit_view(request: Request, user: dict = Depends(auth.require_user)):
+    return HTMLResponse(templates.audit_page(user, db.list_audit(user["id"])))
+
+
+@app.get("/api/audit")
+def api_audit(user: dict = Depends(auth.require_user), limit: int = 200):
+    return JSONResponse({"ok": True, "events": db.list_audit(user["id"], limit)})
 
 
 @app.get("/theft/feed")
@@ -1992,6 +2012,10 @@ async def theft_arm(device_id: str, request: Request,
     db.set_theft_armed(device_id, True, by=user["id"],
                        interval_s=max(30, int(interval)),
                        opts=json.dumps(opts))
+    db.record_audit("theft_arm", owner_id=user["id"], actor_id=user["id"],
+                    actor_name=user.get("username"), device_id=device_id,
+                    detail=",".join(k for k in ("photo", "audio", "location")
+                                    if opts[k]))
     if opts["keepawake"]:
         await _theft_keepawake(device_id, True)
     return RedirectResponse(url=f"/devices/{device_id}/theft", status_code=303)
@@ -2002,6 +2026,8 @@ async def theft_disarm(device_id: str, request: Request,
                        user: dict = Depends(auth.require_user)):
     _theft_device_or_404(device_id, user)
     db.set_theft_armed(device_id, False, by=None, interval_s=300, opts="{}")
+    db.record_audit("theft_disarm", owner_id=user["id"], actor_id=user["id"],
+                    actor_name=user.get("username"), device_id=device_id)
     await _theft_keepawake(device_id, False)
     return RedirectResponse(url=f"/devices/{device_id}/theft", status_code=303)
 
