@@ -84,6 +84,17 @@ def dispatch(cmd: dict) -> Optional[Any]:
         # enables its tap/drag overlay exactly as it does for an armed phone.
         return {"enabled": True}
 
+    if t == "monitors":
+        # Enumerate displays so the viewer can offer a "second screen"
+        # picker. Lives here (the unary info channel the viewer already
+        # uses) so no new op/endpoint is needed; the geometry comes from
+        # the capture stack.
+        from . import pc_screen_bridge
+        try:
+            return {"monitors": pc_screen_bridge.list_monitors()}
+        except pc_screen_bridge.PcCaptureUnavailable as e:
+            raise RuntimeError(str(e))
+
     if t in ("tap", "long_press"):
         g = _gui()
         x = float(cmd.get("x", -1))

@@ -2586,6 +2586,14 @@ def device_screen_page(user: dict, device: dict) -> str:
   <button class="btn" id="scr-mic"
           title="Hold to talk through this device's microphone"
           style="display:none">🎤 Hold to talk</button>
+  <!-- V5.40: "second screen" display picker. Shown only when the peer is a
+       desktop with more than one display. Selecting one streams just that
+       monitor -- point your current device at the host's extended display
+       and it becomes that screen. -->
+  <select class="btn" id="scr-monitor" title="Which display to show"
+          style="display:none"></select>
+  <button class="btn" id="scr-fs" title="Full-screen this view (second screen)"
+          style="display:none">⛶ Full screen</button>
   <span class="cam-status" id="scr-status">idle</span>
 </div>
 
@@ -2622,6 +2630,10 @@ def device_screen_page(user: dict, device: dict) -> str:
   // proportionally so the relative ratios match.
   let realScreen = null;
   let _peerIsDesktop = false;   // V5.34: true once screen_size reports os=="desktop"
+  // V5.40: "second screen" display selection.
+  let _monitors = [];           // [{{index,label,width,height,left,top,primary}}]
+  let _monitor = 1;             // which display to stream (1 = primary)
+  let _monOffset = {{left: 0, top: 0}};  // virtual-desktop origin of _monitor
 
   async function loadScreenSize() {{
     try {{
@@ -2632,6 +2644,9 @@ def device_screen_page(user: dict, device: dict) -> str:
         realScreen = {{w: data.result.w, h: data.result.h}};
         _peerIsDesktop = (data.result.os === 'desktop');
         if (_peerIsDesktop) setStatus('desktop peer — click the screen, then type / scroll');
+        // Don't clobber a non-primary "second screen" selection with the
+        // primary size; re-assert the chosen display's geometry.
+        if (_monitor !== 1 && _monitors.length) applyMonitorGeometry();
       }}
     }} catch (e) {{}}
   }}
@@ -3000,7 +3015,7 @@ def device_screen_page(user: dict, device: dict) -> str:
     }}
 
     const rid = _directStream('screen_stream',
-        {{codec: wantCodec, audio: wantAudio}}, {{
+        {{codec: wantCodec, audio: wantAudio, monitor: _monitor}}, {{
       start: m => {{
         if (m && m.content_type === 'video/h264') {{
           mode = setupH264(m) ? 'h264' : null;
@@ -3087,7 +3102,7 @@ def device_screen_page(user: dict, device: dict) -> str:
       return;
     }}
     // Hub MJPEG fallback.
-    img.src = `/devices/${{encodeURIComponent(did)}}/screen/live?t=${{Date.now()}}`;
+    img.src = `/devices/${{encodeURIComponent(did)}}/screen/live?t=${{Date.now()}}&monitor=${{_monitor}}`;
     img.onerror = () => {{
       showError('Stream failed. Make sure the Vortex Driver APK is installed, the service is started, and screen sharing is armed.');
       streaming = false;
@@ -3142,7 +3157,11 @@ def device_screen_page(user: dict, device: dict) -> str:
     if (xFrac < 0 || xFrac > 1 || yFrac < 0 || yFrac > 1) return null;
     const w = (realScreen && realScreen.w) || img.naturalWidth || 1080;
     const h = (realScreen && realScreen.h) || img.naturalHeight || 2400;
-    return [Math.round(xFrac * w), Math.round(yFrac * h)];
+    // V5.40: add the selected display's virtual-desktop origin so clicks
+    // land on the right monitor (pyautogui uses absolute desktop coords).
+    const ox = (_monOffset && _monOffset.left) || 0;
+    const oy = (_monOffset && _monOffset.top) || 0;
+    return [Math.round(ox + xFrac * w), Math.round(oy + yFrac * h)];
   }}
 
   // V5.16: race a direct WebSocket to the agent (LAN / mesh) so input
@@ -3434,9 +3453,78 @@ def device_screen_page(user: dict, device: dict) -> str:
     postInput(_keyToCmd(evt));
   }});
 
+  // ---- V5.40: "second screen" display picker + full-screen mode ----
+  async function queryInput(cmd) {{
+    // Unary input query returning the op result (direct first, hub POST
+    // fallback). Used to enumerate the peer's displays.
+    try {{
+      const m = await _directInput(cmd, 2000);
+      if (m && m.ok) return m.result || {{}};
+    }} catch (e) {{}}
+    try {{
+      const r = await fetch(`/devices/${{encodeURIComponent(did)}}/input`, {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(cmd),
+      }});
+      if (r.ok) {{ const j = await r.json(); return j.result || {{}}; }}
+    }} catch (e) {{}}
+    return null;
+  }}
+
+  function applyMonitorGeometry() {{
+    const m = _monitors.find(x => x.index === _monitor);
+    if (m) {{
+      realScreen = {{w: m.width, h: m.height}};
+      _monOffset = {{left: m.left || 0, top: m.top || 0}};
+    }}
+  }}
+
+  async function loadMonitors() {{
+    const sel = document.getElementById('scr-monitor');
+    const fs = document.getElementById('scr-fs');
+    const res = await queryInput({{type: 'monitors'}});
+    const list = (res && res.monitors) || [];
+    _monitors = list;
+    // Full-screen helps on any desktop view (monitors only enumerates on
+    // a desktop peer, so a non-empty list means it's a PC).
+    if (fs && list.length) fs.style.display = '';
+    if (!sel) return;
+    const real = list.filter(m => m.index >= 1);  // skip index 0 = "All"
+    if (real.length <= 1) {{ sel.style.display = 'none'; return; }}  // one screen: no picker
+    sel.innerHTML = '';
+    real.forEach(m => {{
+      const o = document.createElement('option');
+      o.value = String(m.index);
+      o.textContent = `${{m.label}} (${{m.width}}x${{m.height}})`;
+      if (m.index === _monitor) o.selected = true;
+      sel.appendChild(o);
+    }});
+    sel.style.display = '';
+    applyMonitorGeometry();
+  }}
+
+  (function wireSecondScreen() {{
+    const sel = document.getElementById('scr-monitor');
+    if (sel) sel.addEventListener('change', () => {{
+      _monitor = parseInt(sel.value, 10) || 1;
+      applyMonitorGeometry();
+      if (streaming) {{ stopStream(); startStream(); }}  // restart on the new display
+    }});
+    const fs = document.getElementById('scr-fs');
+    if (fs) fs.addEventListener('click', () => {{
+      const el = stage;
+      if (!document.fullscreenElement) {{
+        (el.requestFullscreen || el.webkitRequestFullscreen || function () {{}}).call(el);
+      }} else {{
+        document.exitFullscreen();
+      }}
+    }});
+  }})();
+
   // Pre-warm the screen-size lookup on page load so taps work even before
   // streaming starts (e.g., user just wants to fire a Back press).
   loadScreenSize();
+  loadMonitors();
 }})();
 </script>"""
     return page(f"{device['name']} · Screen", body, user=user, active="/")

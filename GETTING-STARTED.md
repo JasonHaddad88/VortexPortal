@@ -160,6 +160,33 @@ control either from the other, or from any browser. ✅
 
 ---
 
+## Use another device as a second screen
+
+You can turn the device you're holding (a laptop, tablet, old phone) into
+an extra screen for your PC.
+
+1. Open your PC in the device list → **Screen** → **▶ Live stream**.
+2. If your PC has more than one display, a **display picker** appears —
+   choose which one to show.
+3. Tap **⛶ Full screen**. That device is now showing your PC's screen,
+   edge to edge.
+
+**Mirror vs. a real extra screen.** Out of the box this *mirrors* a screen
+your PC already has. To get a genuine **extended** screen — extra desktop
+space you can drag windows onto — your PC needs a *second display to
+exist*. Cheapest ways:
+
+- a spare monitor, or
+- a **"HDMI dummy plug"** (~$5; it makes Windows think a monitor is
+  plugged in), or
+- a free **virtual display driver**.
+
+Then pick that display in step 2 — the device you're holding becomes it.
+(Software alone can't invent a monitor; that part needs real or virtual
+display hardware on the PC.)
+
+---
+
 ## Make it always-on
 
 So far, control works only while that PowerShell window is open on your
