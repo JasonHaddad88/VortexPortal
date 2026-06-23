@@ -184,6 +184,17 @@ Run **both** if you like — your devices automatically use whichever is
 online, and fall back to the other if one goes down. Nothing to switch by
 hand.
 
+**Your three choices for the always-on relay:**
+
+| Where it runs | Good for | Cost | Stays on when your PC is off? | Setup |
+|---|---|---|---|---|
+| **Your Windows PC** | the simplest start; a PC you leave on | free | ❌ | one installer ([guide](scripts/relay-windows/README.md)) |
+| **Fly.io** (cloud) | easiest cloud, no domain needed | free for light use | ✅ | a couple of commands ([guide](deploy/README.md)) |
+| **Oracle Always Free** (cloud) | free forever, runs 24/7 | $0 (+ a free DuckDNS web address) | ✅ | one script + a web address ([guide](deploy/README.md)) |
+
+Not sure? Start with your **PC** to see it working, then move to a **cloud**
+one later so you don't have to keep the PC on.
+
 **Test it the honest way:** turn your phone's **Wi-Fi off** (so it's on
 cellular, a different network), open your Public URL, sign in, and control
 your PC. If that works, you're reachable from anywhere.
