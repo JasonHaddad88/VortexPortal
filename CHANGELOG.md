@@ -3,6 +3,30 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.41] — 2026-06-22
+
+**One-command virtual display (Windows) — turns the "second screen" into a
+true extended screen.** Companion to V5.40: software can't invent a monitor
+without a display driver, so this installs a free signed one for you.
+
+- `scripts/relay-windows/virtual-display.ps1`: downloads
+  [VirtualDrivers/Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
+  (IddCx, MIT, **signed** — no Windows test-signing mode), installs it
+  **headlessly** with the `devcon.exe` bundled in that package
+  (`devcon install MttVDD.inf Root\MttVDD`, arch-aware: x86/x64 vs ARM64),
+  then `DisplaySwitch.exe /extend`s the desktop onto the new virtual
+  monitor. `-Remove` uninstalls it; `-NoExtend` skips the extend step.
+- Sets `Tls12` first — Windows PowerShell 5.1 negotiates old TLS and would
+  otherwise fail to reach the GitHub release CDN (caught in a dry-run).
+- GETTING-STARTED: the one-command setup + a Windows-vs-Android "second
+  screen" capability table.
+
+Verified: PowerShell parses; release/asset lookup + arch selection logic
+dry-run against the real repo (the driver-only zip ships just the signed
+`MttVDD.inf`/dll/cat, the Control package bundles `devcon.exe`). The kernel
+driver install itself isn't run in this environment — it needs admin on a
+real machine.
+
 ## [V5.40] — 2026-06-22
 
 **Second screen — use another device as a display for your PC.** Pick

@@ -64,8 +64,24 @@ and click **+ Self-Register this device** so this PC appears in your fleet.
 - From your phone on **cellular** (Wi-Fi off), open that URL, sign in, and
   control this PC — that proves the cross-network path end-to-end.
 
+## Use another device as a true second screen
+
+`virtual-display.ps1` (in this folder) adds a free, **signed** virtual
+monitor to this PC so you can use a phone/tablet/laptop as a genuine
+*extended* second screen in Vortex — not just a mirror. Run once, elevated:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\relay-windows\virtual-display.ps1
+```
+
+It installs [VirtualDrivers/Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
+headlessly (via the `devcon` it bundles — no test mode), extends your
+desktop onto it, then you pick that display in **Screen → Live stream**.
+Remove with `-Remove`. (Without it, the screen feature still works as a
+*mirror*.)
+
 ## Don't want to keep a PC on?
 
 A free 24/7 cloud VM (Oracle Cloud Always Free, Fly.io) runs the exact
 same hub and never sleeps — better for "anytime" without leaving your own
-machine on. Ask and we'll add the Dockerfile + deploy recipe.
+machine on — see [`deploy/README.md`](../../deploy/README.md).
