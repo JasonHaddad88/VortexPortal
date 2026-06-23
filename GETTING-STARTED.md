@@ -174,16 +174,34 @@ an extra screen for your PC.
 **Mirror vs. a real extra screen.** Out of the box this *mirrors* a screen
 your PC already has. To get a genuine **extended** screen — extra desktop
 space you can drag windows onto — your PC needs a *second display to
-exist*. Cheapest ways:
+exist*: a spare monitor, a ~$5 **"HDMI dummy plug,"** or a free **virtual
+display driver**.
 
-- a spare monitor, or
-- a **"HDMI dummy plug"** (~$5; it makes Windows think a monitor is
-  plugged in), or
-- a free **virtual display driver**.
+**One-command virtual screen (Windows).** To add a free, signed virtual
+monitor automatically, run this once in an **elevated** PowerShell (Run as
+administrator):
 
-Then pick that display in step 2 — the device you're holding becomes it.
-(Software alone can't invent a monitor; that part needs real or virtual
-display hardware on the PC.)
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\relay-windows\virtual-display.ps1
+```
+
+It downloads and installs the signed
+[Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
+(no Windows test mode needed) and extends your desktop onto it. Then pick
+the new display in step 2. Remove it later with the same command plus
+`-Remove`.
+
+**Does this work on Android too?**
+
+| | As the **screen you hold** | As the **PC you extend from** |
+|---|---|---|
+| **Windows PC** | ✅ | ✅ (with a real/virtual 2nd display) |
+| **Android** | ✅ works now (any browser) | ❌ mirror only — no true extend |
+
+An Android phone or tablet makes a great second screen *for your PC* today
+(just open the PC's Screen tab on it and tap Full screen). But Android
+isn't a multi-monitor desktop, so you can't *extend* an Android device's
+own screen onto something else — only mirror it.
 
 ---
 
