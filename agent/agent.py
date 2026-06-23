@@ -932,9 +932,10 @@ async def op_screen_stream(session: "Session", rid: str, args: dict) -> None:
         q = int(args.get("quality", 60) or 60)
         md = int(args.get("max_dim", 0) or 0)
         fps = float(args.get("fps_cap", 10) or 10)
+        mon = int(args.get("monitor", 1) or 1)   # which display (1=primary)
 
         def _open_pc():
-            return open_pc(quality=q, max_dim=md, fps_cap=fps)
+            return open_pc(quality=q, max_dim=md, fps_cap=fps, monitor=mon)
         try:
             frames = await loop.run_in_executor(None, _open_pc)
         except PcCaptureUnavailable as e:

@@ -3,6 +3,39 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.40] — 2026-06-22
+
+**Second screen — use another device as a display for your PC.** Pick
+*which* of the host's monitors to stream, and full-screen it on the device
+you're holding. With a second display on the host (a real monitor, a ~$5
+HDMI dummy plug, or a virtual-display driver) the device you're holding
+becomes that **extended** screen; with one display it mirrors. (A true
+*virtual* monitor still needs an OS-level display driver — out of scope
+for a Python/Kotlin app — but any display that exists can now be targeted.)
+
+### Agent
+- `pc_screen_bridge.list_monitors()` + `open_stream(monitor=N)` — capture a
+  specific display (mss indexing: 1 = primary, 2+ = others, 0 = the whole
+  virtual desktop); out-of-range falls back to primary. Geometry includes
+  each display's virtual-desktop `left/top` offset.
+- `op_screen_stream` reads `args.monitor`; new `monitors` input command
+  enumerates displays over the existing unary channel (no new endpoint).
+
+### Hub
+- `/devices/{id}/screen/live` forwards a `?monitor=N` query param to the
+  agent (the direct path already passes stream args).
+
+### Web viewer
+- A **display picker** (shown only when the peer is a desktop with >1
+  monitor) + a **⛶ Full screen** button (turns the view into a clean
+  second screen). Selecting a display restarts the stream on it; click
+  coordinates are offset by that display's origin so control lands on the
+  right monitor. Phones unaffected (single screen → picker hidden).
+
+Verified on Windows: monitor enumeration, per-monitor + all-desktop +
+out-of-range capture, the `monitors` command, input-command regression,
+and the screen page renders with the new UI.
+
 ## [V5.39] — 2026-06-21
 
 **Cloud relay recipe — a 24/7 relay you don't have to keep a PC on for.**

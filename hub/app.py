@@ -1323,7 +1323,16 @@ async def device_screen_live(device_id: str, request: Request,
     if conn is None:
         raise HTTPException(status_code=503, detail=_offline_detail(device_id))
 
-    stream = conn.stream("screen_stream", {}, start_timeout=10)
+    # Forward the "second screen" display picker over the relay path
+    # (the direct path already passes args). Ignored by phone agents.
+    s_args = {}
+    try:
+        _mon = int(request.query_params.get("monitor", ""))
+        if _mon >= 0:
+            s_args["monitor"] = _mon
+    except (TypeError, ValueError):
+        pass
+    stream = conn.stream("screen_stream", s_args, start_timeout=10)
     try:
         first = await stream.__anext__()
     except ws_router.AgentError as e:
