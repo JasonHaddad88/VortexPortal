@@ -3,6 +3,23 @@
 All notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [V5.42] — 2026-06-22
+
+**Local end-to-end smoke test — the control plane is verified, not just
+unit-tested.** `scripts/smoke_local.py` stands up a real hub (local SQLite,
+no Turso) + a real co-located agent on the machine, logs in as a browser
+would, and drives the actual endpoints: agent WS auth + op dispatch,
+`screen_size` / `a11y_state` / `monitors` (V5.34 + V5.40 desktop input),
+and a real `mss` screen capture through `/screen/live`. It does **not**
+fire tap/scroll/key (those move the real mouse).
+
+First run on Windows: **7/7 checks passed** — hub serves, login mints a
+session, the agent connects and round-trips ops (`2560x1600 os=desktop`),
+both displays enumerate, and `/screen/live?monitor=1` returns a valid JPEG
+(HTTP 200). Proves the local hub↔agent↔browser path holds together across
+the V5.33–V5.40 changes. (Cross-network / Turso / APK / driver-install
+still need a live run on real devices.)
+
 ## [V5.41] — 2026-06-22
 
 **One-command virtual display (Windows) — turns the "second screen" into a
